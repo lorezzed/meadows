@@ -1,0 +1,15 @@
+{
+  "name": "purescript-project",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "d3": "^7.9.0"
+  },
+  "devDependencies": {
+    "@types/d3": "^7.4.3",
+    "events": "^3.3.0",
+    "parcel": "^2.13.0",
+    "process": "^0.11.10",
+    "typescript": "^7.0.2"
+  }
+}
