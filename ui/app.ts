@@ -2,11 +2,12 @@ import * as d3 from "d3";
 
 import * as interpreter from '../output/Main/index'
 import type { Node, Link, System } from "./type";
-import { stock, stockHeight, stockTick, stockWidth } from "./shape/stock";
-import { dot, dotTick } from "./shape/dot";
-import { faucet, faucetHeight, faucetTick, faucetWidth } from "./shape/faucet";
-import { cloud, cloudHeight, cloudTick, cloudWidth } from "./shape/cloud";
-
+import { stockInit, stockHeight, stockTick, stockWidth } from "./shape/stock";
+import { dotInit, dotTick } from "./shape/dot";
+import { faucetInit, faucetUpdate, faucetHeight, faucetTick, faucetWidth } from "./shape/faucet";
+import { cloudInit, cloudHeight, cloudTick, cloudWidth, cloudUpdate } from "./shape/cloud";
+import faucetSvg from './shape/faucet.svg'
+import cloudSvg from './shape/cloud.svg'
 
 const container = d3.select('body')
   .append('div')
@@ -100,10 +101,30 @@ let link = svg.append("g")
   .attr("stroke-opacity", 0.6)
   .selectAll("line");
 
-let nodeDot = dot(svg)
-let nodeStock = stock(svg)
-let nodeFaucet = faucet(svg)
-let nodeCloud = cloud(svg)
+const dotRadius = 20;
+const stockWidth = 40;
+const stockHeight = 40;
+const faucetWidth = 40;
+const faucetHeight = 40
+const cloudWidth = 40;
+const cloudHeight = 40;
+
+let nodeDot = svg.append<SVGGElement>("g")
+  .attr("r", 8)
+  .attr("fill", "rgba(0, 0, 255, 0.5)")
+  .attr("stroke", "#00f")
+  .attr("stroke-width", 1.5)
+  .selectAll<SVGCircleElement, Node>("circle");
+let nodeStock = svg.append<SVGGElement>("g")
+  .selectAll<SVGRectElement, Node>("rect")
+let nodeFaucet = svg.append<SVGGElement>("g")
+  .selectAll<SVGImageElement, Node>("image")
+// let nodeFaucet = svg.append<SVGGElement>("g")
+//   .selectAll<SVGRectElement, Node>("rect")
+// let nodeFaucet = svg.append<SVGGElement>("g")
+//   .selectAll<SVGImageElement, Node>("image")
+let nodeCloud = svg.append<SVGGElement>("g")
+  .selectAll<SVGRectElement, Node>("rect");
 
 let nodeLabel = svg.append("g")
   .attr("class", "labels")
@@ -156,28 +177,22 @@ function update(system: System) {
     .attr("width", stockWidth)
     .attr("height", stockHeight)
     .call(drag(), undefined)
-  nodeFaucet = nodeFaucet
-    .data(nodes.filter(x => x.type === 'faucet'))
-    .join("rect")
-    .attr("stroke", "#0f0")
-    .attr("stroke-width", 1.5)
-    .attr("fill", "rgba(0, 255, 0, 0.5)")
+  nodeFaucet = nodeFaucet.data(nodes.filter(x => x.type === 'faucet'))
+    .join("image")
+    .attr("href", faucetSvg)
     .attr("width", faucetWidth)
     .attr("height", faucetHeight)
     .call(drag(), undefined);
-  nodeCloud = nodeCloud
-    .data(nodes.filter(x => x.type === 'cloud'))
-    .join("rect")
-    .attr("stroke", "#00f")
-    .attr("stroke-width", 1.5)
-    .attr("fill", "rgba(0, 0, 255, 0.5)")
+  nodeCloud = nodeCloud.data(nodes.filter(x => x.type === 'cloud'))
+    .join("image")
+    .attr("href", cloudSvg)
     .attr("width", cloudWidth)
     .attr("height", cloudHeight)
     .call(drag(), undefined);
-nodeLabel = nodeLabel
-  .data(nodes)
-  .join("text")
-  .text(d => d.type)
+  nodeLabel = nodeLabel
+    .data(nodes)
+    .join("text")
+    .text(d => d.type)
 
   simulation.nodes(nodes);
 
@@ -193,19 +208,47 @@ nodeLabel = nodeLabel
 update(system);
 
 function ticked() {
-  stockTick(nodeStock)
-  dotTick(nodeDot)
-  faucetTick(nodeFaucet)
-  cloudTick(nodeCloud)
+  nodeStock
+    .attr("x", d => d.x - stockWidth / 2)
+    .attr("y", d => d.y - stockHeight / 2);
+  nodeDot
+    .attr("cx", d => d.x)
+    .attr("cy", d => d.y)
+    .attr("r", dotRadius);
+  nodeFaucet
+    .attr("x", d => d.x - faucetWidth / 2)
+    .attr("y", d => d.y - faucetHeight / 2);
+  nodeCloud
+    .attr("x", d => d.x - cloudWidth / 2)
+    .attr("y", d => d.y - cloudHeight / 2);
   nodeLabel
     .attr("x", d => d.x ?? 0)
-    .attr("y", d => (d.y ?? 0) + 3) 
+    .attr("y", d => (d.y ?? 0) + 3)
+
   link
     .attr("x1", d => d.source.x)
     .attr("y1", d => d.source.y)
     .attr("x2", d => d.target.x)
     .attr("y2", d => d.target.y);
 }
+
+function click(event: MouseEvent) {
+  const [x, y] = d3.pointer(event);
+  nextId++;
+  const newNode: Node = { type: "dot", id: `N${nextId}`, label: `{nextId}`, x, y };
+  if (nodes.length > 0) {
+    const nearest = nodes[nodes.length - 1];
+    links.push({ source: nearest.id, target: newNode.id, type: "arrow" });
+  }
+  nodes.push(newNode);
+  update({ ...system });
+}
+
+function loadExample(text: string) {
+  textInput.property('value', text);
+  textInput.node()?.dispatchEvent(new Event('input'));
+}
+
 function drag() {
   return d3.drag()
     .on("start", (event, d: Node) => {
@@ -226,21 +269,4 @@ function drag() {
       d.fx = null;
       d.fy = null;
     })
-}
-
-function click(event: MouseEvent) {
-  const [x, y] = d3.pointer(event);
-  nextId++;
-  const newNode: Node = { type: "dot", id: `N${nextId}`, label: `{nextId}`, x, y };
-  if (nodes.length > 0) {
-    const nearest = nodes[nodes.length - 1];
-    links.push({ source: nearest.id, target: newNode.id, type: "arrow" });
-  }
-  nodes.push(newNode);
-  update({...system});
-}
-
-function loadExample(text: string) {
-  textInput.property('value', text);
-  textInput.node()?.dispatchEvent(new Event('input'));
 }

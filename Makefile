@@ -1,8 +1,14 @@
-.PHONY: shell code setup lock hash dev build run run-with
+.PHONY: init done shell code setup lock hash dev build run run-with
 
 # ---------------------------------------------------------------------------
 # One-time setup (run once, or whenever parcel/d3 deps change in package.json)
 # ---------------------------------------------------------------------------
+
+init:
+	nix --experimental-features flake init
+
+done:
+	nix-shell -p nix-info --run "nix-info -m"
 
 # Full one-time setup: generates the lockfile then prints the npmDepsHash.
 # Copy the printed hash into flake.nix, replacing REPLACE_ME.
@@ -31,7 +37,7 @@ code:
 
 # Run the parcel dev server against ui/index.html
 dev:
-	nix --experimental-features 'nix-command flakes' develop --command esbuild ui/index.js --bundle --watch --outdir=./ui --servedir=./ui
+	nix --experimental-features 'nix-command flakes' develop --command esbuild ui/index.js --bundle --watch --outdir=./ui --servedir=./ui --loader:.svg=dataurl
 # 	nix --experimental-features 'nix-command flakes' develop --command esbuild ui/index.ts --bundle --watch --outdir=./ui --servedir=./ui
 # Compile and run the PureScript entrypoint (src/Main.purs) via spago
 run:

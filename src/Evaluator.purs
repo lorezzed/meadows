@@ -18,8 +18,6 @@ import Parser (Tree(..))
 import Lexer (Operator(..))
 import Simple.JSON (class WriteForeign, writeImpl)
 
--- Graph types
--- data NodeType String = NodeType String
 data NodeType = Dot | Stock | Faucet | Cloud
 derive instance eqNodeType :: Eq NodeType
 instance showNodeType :: Show NodeType where
@@ -29,87 +27,60 @@ instance showNodeType :: Show NodeType where
   show Cloud = "cloud"
 instance writeForeignNodeType :: WriteForeign NodeType where
   writeImpl = writeImpl <<< show
--- type Node = {  id :: String, label :: String }
-type Node = {  type :: NodeType, id :: String, label :: String }
-type Link = {  type :: String, source :: String, target :: String }
+
+type Node = { type :: NodeType, id :: String, label :: String }
+type Link = { type :: String, source :: String, target :: String }
 type Graph = { nodes :: Array Node, links :: Array Link }
 
-
--- Evaluator state
 type EvalState = 
-  -- { nodes :: Set.Set String
   { nodes :: Map.Map String NodeType
   , links :: Array Link
   }
 
--- Evaluator monad
 type Evaluator = State EvalState
 
--- type SymTab = M.Map String String
-
--- newtype Evaluator a = Ev (SymTab -> (a, SymTab))
-
--- instance Monad Evaluator where
---     (Ev act) >>= k = Ev $
---         \symTab -> 
---             let (x, symTab') = act symTab
---                 (Ev act') = k x
---             in act' symTab'
---     return x = Ev (\symTab -> (x, symTab))
-
--- -- Add a node to the graph (if it doesn't exist)
--- addNode :: String -> Evaluator Unit
--- addNode nodeId = modify_ \state ->
---   state { nodes = Set.insert nodeId state.nodes }
 addNode :: NodeType -> String -> Evaluator Unit
 addNode nodeType nodeId = modify_ \state ->
   state { nodes = Map.insert nodeId nodeType state.nodes }
   
--- Add a link to the graph
 addLink :: String -> String -> String -> Evaluator Unit
 addLink source target linkType = modify_ \state ->
   state { links = Array.snoc state.links { source, target, type: linkType } }
 
 getLeftmost :: Tree -> String
-getLeftmost (NodeExpr str) = str
-getLeftmost (StockExpr s) = s
-getLeftmost (CloudExpr s) = s
-getLeftmost (FaucetExpr _ left _) = getLeftmost left
-getLeftmost (ArrowRExpr left _) = getLeftmost left
-getLeftmost (ArrowLExpr left _) = getLeftmost left
-getLeftmost (ParenExpr expr) = getLeftmost expr
+getLeftmost (NodeExpr _ str) = str
+getLeftmost (StockExpr _ s) = s
+getLeftmost (CloudExpr _ s) = s
+getLeftmost (FaucetExpr _ _ left _) = getLeftmost left
+getLeftmost (ArrowRExpr _ left _) = getLeftmost left
+getLeftmost (ArrowLExpr _ left _) = getLeftmost left
+getLeftmost (ParenExpr _ expr) = getLeftmost expr
 
 getLeftmostType :: Tree -> NodeType
-getLeftmostType (NodeExpr _) = Dot
-getLeftmostType (StockExpr _) = Stock
-getLeftmostType (CloudExpr _) = Cloud
-getLeftmostType (FaucetExpr _ left _) = getLeftmostType left
-getLeftmostType (ArrowRExpr left _) = getLeftmostType left
-getLeftmostType (ArrowLExpr left _) = getLeftmostType left
-getLeftmostType (ParenExpr expr) = getLeftmostType expr
+getLeftmostType (NodeExpr _ _) = Dot
+getLeftmostType (StockExpr _ _) = Stock
+getLeftmostType (CloudExpr _ _) = Cloud
+getLeftmostType (FaucetExpr _ _ left _) = getLeftmostType left
+getLeftmostType (ArrowRExpr _ left _) = getLeftmostType left
+getLeftmostType (ArrowLExpr _ left _) = getLeftmostType left
+getLeftmostType (ParenExpr _ expr) = getLeftmostType expr
 
--- Evaluate tree and return the node identifier
 evaluateNode :: Tree -> Evaluator String
-evaluateNode (NodeExpr s) = do
+evaluateNode (NodeExpr _ s) = do
   addNode Dot s
   pure s
-evaluateNode (StockExpr s) = do
+evaluateNode (StockExpr _ s) = do
   addNode Stock s
   pure s
-evaluateNode (CloudExpr s) = do
+evaluateNode (CloudExpr _ s) = do
   addNode Cloud s
   pure s
--- evaluateNode (StockRExpr left right) = do
---   l <- evaluateNode left
---   r <- evaluateNode right
---   addLink l r "stock"
---   pure r  -- Return target node
-evaluateNode (FaucetExpr name left right) = do
+evaluateNode (FaucetExpr _ name left right) = do
   l <- evaluateNode left
   addNode Faucet name
   addLink l name "arrow"
   case right of
-    NodeExpr str -> do
+    NodeExpr _ str -> do
       r <- evaluateNode right
       addLink name r "arrow"
       pure r
@@ -119,56 +90,42 @@ evaluateNode (FaucetExpr name left right) = do
       addNode rightType rightStart
       addLink name rightStart "arrow"
       evaluateNode right
-evaluateNode (ArrowRExpr left right) = do
+evaluateNode (ArrowRExpr _ left right) = do
   l <- evaluateNode left
   case right of
-    NodeExpr str -> do
+    NodeExpr _ str -> do
       r <- evaluateNode right
       addLink l r "arrow"
       pure r
     _ -> do
-      -- let rightStart = getLeftmost right
-      -- addNode rightStart
       let rightStart = getLeftmost right
           rightType = getLeftmostType right
       addNode rightType rightStart
       addLink l rightStart "arrow"
       evaluateNode right
--- evaluateNode (ArrowRExpr left right) = do
---   l <- evaluateNode left
---   r <- evaluateNode right
---   addLink (spy "L" l) (spy "R" r) "arrow"
---   pure r  -- Return target node
-evaluateNode (ArrowLExpr left right) = do
+evaluateNode (ArrowLExpr _ left right) = do
   l <- evaluateNode left
   r <- evaluateNode right
-  addLink r l "arrow"  -- Reversed direction
-  pure l  -- Return target node
-evaluateNode (ParenExpr expr) = evaluateNode expr
+  addLink r l "arrow"
+  pure l
+evaluateNode (ParenExpr _ expr) = evaluateNode expr
 
--- Main evaluation function that builds the complete graph
 evaluate :: Tree -> Graph
 evaluate tree = 
   let initialState = { nodes: Map.empty, links: [] }
       Tuple _ finalState = runState (evaluateNode tree) initialState
-      -- nodeArray = Set.toUnfoldable finalState.nodes
-      -- nodes = map (\id -> { id, label: id }) nodeArray
       nodeArray = (Map.toUnfoldable finalState.nodes :: Array (Tuple String NodeType))
       nodes = map (\(Tuple id ty) -> { type: ty, id, label: id }) nodeArray
   in { nodes, links: finalState.links }
 
--- Alternative runner that returns both the result and the graph
 runEvaluator :: Tree -> Tuple String Graph
 runEvaluator tree = 
   let initialState = { nodes: Map.empty, links: [] }
       Tuple result finalState = runState (evaluateNode tree) initialState
-      -- nodeArray = Map.toUnfoldable finalState.nodes
-      -- nodes = map (\id -> { id, label: id }) nodeArray
       nodeArray = (Map.toUnfoldable finalState.nodes :: Array (Tuple String NodeType))
       nodes = map (\(Tuple id ty) -> { type: ty, id, label: id }) nodeArray
       graph = { nodes, links: finalState.links }
   in Tuple result graph
-
 
 -- module Evaluator 
 --   ( evaluate
