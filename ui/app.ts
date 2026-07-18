@@ -241,7 +241,7 @@ function ticked() {
 function click(event: MouseEvent) {
   const [x, y] = d3.pointer(event);
   nextId++;
-  const newNode: Node = { type: "dot", id: nextId, label: `${nextId}`, x, y };
+  const newNode: Node = { type: "dot", id: `${nextId}`, label: `${nextId}`, x, y };
   const nearest = nodes[nodes.length - 1];
   if (nearest) {
     links.push({ source: nearest.id, target: newNode.id, type: "arrow" });
