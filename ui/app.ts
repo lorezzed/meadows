@@ -102,7 +102,8 @@ const textInput = container
 let link = svg.append("g")
   .attr("stroke", "#00f")
   .attr("stroke-opacity", 0.6)
-  .selectAll("line");
+  .attr("fill", "none")
+  .selectAll("path");
 
 const dotRadius = 20;
 const stockWidth = 40;
@@ -169,7 +170,8 @@ function update(system: System) {
 
   link = link
     .data(links)
-    .join("line")
+    .join("path")
+    .attr("fill", "none")
     .attr("stroke", "#999");
   nodeDot = nodeDot
     .data(nodes.filter(x => x.type === 'dot'), d => d.id)
@@ -230,10 +232,12 @@ function ticked() {
     .attr("y", d => (d.y ?? 0) + 3)
 
   link
-    .attr("x1", d => d.source.x)
-    .attr("y1", d => d.source.y)
-    .attr("x2", d => d.target.x)
-    .attr("y2", d => d.target.y);
+    .attr("d", d => {
+      const dx = d.target.x - d.source.x;
+      const dy = d.target.y - d.source.y;
+      const dr = Math.hypot(dx, dy);
+      return `M${d.source.x},${d.source.y}A${dr},${dr} 0 0,1 ${d.target.x},${d.target.y}`;
+    });
 }
 
 function click(event: MouseEvent) {
