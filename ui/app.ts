@@ -120,34 +120,36 @@ let nodeFaucet = svg.append<SVGGElement>("g")
 let nodeCloud = svg.append<SVGGElement>("g")
   .selectAll<SVGGElement, Node>("g");
 
-const nodes: Node[] = [];
-const links: Link[] = []
+const systemNodes: Node[] = [];
+const systemLinks: Link[] = []
 // const nodes: Node[] = [{ type: "dot", id: 1, label: "A" }, { type: "dot", id: 2, label: "B" }, { type: "stock", id: 3, label: "C" }, { type: "faucet", id: 4, label: "D" }];
 // const links: Link[] = [{ source: "A", target: "B", type: "arrow" }, { source: "B", target: "C", type: "arrow" }, { source: "C", target: "D", type: "arrow" }, { source: "D", target: "A", type: "arrow" }]
 // let nodes = [{ "label": "d", "id": "d" }]
 // let links = [{ "type": "arrow", "target": "e", "source": "d" }]
-const system: System = { nodes, links }
+const system: System = { nodes: systemNodes, links: systemLinks }
 
 // .id(d => d.id)
-const simulation = d3.forceSimulation<Node, Link>(nodes)
-  .force("link", d3.forceLink<Node, Link>(links).id(d => d.id).distance(80))
+const simulation = d3.forceSimulation<Node, Link>(systemNodes)
+  .force("link", d3.forceLink<Node, Link>(systemLinks).id(d => d.id).distance(80))
   .force("charge", d3.forceManyBody<Node>().strength(-200))
   .force("center", d3.forceCenter<Node>(svgWidth / 2, svgHeight / 2))
   .force("x", d3.forceX<Node>(svgWidth / 2).strength(0.05))
   .force("y", d3.forceY<Node>(svgHeight / 2).strength(0.05))
   .on("tick", ticked);
 
-let nextId = nodes.length;
+let nextId = systemNodes.length;
 
 // Draw the graph
 update(system);
 
 function update(system: System) {
-  // Make a shallow copy to protect` against mutation, while recycling old nodes to preserve position and velocity.
-  let { nodes, links } = system;
-  // const oldStock = new Map(nodeStock.data().map(d => [d.id, d]));
-  // nodes = nodes.map(d => ({ ...oldStock.get(d.id), ...d }));
-  // links = links.map(d => ({ ...d }));
+  // Make a shallow copy to protect against mutation, while recycling old nodes to preserve position and velocity.
+  const old = new Map(simulation.nodes().map(d => [d.id, d] as [string, Node]));
+  const nodes = system.nodes.map(d => {
+    const prev = old.get(d.id);
+    return prev ? Object.assign(prev, d) : { ...d };
+  });
+  const links = system.links.map(d => ({ ...d }));
 
   link = link
     .data(links)
@@ -247,11 +249,11 @@ function click(event: MouseEvent) {
   const [x, y] = d3.pointer(event);
   nextId++;
   const newNode: Node = { type: "dot", id: `${nextId}`, label: `${nextId}`, x, y };
-  const nearest = nodes[nodes.length - 1];
+  const nearest = systemNodes[systemNodes.length - 1];
   if (nearest) {
-    links.push({ source: nearest.id, target: newNode.id, type: "arrow" });
+    systemLinks.push({ source: nearest.id, target: newNode.id, type: "arrow" });
   }
-  nodes.push(newNode);
+  systemNodes.push(newNode);
   update({ ...system });
 }
 
