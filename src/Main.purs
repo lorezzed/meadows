@@ -12,7 +12,7 @@ import Data.String (joinWith)
 import Debug
 import Lexer (tokenize)
 import Parser (parse)
-import Evaluator (evaluate, runEvaluator)
+import Evaluator (evaluate)
 import Simple.JSON as JSON
 
 -- foreign import main :: String -> String

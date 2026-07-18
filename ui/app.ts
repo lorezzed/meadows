@@ -51,6 +51,16 @@ examples.append('button')
   .on('click', function () {
     loadExample(this.textContent);
   });
+examples.append('button')
+  .text(`|=>investment[capital]=depreciation|
+capital->profit->investment
+[resource]=>extraction|
+resource->yield per unit capital->extraction
+yield per unit capital->price->profit
+capital->depreciation`)
+  .on('click', function () {
+    loadExample(this.textContent);
+  });
 
 
 const svgWidth = 600
@@ -94,6 +104,37 @@ const textInput = container
     }
   })
 
+// Arrowhead markers. Both anchor their BASE at the path's end (refX 0) so the
+// line stops cleanly where the triangle starts and the head extends beyond it —
+// no line poking out around the narrowing tip. Sized in user-space pixels.
+const flowArrowLength = 24; // big solid head for pipes (Meadows notation)
+const infoArrowLength = 9;  // small head for thin info arcs
+const defs = svg.append("defs");
+defs.append("marker")
+  .attr("id", "flow-arrow")
+  .attr("viewBox", "0 0 10 10")
+  .attr("refX", 0)
+  .attr("refY", 5)
+  .attr("markerWidth", flowArrowLength)
+  .attr("markerHeight", flowArrowLength)
+  .attr("markerUnits", "userSpaceOnUse")
+  .attr("orient", "auto")
+  .append("path")
+  .attr("d", "M0,0L10,5L0,10Z")
+  .attr("fill", "#999");
+defs.append("marker")
+  .attr("id", "info-arrow")
+  .attr("viewBox", "0 0 10 10")
+  .attr("refX", 0)
+  .attr("refY", 5)
+  .attr("markerWidth", infoArrowLength)
+  .attr("markerHeight", infoArrowLength)
+  .attr("markerUnits", "userSpaceOnUse")
+  .attr("orient", "auto")
+  .append("path")
+  .attr("d", "M0,0L10,5L0,10Z")
+  .attr("fill", "#999");
+
 //
 let link = svg.append("g")
   .attr("stroke", "#00f")
@@ -102,6 +143,7 @@ let link = svg.append("g")
   .selectAll<SVGPathElement, Link>("path");
 
 const dotRadius = 20;
+const nodeEdge = 20; // every shape is ~40px, so its boundary sits ~20px from center
 const stockWidth = 40;
 const stockHeight = 40;
 const faucetWidth = 40;
@@ -131,10 +173,19 @@ const system: System = { nodes: systemNodes, links: systemLinks }
 // .id(d => d.id)
 const simulation = d3.forceSimulation<Node, Link>(systemNodes)
   .force("link", d3.forceLink<Node, Link>(systemLinks).id(d => d.id).distance(80))
-  .force("charge", d3.forceManyBody<Node>().strength(-200))
+  // Stocks are the diagram's anchors: they repel harder than other nodes...
+  .force("charge", d3.forceManyBody<Node>().strength(d => d.type === "stock" ? -300 : -200))
+  // ...and carry a bigger collision radius so they push clouds/faucets out of
+  // their space instead of letting them overlap; other nodes just avoid touching.
+  .force("collide", d3.forceCollide<Node>().radius(d => d.type === "stock" ? 42 : 24).strength(0.85))
   .force("center", d3.forceCenter<Node>(svgWidth / 2, svgHeight / 2))
-  .force("x", d3.forceX<Node>(svgWidth / 2).strength(0.05))
-  .force("y", d3.forceY<Node>(svgHeight / 2).strength(0.05))
+  // Stocks pull hard to their slot x (evenly spaced per band, see update());
+  // everything else gets only gentle x-centering — too strong crowds each band
+  // inward, and collision then escapes vertically (waving the line).
+  .force("x", d3.forceX<Node>(d => d.gx ?? svgWidth / 2).strength(d => d.gx != null ? 0.25 : 0.02))
+  // Stocks pin to their band's y hardest, other band members strongly (forming
+  // a horizontal line); floating nodes keep a gentle pull to center.
+  .force("y", d3.forceY<Node>(d => d.gy ?? svgHeight / 2).strength(d => d.type === "stock" ? 1.0 : d.inFlow ? 0.9 : 0.05))
   .on("tick", ticked);
 
 let nextId = systemNodes.length;
@@ -218,6 +269,67 @@ function update(system: System) {
     .call(sel => sel.select<SVGTextElement>("text").text(d => d.label))
     .call(drag(), undefined);
 
+  // Lay nodes out in horizontal bands. The compiler assigns each node a `group`
+  // (a flow-connected chain of stocks/faucets/clouds), numbered top to bottom;
+  // dots and reservoir-less faucets have no group and float.
+  const bandGap = 120;
+  const gs = nodes.map(n => n.group).filter((g): g is number => g != null);
+  const groupCount = gs.length ? Math.max(...gs) + 1 : 0;
+  for (const d of nodes) {
+    d.inFlow = d.group != null;
+    d.gy = d.group == null
+      ? svgHeight / 2
+      : svgHeight / 2 + (d.group - (groupCount - 1) / 2) * bandGap;
+  }
+
+  // Stocks are the main elements: give each band's stocks evenly-spaced x
+  // slots (in source order) that they anchor to; faucets/clouds arrange
+  // themselves around the stocks via the link/collision forces.
+  const parserId = (id: string) => {
+    const n = parseInt(id.slice(id.indexOf("#") + 1), 10);
+    return isNaN(n) ? 0 : n;
+  };
+  const stocksByBand = new Map<number, Node[]>();
+  for (const d of nodes) {
+    d.gx = undefined; // clear stale slots on recycled nodes
+    if (d.type === "stock" && d.group != null) {
+      const arr = stocksByBand.get(d.group) ?? [];
+      arr.push(d);
+      stocksByBand.set(d.group, arr);
+    }
+  }
+  for (const arr of stocksByBand.values()) {
+    arr.sort((a, b) => parserId(a.id) - parserId(b.id));
+    arr.forEach((d, i) => { d.gx = svgWidth * (i + 1) / (arr.length + 1); });
+  }
+
+  // Clouds are a band's sources/sinks and float to its outside: a cloud that
+  // feeds a flow (source) targets the left edge, one that receives (sink) the
+  // right edge. (Links still hold string ids here — resolved by the link force
+  // only further down.)
+  const nodeById = new Map(nodes.map(n => [n.id, n]));
+  const edgeMargin = 50;
+  for (const l of links) {
+    if (l.type !== "flow") continue;
+    const s = nodeById.get(l.source as string);
+    const t = nodeById.get(l.target as string);
+    if (s?.type === "cloud") s.gx = edgeMargin;
+    if (t?.type === "cloud") t.gx = svgWidth - edgeMargin;
+  }
+
+  // Flow links render as thick straight pipes (Meadows notation); the segment
+  // entering a stock/cloud carries the big triangular arrowhead — none into a
+  // faucet, where the pipe visually passes through. Info arrows stay thin
+  // curved arcs with a small head.
+  link
+    .attr("stroke-width", d => d.type === "flow" ? 8 : 1.5)
+    .attr("stroke-opacity", d => d.type === "flow" ? 1 : 0.6)
+    .attr("marker-end", d => {
+      if (d.type !== "flow") return "url(#info-arrow)";
+      const t = nodeById.get(d.target as string);
+      return t && t.type !== "faucet" ? "url(#flow-arrow)" : null;
+    });
+
   simulation.nodes(nodes);
 
   const linkForce = simulation.force<d3.ForceLink<Node, Link>>("link");
@@ -226,6 +338,35 @@ function update(system: System) {
   }
   linkForce.links(links);
   simulation.alpha(0.5).restart();
+}
+
+// The info-link arc is the minor arc (sweep 1) of the circle with radius equal
+// to the chord that passes through both endpoints. Back the endpoint up along
+// that same circle by `margin` arc-pixels, so the shortened path still lies
+// exactly on the original arc and the marker orients to its true tangent.
+function trimArcEnd(sx: number, sy: number, tx: number, ty: number, margin: number): { x: number, y: number } {
+  const dx = tx - sx, dy = ty - sy;
+  const d = Math.hypot(dx, dy);
+  if (d < margin + 4) return { x: tx, y: ty }; // too short to trim
+  const r = d;
+  const mx = (sx + tx) / 2, my = (sy + ty) / 2;
+  const h = Math.sqrt(Math.max(0, r * r - (d / 2) * (d / 2)));
+  const ux = dx / d, uy = dy / d;
+  // Two candidate circle centers; sweep-flag 1 means the angle from center
+  // increases (screen coords), so pick the center that yields a positive sweep.
+  for (const w of [1, -1]) {
+    const cx = mx - w * uy * h, cy = my + w * ux * h;
+    const a0 = Math.atan2(sy - cy, sx - cx);
+    const a1 = Math.atan2(ty - cy, tx - cx);
+    let da = a1 - a0;
+    while (da <= -Math.PI) da += 2 * Math.PI;
+    while (da > Math.PI) da -= 2 * Math.PI;
+    if (da > 0) {
+      const a = a1 - margin / r; // arc length -> angle
+      return { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
+    }
+  }
+  return { x: tx, y: ty };
 }
 
 function ticked() {
@@ -238,10 +379,26 @@ function ticked() {
     .attr("d", d => {
       const source = d.source as Node;
       const target = d.target as Node;
-      const dx = (target.x ?? 0) - (source.x ?? 0);
-      const dy = (target.y ?? 0) - (source.y ?? 0);
+      const sx = source.x ?? 0, sy = source.y ?? 0;
+      const tx = target.x ?? 0, ty = target.y ?? 0;
+      const dx = tx - sx, dy = ty - sy;
       const dr = Math.hypot(dx, dy);
-      return `M${source.x},${source.y}A${dr},${dr} 0 0,1 ${target.x},${target.y}`;
+      if (dr === 0) return `M${sx},${sy}L${tx},${ty}`;
+      if (d.type === "flow") {
+        // Straight pipe. The line stops at the arrowhead's BASE (marker refX
+        // 0), so reservoir targets are trimmed by node edge + head length and
+        // the tip lands on the node's edge. Faucet ends stay untrimmed — the
+        // faucet icon sits on top of the pipe.
+        const st = source.type === "faucet" ? 0 : nodeEdge;
+        const tt = target.type === "faucet" ? 0 : nodeEdge + flowArrowLength;
+        const f = dr > st + tt + 6 ? 1 : dr / (st + tt + 6); // degenerate: scale down
+        const ux = dx / dr, uy = dy / dr;
+        return `M${sx + ux * st * f},${sy + uy * st * f}L${tx - ux * tt * f},${ty - uy * tt * f}`;
+      }
+      // Info arc: back the endpoint up along the arc's own circle so the small
+      // head sits at the node's edge instead of buried under the shape.
+      const e = trimArcEnd(sx, sy, tx, ty, nodeEdge + infoArrowLength);
+      return `M${sx},${sy}A${dr},${dr} 0 0,1 ${e.x},${e.y}`;
     });
 }
 

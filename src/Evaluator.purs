@@ -4,14 +4,20 @@ module Evaluator
   , NodeType(..)
   , Link
   , evaluate
-  , runEvaluator
   ) where
 
 import Prelude
 import Data.Array as Array
+import Data.Foldable (traverse_, foldl, minimum, any)
+import Data.Int as Int
+import Data.List (List(..), (:))
+import Data.List as List
 import Data.Map as Map
-import Data.Maybe (Maybe(..))
-import Data.Tuple (Tuple(..))
+import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Set (Set)
+import Data.Set as Set
+import Data.String (Pattern(..), split)
+import Data.Tuple (Tuple(..), fst)
 import Control.Monad.State (State, runState, gets, modify_)
 import Parser (Tree(..), Id)
 import Simple.JSON (class WriteForeign, writeImpl)
@@ -26,7 +32,7 @@ instance showNodeType :: Show NodeType where
 instance writeForeignNodeType :: WriteForeign NodeType where
   writeImpl = writeImpl <<< show
 
-type Node = { type :: NodeType, id :: String, label :: String }
+type Node = { type :: NodeType, id :: String, label :: String, group :: Maybe Int }
 type Link = { type :: String, source :: String, target :: String }
 type Graph = { nodes :: Array Node, links :: Array Link }
 
@@ -82,7 +88,8 @@ leftmostId :: Tree -> Evaluator String
 leftmostId (NodeExpr i s) = resolveNamed Dot i s
 leftmostId (StockExpr i s) = resolveNamed Stock i s
 leftmostId (CloudExpr i s) = freshAnon Cloud i s
-leftmostId (FaucetExpr _ _ left _) = leftmostId left
+leftmostId (FaucetRExpr _ _ left _) = leftmostId left
+leftmostId (FaucetLExpr _ _ left _) = leftmostId left
 leftmostId (ArrowRExpr _ left _) = leftmostId left
 leftmostId (ArrowLExpr _ left _) = leftmostId left
 leftmostId (ParenExpr _ expr) = leftmostId expr
@@ -93,12 +100,21 @@ evaluateNode :: Tree -> Evaluator String
 evaluateNode (NodeExpr i s) = resolveNamed Dot i s
 evaluateNode (StockExpr i s) = resolveNamed Stock i s
 evaluateNode (CloudExpr i s) = freshAnon Cloud i s
-evaluateNode (FaucetExpr i name left right) = do
+evaluateNode (FaucetRExpr i name left right) = do
   l <- evaluateNode left
   fid <- resolveNamed Faucet i name
-  addLink l fid "arrow"
+  addLink l fid "flow"
   rid <- leftmostId right
-  addLink fid rid "arrow"
+  addLink fid rid "flow"
+  evaluateNode right
+-- | `<=` flows right-to-left: the right operand feeds the faucet, which pours
+-- | into the left operand (mirrors how ArrowL swaps its endpoints).
+evaluateNode (FaucetLExpr i name left right) = do
+  l <- evaluateNode left
+  fid <- resolveNamed Faucet i name
+  addLink fid l "flow"
+  rid <- leftmostId right
+  addLink rid fid "flow"
   evaluateNode right
 evaluateNode (ArrowRExpr _ left right) = do
   l <- evaluateNode left
@@ -112,20 +128,68 @@ evaluateNode (ArrowLExpr _ left right) = do
   pure l
 evaluateNode (ParenExpr _ expr) = evaluateNode expr
 
-evaluate :: Tree -> Graph
-evaluate tree =
-  let initialState = { registry: Map.empty, nodes: Map.empty, links: [] }
-      Tuple _ finalState = runState (evaluateNode tree) initialState
-      nodeArray = (Map.toUnfoldable finalState.nodes :: Array (Tuple String { ty :: NodeType, label :: String }))
-      nodes = map (\(Tuple id v) -> { type: v.ty, id, label: v.label }) nodeArray
-  in { nodes, links: finalState.links }
+-- | Undirected adjacency over a set of links (used for flow connectivity).
+buildAdjacency :: Array Link -> Map.Map String (Set String)
+buildAdjacency links = foldl step Map.empty links
+  where
+  step m l = addEdge l.source l.target (addEdge l.target l.source m)
+  addEdge a b m = Map.insertWith Set.union a (Set.singleton b) m
 
-runEvaluator :: Tree -> Tuple String Graph
-runEvaluator tree =
+-- | Every id reachable from `start` in the adjacency (DFS with a visited set).
+reach :: Map.Map String (Set String) -> String -> Set String
+reach adj start = go (start : Nil) Set.empty
+  where
+  go Nil seen = seen
+  go (x : xs) seen
+    | Set.member x seen = go xs seen
+    | otherwise =
+        let nbrs = fromMaybe Set.empty (Map.lookup x adj)
+        in go (List.fromFoldable nbrs <> xs) (Set.insert x seen)
+
+-- | Connected components of the adjacency, as node-id sets.
+connectedComponents :: Map.Map String (Set String) -> Array (Set String)
+connectedComponents adj = (foldl step { visited: Set.empty, comps: [] } nodeIds).comps
+  where
+  nodeIds = map fst (Map.toUnfoldable adj :: Array (Tuple String (Set String)))
+  step acc n
+    | Set.member n acc.visited = acc
+    | otherwise =
+        let c = reach adj n
+        in { visited: Set.union acc.visited c, comps: Array.snoc acc.comps c }
+
+-- | The integer the parser minted for an id (`stock#5` -> 5). Needed because
+-- | ids sort lexicographically otherwise (`stock#10` < `stock#2`).
+parserId :: String -> Int
+parserId s = fromMaybe top (Array.last (split (Pattern "#") s) >>= Int.fromString)
+
+-- | Assign each node its band group: connected components over flow links,
+-- | keeping only components that contain a reservoir (a stock or cloud). A
+-- | group's members are its non-dot nodes; dots and reservoir-less faucets get
+-- | no group and float. Groups are numbered by source order (min parser id).
+computeGroups :: EvalState -> Map.Map String Int
+computeGroups st =
+  let flowLinks = Array.filter (\l -> l.type == "flow") st.links
+      adjacency = buildAdjacency flowLinks
+      tyOf id = map _.ty (Map.lookup id st.nodes)
+      isDot id = tyOf id == Just Dot
+      isReservoir id = tyOf id == Just Stock || tyOf id == Just Cloud
+      members c = Array.fromFoldable c
+      nonDot c = Array.filter (not <<< isDot) (members c)
+      hasReservoir c = any isReservoir (members c)
+      kept = Array.filter hasReservoir (connectedComponents adjacency)
+      keyOf c = fromMaybe top (minimum (map parserId (nonDot c)))
+      sorted = Array.sortWith keyOf kept
+      assign m (Tuple idx c) = foldl (\mm id -> Map.insert id idx mm) m (nonDot c)
+  in foldl assign Map.empty (Array.mapWithIndex Tuple sorted)
+
+-- | Evaluate every statement against one shared state, so nodes named in
+-- | different statements resolve (via the registry) to a single graph node.
+evaluate :: List Tree -> Graph
+evaluate trees =
   let initialState = { registry: Map.empty, nodes: Map.empty, links: [] }
-      Tuple result finalState = runState (evaluateNode tree) initialState
+      Tuple _ finalState = runState (traverse_ evaluateNode trees) initialState
       nodeArray = (Map.toUnfoldable finalState.nodes :: Array (Tuple String { ty :: NodeType, label :: String }))
-      nodes = map (\(Tuple id v) -> { type: v.ty, id, label: v.label }) nodeArray
-      graph = { nodes, links: finalState.links }
-  in Tuple result graph
+      groupOf = computeGroups finalState
+      nodes = map (\(Tuple id v) -> { type: v.ty, id, label: v.label, group: Map.lookup id groupOf }) nodeArray
+  in { nodes, links: finalState.links }
 
