@@ -1,7 +1,7 @@
 .PHONY: init done shell code setup lock hash dev build run run-with
 
 # ---------------------------------------------------------------------------
-# One-time setup (run once, or whenever parcel/d3 deps change in package.json)
+# One-time setup (run once, or whenever esbuild/d3 deps change in package.json)
 # ---------------------------------------------------------------------------
 
 init:
@@ -35,7 +35,13 @@ shell:
 code:
 	nix --experimental-features 'nix-command flakes' develop --command $$SHELL -c 'code .'
 
-# Run the parcel dev server against ui/index.html
+# Compile src/ -> output/ so the UI picks up backend changes.
+# ui/app.ts imports the compiled backend from output/Main, which is produced
+# by `spago build`. Run this after editing any src/*.purs before `make dev`.
+build:
+	nix --experimental-features 'nix-command flakes' develop --command spago build
+
+# Run the esbuild dev server against ui/index.html
 dev:
 	nix --experimental-features 'nix-command flakes' develop --command esbuild ui/index.js --bundle --watch --outdir=./ui --servedir=./ui --loader:.svg=dataurl
 # 	nix --experimental-features 'nix-command flakes' develop --command esbuild ui/index.ts --bundle --watch --outdir=./ui --servedir=./ui
