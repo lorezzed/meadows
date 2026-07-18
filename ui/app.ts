@@ -2,10 +2,6 @@ import * as d3 from "d3";
 
 import * as interpreter from '../output/Main/index'
 import type { Node, Link, System } from "./type";
-import { stockInit, stockHeight, stockTick, stockWidth } from "./shape/stock";
-import { dotInit, dotTick } from "./shape/dot";
-import { faucetInit, faucetUpdate, faucetHeight, faucetTick, faucetWidth } from "./shape/faucet";
-import { cloudInit, cloudHeight, cloudTick, cloudWidth, cloudUpdate } from "./shape/cloud";
 import faucetSvg from './shape/faucet.svg'
 import cloudSvg from './shape/cloud.svg'
 
@@ -60,7 +56,7 @@ examples.append('button')
 const svgWidth = 600
 const svgHeight = 400
 
-const svg: d3.Selection<SVGSVGElement, Node, HTMLElement, Link> = container
+const svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, any> = container
   .append('svg')
   .attr('class', 'svg')
   .style('order', 1) // flexbox ordering
@@ -103,7 +99,7 @@ let link = svg.append("g")
   .attr("stroke", "#00f")
   .attr("stroke-opacity", 0.6)
   .attr("fill", "none")
-  .selectAll("path");
+  .selectAll<SVGPathElement, Link>("path");
 
 const dotRadius = 20;
 const stockWidth = 40;
@@ -118,17 +114,17 @@ let nodeDot = svg.append<SVGGElement>("g")
   .attr("fill", "rgba(0, 0, 255, 0.5)")
   .attr("stroke", "#00f")
   .attr("stroke-width", 1.5)
-  .selectAll<SVGCircleElement, Node>("circle", d => d.id);
+  .selectAll<SVGCircleElement, Node>("circle");
 let nodeStock = svg.append<SVGGElement>("g")
-  .selectAll<SVGRectElement, Node>("rect", d => d.id)
+  .selectAll<SVGRectElement, Node>("rect")
 let nodeFaucet = svg.append<SVGGElement>("g")
-  .selectAll<SVGImageElement, Node>("image", d => d.id)
+  .selectAll<SVGImageElement, Node>("image")
 // let nodeFaucet = svg.append<SVGGElement>("g")
 //   .selectAll<SVGRectElement, Node>("rect")
 // let nodeFaucet = svg.append<SVGGElement>("g")
 //   .selectAll<SVGImageElement, Node>("image")
 let nodeCloud = svg.append<SVGGElement>("g")
-  .selectAll<SVGRectElement, Node>("rect", d => d.id);
+  .selectAll<SVGImageElement, Node>("image");
 
 let nodeLabel = svg.append("g")
   .attr("class", "labels")
@@ -137,7 +133,7 @@ let nodeLabel = svg.append("g")
   .attr("font-family", "sans-serif")
   .attr("text-anchor", "middle")
   .attr("fill", "#000")
-  .selectAll("text")
+  .selectAll<SVGTextElement, Node>("text")
 
 const nodes: Node[] = [];
 const links: Link[] = []
@@ -164,7 +160,7 @@ update(system);
 function update(system: System) {
   // Make a shallow copy to protect` against mutation, while recycling old nodes to preserve position and velocity.
   let { nodes, links } = system;
-  const oldStock = new Map(nodeStock.data().map(d => [d.id, d]));
+  // const oldStock = new Map(nodeStock.data().map(d => [d.id, d]));
   // nodes = nodes.map(d => ({ ...oldStock.get(d.id), ...d }));
   // links = links.map(d => ({ ...d }));
 
@@ -205,7 +201,7 @@ function update(system: System) {
 
   simulation.nodes(nodes);
 
-  const linkForce = simulation.force("link");
+  const linkForce = simulation.force<d3.ForceLink<Node, Link>>("link");
   if (!linkForce) {
     throw new Error("Link force is not defined in the simulation.");
   }
@@ -215,28 +211,30 @@ function update(system: System) {
 
 function ticked() {
   nodeStock
-    .attr("x", d => d.x - stockWidth / 2)
-    .attr("y", d => d.y - stockHeight / 2);
+    .attr("x", d => (d.x ?? 0) - stockWidth / 2)
+    .attr("y", d => (d.y ?? 0) - stockHeight / 2);
   nodeDot
-    .attr("cx", d => d.x)
-    .attr("cy", d => d.y)
+    .attr("cx", d => d.x ?? 0)
+    .attr("cy", d => d.y ?? 0)
     .attr("r", dotRadius);
   nodeFaucet
-    .attr("x", d => d.x - faucetWidth / 2)
-    .attr("y", d => d.y - faucetHeight / 2);
+    .attr("x", d => (d.x ?? 0) - faucetWidth / 2)
+    .attr("y", d => (d.y ?? 0) - faucetHeight / 2);
   nodeCloud
-    .attr("x", d => d.x - cloudWidth / 2)
-    .attr("y", d => d.y - cloudHeight / 2);
+    .attr("x", d => (d.x ?? 0) - cloudWidth / 2)
+    .attr("y", d => (d.y ?? 0) - cloudHeight / 2);
   nodeLabel
     .attr("x", d => d.x ?? 0)
     .attr("y", d => (d.y ?? 0) + 3)
 
   link
     .attr("d", d => {
-      const dx = d.target.x - d.source.x;
-      const dy = d.target.y - d.source.y;
+      const source = d.source as Node;
+      const target = d.target as Node;
+      const dx = (target.x ?? 0) - (source.x ?? 0);
+      const dy = (target.y ?? 0) - (source.y ?? 0);
       const dr = Math.hypot(dx, dy);
-      return `M${d.source.x},${d.source.y}A${dr},${dr} 0 0,1 ${d.target.x},${d.target.y}`;
+      return `M${source.x},${source.y}A${dr},${dr} 0 0,1 ${target.x},${target.y}`;
     });
 }
 
@@ -244,8 +242,8 @@ function click(event: MouseEvent) {
   const [x, y] = d3.pointer(event);
   nextId++;
   const newNode: Node = { type: "dot", id: nextId, label: `${nextId}`, x, y };
-  if (nodes.length > 0) {
-    const nearest = nodes[nodes.length - 1];
+  const nearest = nodes[nodes.length - 1];
+  if (nearest) {
     links.push({ source: nearest.id, target: newNode.id, type: "arrow" });
   }
   nodes.push(newNode);
@@ -258,8 +256,8 @@ function loadExample(text: string) {
 }
 
 function drag() {
-  return d3.drag()
-    .on("start", (event, d: Node) => {
+  return d3.drag<any, Node>()
+    .on("start", (event, d) => {
       if (!event.active) {
         simulation.alphaTarget(0.3).restart();
       }

@@ -5,8 +5,6 @@ type NodeBase = {
 }
 type LinkBase = {
   type: string // "arrow"
-  target: string
-  source: string
 }
 export type Node = d3.SimulationNodeDatum & NodeBase
 export type Link = d3.SimulationLinkDatum<Node> & LinkBase
