@@ -1,6 +1,6 @@
 type NodeBase = {
   type: string;
-  id: string
+  id: number;
   label: string
 }
 type LinkBase = {

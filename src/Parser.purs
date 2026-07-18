@@ -3,21 +3,16 @@ module Parser
   , Id
   , parse
   ) where
-
 import Prelude
-
 import Control.Monad.State (State, evalState, state)
 import Data.Either (Either(..))
 import Data.List (List(..))
 import Data.Tuple (Tuple(..))
 import Lexer (Token(..), Operator(..), tokenize, lookAhead, accept)
-
 import Data.Show.Generic (genericShow)
 import Data.Show (class Show)
 import Data.Generic.Rep (class Generic)
-
 type Id = Int
-
 data Tree
   = NodeExpr Id String
   | CloudExpr Id String
@@ -26,11 +21,8 @@ data Tree
   | ArrowRExpr Id Tree Tree
   | ArrowLExpr Id Tree Tree
   | ParenExpr Id Tree
-
 derive instance eqTree :: Eq Tree
-
 derive instance genericTree :: Generic Tree _
-
 instance showTree :: Show Tree where
   show (NodeExpr i s) = "Node#" <> show i <> "(" <> s <> ")"
   show (StockExpr i s) = "Stock#" <> show i <> "(" <> show s <> ")"
@@ -39,17 +31,14 @@ instance showTree :: Show Tree where
   show (ArrowRExpr i l r) = "ArrowR#" <> show i <> "(" <> show l <> " -> " <> show r <> ")"
   show (ArrowLExpr i l r) = "ArrowL#" <> show i <> "(" <> show l <> " <- " <> show r <> ")"
   show (ParenExpr i expr) = "Paren#" <> show i <> "(" <> show expr <> ")"
-
 -- | Anonymous counter: hand back the next unused id, bump the state.
 fresh :: State Id Id
 fresh = state \n -> Tuple n (n + 1)
-
 parse :: List Token -> Either String Tree
 parse tokens =
   case evalState (expression tokens) 0 of
     { tree, rest: Nil } -> Right tree
     { tree, rest } -> Left $ "Leftover tokens: " <> show rest
-
 expression :: List Token -> State Id { tree :: Tree, rest :: List Token }
 expression tokens = do
   { tree: termTree, rest: rest' } <- term tokens
@@ -77,7 +66,6 @@ expression tokens = do
           pure { tree: FaucetExpr i name termTree exprTree, rest: rest'' }
         _ -> errorAt tokens
     _ -> pure { tree: termTree, rest: rest' }
-
 term :: List Token -> State Id { tree :: Tree, rest :: List Token }
 term tokens =
   case lookAhead tokens of
@@ -91,7 +79,6 @@ term tokens =
             _ -> errorAt tokens
         _ -> errorAt tokens
     _ -> factor tokens
-
 factor :: List Token -> State Id { tree :: Tree, rest :: List Token }
 factor tokens =
   case lookAhead tokens of
@@ -113,8 +100,7 @@ factor tokens =
         TokRParen -> pure { tree: ParenExpr i exprTree, rest: accept rest' }
         _ -> errorAt tokens
     _ -> errorAt tokens
-
--- | Every failure path previously returned `NodeExpr "ERROR"` with the id
+-- | Every failure path previously returned NodeExpr "ERROR" with the id
 -- | field bolted on, that constructor now needs an id too — so failures
 -- | still consume a counter tick. Keeps behaviour identical to before.
 errorAt :: List Token -> State Id { tree :: Tree, rest :: List Token }

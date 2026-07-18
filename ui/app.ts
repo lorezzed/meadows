@@ -26,6 +26,11 @@ const examples = container
   .append('div')
   .style('order', 2) // flexbox ordering
 examples.append('button')
+  .text('a->b')
+  .on('click', function () {
+    loadExample(this.textContent);
+  });
+examples.append('button')
   .text('a->b=>c d')
   .on('click', function () {
     loadExample(this.textContent);
@@ -52,17 +57,15 @@ examples.append('button')
   });
 
 
-const width = 600
-const height = 400
-// Selection<BaseType | SVGLineElement, Link, SVGGElement, unknown>
-// d3.Selection<SVGSVGElement, unknown, HTMLElement, any>
+const svgWidth = 600
+const svgHeight = 400
 
 const svg: d3.Selection<SVGSVGElement, Node, HTMLElement, Link> = container
   .append('svg')
   .attr('class', 'svg')
   .style('order', 1) // flexbox ordering
-  .style('width', width)
-  .style('height', height)
+  .style('width', svgWidth)
+  .style('height', svgHeight)
   // .attr("viewBox", [-width / 2, -height / 2, width, height])
   .style('border', '1px solid black')
   .on("click", click)
@@ -114,17 +117,17 @@ let nodeDot = svg.append<SVGGElement>("g")
   .attr("fill", "rgba(0, 0, 255, 0.5)")
   .attr("stroke", "#00f")
   .attr("stroke-width", 1.5)
-  .selectAll<SVGCircleElement, Node>("circle");
+  .selectAll<SVGCircleElement, Node>("circle", d => d.id);
 let nodeStock = svg.append<SVGGElement>("g")
-  .selectAll<SVGRectElement, Node>("rect")
+  .selectAll<SVGRectElement, Node>("rect", d => d.id)
 let nodeFaucet = svg.append<SVGGElement>("g")
-  .selectAll<SVGImageElement, Node>("image")
+  .selectAll<SVGImageElement, Node>("image", d => d.id)
 // let nodeFaucet = svg.append<SVGGElement>("g")
 //   .selectAll<SVGRectElement, Node>("rect")
 // let nodeFaucet = svg.append<SVGGElement>("g")
 //   .selectAll<SVGImageElement, Node>("image")
 let nodeCloud = svg.append<SVGGElement>("g")
-  .selectAll<SVGRectElement, Node>("rect");
+  .selectAll<SVGRectElement, Node>("rect", d => d.id);
 
 let nodeLabel = svg.append("g")
   .attr("class", "labels")
@@ -135,23 +138,27 @@ let nodeLabel = svg.append("g")
   .attr("fill", "#000")
   .selectAll("text")
 
-// const nodes = []
-// const links = []
-const nodes: Node[] = [{ type: "dot", id: "A", label: "A" }, { type: "dot", id: "B", label: "B" }, { type: "stock", id: "C", label: "C" }, { type: "faucet", id: "D", label: "D" }];
-const links: Link[] = [{ source: "A", target: "B", type: "arrow" }, { source: "B", target: "C", type: "arrow" }, { source: "C", target: "D", type: "arrow" }, { source: "D", target: "A", type: "arrow" }]
+const nodes: Node[] = [];
+const links: Link[] = []
+// const nodes: Node[] = [{ type: "dot", id: 1, label: "A" }, { type: "dot", id: 2, label: "B" }, { type: "stock", id: 3, label: "C" }, { type: "faucet", id: 4, label: "D" }];
+// const links: Link[] = [{ source: "A", target: "B", type: "arrow" }, { source: "B", target: "C", type: "arrow" }, { source: "C", target: "D", type: "arrow" }, { source: "D", target: "A", type: "arrow" }]
 // let nodes = [{ "label": "d", "id": "d" }]
 // let links = [{ "type": "arrow", "target": "e", "source": "d" }]
 const system: System = { nodes, links }
 
+// .id(d => d.id)
 const simulation = d3.forceSimulation<Node, Link>(nodes)
   .force("link", d3.forceLink<Node, Link>(links).id(d => d.id).distance(80))
   .force("charge", d3.forceManyBody<Node>().strength(-200))
-  .force("center", d3.forceCenter<Node>(width / 2, height / 2))
-  .force("x", d3.forceX<Node>(width / 2).strength(0.05))
-  .force("y", d3.forceY<Node>(height / 2).strength(0.05))
+  .force("center", d3.forceCenter<Node>(svgWidth / 2, svgHeight / 2))
+  .force("x", d3.forceX<Node>(svgWidth / 2).strength(0.05))
+  .force("y", d3.forceY<Node>(svgHeight / 2).strength(0.05))
   .on("tick", ticked);
 
 let nextId = nodes.length;
+
+// Draw the graph
+update(system);
 
 function update(system: System) {
   // Make a shallow copy to protect` against mutation, while recycling old nodes to preserve position and velocity.
@@ -165,11 +172,11 @@ function update(system: System) {
     .join("line")
     .attr("stroke", "#999");
   nodeDot = nodeDot
-    .data(nodes.filter(x => x.type === 'dot'))
+    .data(nodes.filter(x => x.type === 'dot'), d => d.id)
     .join("circle")
     .call(drag(), undefined);
   nodeStock = nodeStock
-    .data(nodes.filter(x => x.type === 'stock'))
+    .data(nodes.filter(x => x.type === 'stock'), d => d.id)
     .join("rect")
     .attr("stroke", "#f00")
     .attr("stroke-width", 1.5)
@@ -177,20 +184,20 @@ function update(system: System) {
     .attr("width", stockWidth)
     .attr("height", stockHeight)
     .call(drag(), undefined)
-  nodeFaucet = nodeFaucet.data(nodes.filter(x => x.type === 'faucet'))
+  nodeFaucet = nodeFaucet.data(nodes.filter(x => x.type === 'faucet'), d => d.id)
     .join("image")
     .attr("href", faucetSvg)
     .attr("width", faucetWidth)
     .attr("height", faucetHeight)
     .call(drag(), undefined);
-  nodeCloud = nodeCloud.data(nodes.filter(x => x.type === 'cloud'))
+  nodeCloud = nodeCloud.data(nodes.filter(x => x.type === 'cloud'), d => d.id)
     .join("image")
     .attr("href", cloudSvg)
     .attr("width", cloudWidth)
     .attr("height", cloudHeight)
     .call(drag(), undefined);
   nodeLabel = nodeLabel
-    .data(nodes)
+    .data(nodes, d => d.id)
     .join("text")
     .text(d => d.type)
 
@@ -203,9 +210,6 @@ function update(system: System) {
   linkForce.links(links);
   simulation.alpha(0.5).restart();
 }
-
-// Draw the graph
-update(system);
 
 function ticked() {
   nodeStock
@@ -235,7 +239,7 @@ function ticked() {
 function click(event: MouseEvent) {
   const [x, y] = d3.pointer(event);
   nextId++;
-  const newNode: Node = { type: "dot", id: `N${nextId}`, label: `{nextId}`, x, y };
+  const newNode: Node = { type: "dot", id: nextId, label: `${nextId}`, x, y };
   if (nodes.length > 0) {
     const nearest = nodes[nodes.length - 1];
     links.push({ source: nearest.id, target: newNode.id, type: "arrow" });
