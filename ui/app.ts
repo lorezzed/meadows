@@ -109,31 +109,16 @@ const faucetHeight = 40
 const cloudWidth = 40;
 const cloudHeight = 40;
 
+// Each node is a <g> that holds its shape *and* its text label, so the two
+// move together (positioned via a transform in ticked()).
 let nodeDot = svg.append<SVGGElement>("g")
-  .attr("r", 8)
-  .attr("fill", "rgba(0, 0, 255, 0.5)")
-  .attr("stroke", "#00f")
-  .attr("stroke-width", 1.5)
-  .selectAll<SVGCircleElement, Node>("circle");
+  .selectAll<SVGGElement, Node>("g");
 let nodeStock = svg.append<SVGGElement>("g")
-  .selectAll<SVGRectElement, Node>("rect")
+  .selectAll<SVGGElement, Node>("g");
 let nodeFaucet = svg.append<SVGGElement>("g")
-  .selectAll<SVGImageElement, Node>("image")
-// let nodeFaucet = svg.append<SVGGElement>("g")
-//   .selectAll<SVGRectElement, Node>("rect")
-// let nodeFaucet = svg.append<SVGGElement>("g")
-//   .selectAll<SVGImageElement, Node>("image")
+  .selectAll<SVGGElement, Node>("g");
 let nodeCloud = svg.append<SVGGElement>("g")
-  .selectAll<SVGImageElement, Node>("image");
-
-let nodeLabel = svg.append("g")
-  .attr("class", "labels")
-  .attr("pointer-events", "none")
-  .attr("font-size", 10)
-  .attr("font-family", "sans-serif")
-  .attr("text-anchor", "middle")
-  .attr("fill", "#000")
-  .selectAll<SVGTextElement, Node>("text")
+  .selectAll<SVGGElement, Node>("g");
 
 const nodes: Node[] = [];
 const links: Link[] = []
@@ -171,33 +156,65 @@ function update(system: System) {
     .attr("stroke", "#999");
   nodeDot = nodeDot
     .data(nodes.filter(x => x.type === 'dot'), d => d.id)
-    .join("circle")
+    .join(enter => {
+      const g = enter.append("g");
+      g.append("circle")
+        .attr("r", dotRadius)
+        .attr("fill", "rgba(0, 0, 255, 0.5)")
+        .attr("stroke", "#00f")
+        .attr("stroke-width", 1.5);
+      appendLabel(g);
+      return g;
+    })
+    .call(sel => sel.select<SVGTextElement>("text").text(d => d.label))
     .call(drag(), undefined);
   nodeStock = nodeStock
     .data(nodes.filter(x => x.type === 'stock'), d => d.id)
-    .join("rect")
-    .attr("stroke", "#f00")
-    .attr("stroke-width", 1.5)
-    .attr("fill", "rgba(255, 0, 0, 0.5)")
-    .attr("width", stockWidth)
-    .attr("height", stockHeight)
-    .call(drag(), undefined)
-  nodeFaucet = nodeFaucet.data(nodes.filter(x => x.type === 'faucet'), d => d.id)
-    .join("image")
-    .attr("href", faucetSvg)
-    .attr("width", faucetWidth)
-    .attr("height", faucetHeight)
+    .join(enter => {
+      const g = enter.append("g");
+      g.append("rect")
+        .attr("x", -stockWidth / 2)
+        .attr("y", -stockHeight / 2)
+        .attr("width", stockWidth)
+        .attr("height", stockHeight)
+        .attr("stroke", "#f00")
+        .attr("stroke-width", 1.5)
+        .attr("fill", "rgba(255, 0, 0, 0.5)");
+      appendLabel(g);
+      return g;
+    })
+    .call(sel => sel.select<SVGTextElement>("text").text(d => d.label))
     .call(drag(), undefined);
-  nodeCloud = nodeCloud.data(nodes.filter(x => x.type === 'cloud'), d => d.id)
-    .join("image")
-    .attr("href", cloudSvg)
-    .attr("width", cloudWidth)
-    .attr("height", cloudHeight)
+  nodeFaucet = nodeFaucet
+    .data(nodes.filter(x => x.type === 'faucet'), d => d.id)
+    .join(enter => {
+      const g = enter.append("g");
+      g.append("image")
+        .attr("href", faucetSvg)
+        .attr("x", -faucetWidth / 2)
+        .attr("y", -faucetHeight / 2)
+        .attr("width", faucetWidth)
+        .attr("height", faucetHeight);
+      appendLabel(g);
+      return g;
+    })
+    .call(sel => sel.select<SVGTextElement>("text").text(d => d.label))
     .call(drag(), undefined);
-  nodeLabel = nodeLabel
-    .data(nodes, d => d.id)
-    .join("text")
-    .text(d => d.type)
+  nodeCloud = nodeCloud
+    .data(nodes.filter(x => x.type === 'cloud'), d => d.id)
+    .join(enter => {
+      const g = enter.append("g");
+      g.append("image")
+        .attr("href", cloudSvg)
+        .attr("x", -cloudWidth / 2)
+        .attr("y", -cloudHeight / 2)
+        .attr("width", cloudWidth)
+        .attr("height", cloudHeight);
+      appendLabel(g);
+      return g;
+    })
+    .call(sel => sel.select<SVGTextElement>("text").text(d => d.label))
+    .call(drag(), undefined);
 
   simulation.nodes(nodes);
 
@@ -210,22 +227,10 @@ function update(system: System) {
 }
 
 function ticked() {
-  nodeStock
-    .attr("x", d => (d.x ?? 0) - stockWidth / 2)
-    .attr("y", d => (d.y ?? 0) - stockHeight / 2);
-  nodeDot
-    .attr("cx", d => d.x ?? 0)
-    .attr("cy", d => d.y ?? 0)
-    .attr("r", dotRadius);
-  nodeFaucet
-    .attr("x", d => (d.x ?? 0) - faucetWidth / 2)
-    .attr("y", d => (d.y ?? 0) - faucetHeight / 2);
-  nodeCloud
-    .attr("x", d => (d.x ?? 0) - cloudWidth / 2)
-    .attr("y", d => (d.y ?? 0) - cloudHeight / 2);
-  nodeLabel
-    .attr("x", d => d.x ?? 0)
-    .attr("y", d => (d.y ?? 0) + 3)
+  nodeDot.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
+  nodeStock.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
+  nodeFaucet.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
+  nodeCloud.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
 
   link
     .attr("d", d => {
@@ -253,6 +258,18 @@ function click(event: MouseEvent) {
 function loadExample(text: string) {
   textInput.property('value', text);
   textInput.node()?.dispatchEvent(new Event('input'));
+}
+
+// Append a centered text label to a per-node <g>. The text is drawn on top of
+// the node's shape and moves with it (the group carries the transform).
+function appendLabel(g: d3.Selection<SVGGElement, Node, SVGGElement, unknown>) {
+  g.append("text")
+    .attr("text-anchor", "middle")
+    .attr("dy", "0.32em")
+    .attr("font-size", 10)
+    .attr("font-family", "sans-serif")
+    .attr("fill", "#000")
+    .attr("pointer-events", "none");
 }
 
 function drag() {
