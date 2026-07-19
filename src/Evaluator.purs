@@ -74,6 +74,10 @@ resolveNamed ty i name = do
         }
       pure newId
 
+-- | Clouds are anonymous, so the evaluator picks their display label.
+cloudLabel :: String
+cloudLabel = "|"
+
 -- | Anonymous nodes (clouds): always mint a fresh id, never touch the
 -- | registry, so repeated occurrences never collapse into one node.
 freshAnon :: NodeType -> Id -> String -> Evaluator String
@@ -87,7 +91,7 @@ freshAnon ty i label = do
 leftmostId :: Tree -> Evaluator String
 leftmostId (NodeExpr i s) = resolveNamed Dot i s
 leftmostId (StockExpr i s) = resolveNamed Stock i s
-leftmostId (CloudExpr i s) = freshAnon Cloud i s
+leftmostId (CloudExpr i) = freshAnon Cloud i cloudLabel
 leftmostId (FaucetRExpr _ _ left _) = leftmostId left
 leftmostId (FaucetLExpr _ _ left _) = leftmostId left
 leftmostId (ArrowRExpr _ left _) = leftmostId left
@@ -99,7 +103,7 @@ leftmostId (ParenExpr _ expr) = leftmostId expr
 evaluateNode :: Tree -> Evaluator String
 evaluateNode (NodeExpr i s) = resolveNamed Dot i s
 evaluateNode (StockExpr i s) = resolveNamed Stock i s
-evaluateNode (CloudExpr i s) = freshAnon Cloud i s
+evaluateNode (CloudExpr i) = freshAnon Cloud i cloudLabel
 evaluateNode (FaucetRExpr i name left right) = do
   l <- evaluateNode left
   fid <- resolveNamed Faucet i name

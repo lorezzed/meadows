@@ -2,8 +2,9 @@ module Lexer
   ( Operator(..)
   , PosToken
   , Token(..)
-  , cloud
+  , describeToken
   , formatParseError
+  , opSymbol
   , tokenize
   )
   where
@@ -27,11 +28,8 @@ import Data.Generic.Rep (class Generic)
 data Operator
   = ArrowR   -- ->
   | ArrowL   -- <-
-  | StockR   -- ]
-  | StockL   -- [
   | FaucetR   -- =>
   | FaucetL   -- <=
-  -- | Cloud   -- |
 
 derive instance eqOperator :: Eq Operator
 derive instance genericOperator :: Generic Operator _
@@ -41,7 +39,7 @@ instance showOperator :: Show Operator where
 data Token
   = TokIdent String
   | TokOp Operator
-  | TokCloud String
+  | TokCloud
   | TokLParen
   | TokRParen
   | TokLBracket
@@ -63,12 +61,10 @@ formatParseError err = case parseErrorPosition err of
   Position { line, column } ->
     "line " <> show line <> ", column " <> show column <> ": " <> parseErrorMessage err
 
--- Parsers for individual tokens
 -- Horizontal whitespace only: newlines are significant (they become TokSep).
 hspaces :: Parser String Unit
 hspaces = void $ many $ oneOf [' ', '\t']
 
--- A single word: a letter followed by alphanumerics / underscores.
 word :: Parser String String
 word = do
   first <- letter
@@ -113,10 +109,9 @@ leftBracket = char '['
 rightBracket :: Parser String Char
 rightBracket = char ']'
 
-cloud :: Parser String String
-cloud = string "|"
+cloud :: Parser String Char
+cloud = char '|'
 
--- Token parser
 token :: Parser String Token
 token
   =   (TokOp <$> operator)
@@ -124,7 +119,7 @@ token
   <|> (TokRParen <$ rightParen)
   <|> (TokLBracket <$ leftBracket)
   <|> (TokRBracket <$ rightBracket)
-  <|> (TokCloud <$> cloud)
+  <|> (TokCloud <$ cloud)
   <|> (TokIdent <$> identifier)
 
 -- A run of newlines (plus any surrounding blank space) becomes one TokSep,
@@ -148,7 +143,6 @@ item = do
   hspaces
   pure { pos, tok: t }
 
--- Main tokenizer
 tokens :: Parser String (List PosToken)
 tokens = do
   hspaces
@@ -161,3 +155,21 @@ tokenize input =
   case runParser input tokens of
     Left err -> Left (formatParseError err)
     Right toks -> Right toks
+
+-- | Human rendering for "unexpected <token>" messages; keeps the
+-- | token -> lexeme mapping (the surface syntax) solely in the lexer.
+describeToken :: Token -> String
+describeToken (TokIdent s) = "name '" <> s <> "'"
+describeToken (TokOp op) = "'" <> opSymbol op <> "'"
+describeToken TokCloud = "'|'"
+describeToken TokLParen = "'('"
+describeToken TokRParen = "')'"
+describeToken TokLBracket = "'['"
+describeToken TokRBracket = "']'"
+describeToken TokSep = "end of line"
+
+opSymbol :: Operator -> String
+opSymbol ArrowR = "->"
+opSymbol ArrowL = "<-"
+opSymbol FaucetR = "=>"
+opSymbol FaucetL = "<="

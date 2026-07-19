@@ -31,17 +31,25 @@ references Parcel, but the actual bundler in use is **esbuild** (via `make dev`)
 make shell        # enter the nix dev shell (purs, spago, node, esbuild)
 make dev          # esbuild dev server: bundles ui/index.js, watches, serves ./ui
                   #   (loads .svg as dataurl); open the served ui/index.html
-make run          # spago run — compiles src/ and runs Main entrypoint
-make run-with "a->b"   # spago run passing the quoted DSL string as an arg
+make run          # CLI entrypoint (src/CLI.purs) with no input: prints usage
+make run-with "a->b"     # compile a DSL string, print its graph JSON
+make run-with in="a=>j"  # in= form REQUIRED when the input contains '='
+                  #   (make parses a bare "a=>j" goal as a variable override)
+make test         # spago test (PureScript unit suite) + golden battery
+                  #   (test/golden.mjs: byte-exact graph JSON + positioned errors).
+                  #   Refresh goldens after an INTENDED change: node test/golden.mjs --capture
 
 # Inside `nix develop` (or `make shell`) you also have the raw tools:
 spago build       # compile src/ -> output/  (REQUIRED before the UI sees backend changes)
-spago test        # run test/Main.purs (currently a stub — no real tests yet)
+spago test        # PureScript unit suite: tokens & positions, Tree shapes, evaluator rules
 spago repl        # PureScript REPL
 npx tsc           # typecheck ui/ (tsconfig has noEmit; type-check only)
 ```
 
-There is no single test-runner story yet; `test/Main.purs` is a placeholder.
+Tests live in two layers, both run by `make test`: `test/Main.purs` unit-tests the
+compiler internals (token streams & positions, exact `Tree` shapes including minted
+ids, evaluator identity/link/group rules), and `test/golden.mjs` pins the end-to-end
+JSON seam byte-exactly.
 
 ### Build coupling (important)
 
@@ -56,22 +64,32 @@ A classic three-stage pipeline, orchestrated by `go` in `Main.purs`
 (`tokenize >=> parse >=> evaluate`, each stage short-circuiting on `Either` error into a
 JSON error string):
 
-1. **`Lexer.purs`** — `tokenize :: String -> Either String (List Token)`, built on the
-   `purescript-parsing` combinator library. Recognizes the DSL operators. The lexeme →
-   token mapping is the DSL's surface syntax:
+1. **`Lexer.purs`** — `tokenize :: String -> Either String (List PosToken)`, built on the
+   `purescript-parsing` combinator library. Each token carries the source position where
+   it starts (`PosToken = { pos, tok }`, stamped via `Parsing.position`); lex/parse
+   errors both format through `formatParseError` as `line L, column C: msg`. The
+   lexeme → token mapping is the DSL's surface syntax:
    - identifiers → `TokIdent` (become **dot** nodes)
    - `->` / `<-` → arrows (`ArrowR` / `ArrowL`)
    - `[` `]` → stock brackets (a `[name]` is a **stock** node)
    - `=>` / `<=` → faucets (`FaucetR` / `FaucetL`)
    - `|` → cloud (`TokCloud`)
 
-2. **`Parser.purs`** — `parse :: List Token -> Either String Tree`. A hand-written
-   recursive-descent parser (`expression`/`term`/`factor`) running in a
-   `State Id` monad. **Every AST node gets a unique integer `Id`** minted by the `fresh`
-   counter — this identity is what later lets repeated mentions of the same name collapse
-   to one graph node. The `Tree` ADT is the AST.
+2. **`Parser.purs`** — `parse :: List PosToken -> Either String (List Tree)`, one `Tree`
+   per newline-separated statement. A combinator parser over the token stream:
+   `ParserT (List PosToken) (State Id)` with productions `program`/`expression`/
+   `exprTail`/`term`. Its one custom primitive, `satisfyMap`, keeps the parser position
+   on the *next unconsumed* token so `<?>` labels and `eof` report exact locations —
+   the library's own `Parsing.Token` primitives leave the position on the consumed
+   token, so don't swap them back in. The grammar uses no `try`: alternatives dispatch
+   on disjoint first tokens. **Every AST node gets a unique integer `Id`** minted by
+   the `fresh` counter (ParserT's `MonadState` passes through to the base `State Id`) —
+   this identity is what later lets repeated mentions of the same name collapse to one
+   graph node, and the minting *order* is pinned byte-exactly by `test/golden.mjs`.
+   Failures are positioned errors; the parser never fabricates nodes. The `Tree` ADT
+   is the AST.
 
-3. **`Evaluator.purs`** — `evaluate :: Tree -> Graph`. Walks the `Tree` in a `State`
+3. **`Evaluator.purs`** — `evaluate :: List Tree -> Graph`. Walks each `Tree` in a `State`
    monad (`EvalState`), emitting nodes and links as side effects. Key identity rule:
    - **Named nodes** (dots, stocks, faucets) go through `resolveNamed`, which uses a
      `registry :: Map name -> id`. The *first* occurrence of a name mints an id; later
@@ -85,6 +103,9 @@ JSON error string):
    `Graph = { nodes, links }`. `NodeType` (`Dot`/`Stock`/`Faucet`/`Cloud`) has a
    `WriteForeign` instance so the whole graph serializes to the JSON the UI expects.
 
+`Main` exports only `go`. The terminal runner is `src/CLI.purs` (argv → `go` → stdout),
+kept out of `Main` so the browser bundle never pulls in node-process.
+
 ## Frontend architecture (`ui/`)
 
 `ui/index.js` is a one-line entrypoint that imports `app.ts`; `index.html` loads
@@ -92,8 +113,10 @@ JSON error string):
 
 - Builds the DOM (a `<pre>` output panel, example buttons, an `<svg>`, and a
   `<textarea>`) entirely via d3 `.append`, using flexbox `order` for layout.
-- On textarea `input`: calls `interpreter.go(input)`, `JSON.parse`s the result into a
-  `System`, pretty-prints it into the `<pre>`, and calls `update(system)`.
+- On textarea `input`: calls `interpreter.go(input)` and `JSON.parse`s the result. A
+  *string* result is a compile error: it renders red in the `<pre>` and `update()` is
+  skipped (the last good graph stays). Otherwise the `System` is pretty-printed into
+  the `<pre>` and passed to `update(system)`.
 - `update()` does the d3 data-join per node type (dots→`circle`, stocks→`rect`,
   faucets/clouds→`image` with inlined SVGs from `ui/shape/`), rebinds the link/charge/
   center forces, and restarts the simulation.

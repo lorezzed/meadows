@@ -120,7 +120,7 @@ tests =
   , expectEq "stock term"
       (Right (StockExpr 0 "s" : Nil)) (parseAll "[s]")
   , expectEq "bare cloud term"
-      (Right (CloudExpr 0 "|" : Nil)) (parseAll "|")
+      (Right (CloudExpr 0 : Nil)) (parseAll "|")
   , expectEq "empty input parses to no statements"
       (Right Nil) (parseAll "")
   -- Parser: positioned errors

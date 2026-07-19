@@ -13,14 +13,14 @@ const container = d3.select('body')
 const pre = container
   .append('pre')
   .attr('class', 'pre-output')
-  .style('order', 9) // flexbox ordering
+  .style('order', 9)
   .style('min-height', '2em')
   .style('border', '1px solid black')
   .style('white-space', 'pre-wrap')
   .style('word-wrap', 'break-word')
 const examples = container
   .append('div')
-  .style('order', 2) // flexbox ordering
+  .style('order', 2)
 examples.append('button')
   .text('a->b')
   .on('click', function () {
@@ -72,7 +72,7 @@ const fitPad = 35; // node half-size (20) + label/arrowhead overhang
 const svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, any> = container
   .append('svg')
   .attr('class', 'svg')
-  .style('order', 1) // flexbox ordering
+  .style('order', 1)
   .style('width', svgWidth)
   .style('height', svgHeight)
   .attr("viewBox", `0 0 ${svgWidth} ${svgHeight}`)
@@ -81,7 +81,7 @@ const svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, any> = container
 const textInput = container
   .append('textarea')
   .attr('class', 'text-input')
-  .style('order', 2) // flexbox ordering
+  .style('order', 2)
   .style('width', '80em')
   .style('height', '10em')
   .on('input', function (e: Event) {
@@ -147,7 +147,6 @@ defs.append("marker")
   .attr("d", "M0,0L10,5L0,10Z")
   .attr("fill", "#999");
 
-//
 let link = svg.append("g")
   .attr("stroke", "#00f")
   .attr("stroke-opacity", 0.6)
@@ -176,13 +175,8 @@ let nodeCloud = svg.append<SVGGElement>("g")
 
 const systemNodes: Node[] = [];
 const systemLinks: Link[] = []
-// const nodes: Node[] = [{ type: "dot", id: 1, label: "A" }, { type: "dot", id: 2, label: "B" }, { type: "stock", id: 3, label: "C" }, { type: "faucet", id: 4, label: "D" }];
-// const links: Link[] = [{ source: "A", target: "B", type: "arrow" }, { source: "B", target: "C", type: "arrow" }, { source: "C", target: "D", type: "arrow" }, { source: "D", target: "A", type: "arrow" }]
-// let nodes = [{ "label": "d", "id": "d" }]
-// let links = [{ "type": "arrow", "target": "e", "source": "d" }]
 const system: System = { nodes: systemNodes, links: systemLinks }
 
-// .id(d => d.id)
 const simulation = d3.forceSimulation<Node, Link>(systemNodes)
   .force("link", d3.forceLink<Node, Link>(systemLinks).id(d => d.id).distance(80))
   // Stocks are the diagram's anchors: they repel harder than other nodes...
@@ -202,7 +196,6 @@ const simulation = d3.forceSimulation<Node, Link>(systemNodes)
 
 let nextId = systemNodes.length;
 
-// Draw the graph
 update(system);
 
 function update(system: System) {

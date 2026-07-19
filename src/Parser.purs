@@ -11,14 +11,14 @@ import Data.Generic.Rep (class Generic)
 import Data.List (List(..), (:))
 import Data.Maybe (Maybe(..))
 import Data.Tuple (Tuple(..), fst)
-import Lexer (Operator(..), PosToken, Token(..), formatParseError)
+import Lexer (Operator(..), PosToken, Token(..), describeToken, formatParseError)
 import Parsing (ParseState(..), ParserT, fail, failWithPosition, getParserT, initialPos, runParserT', stateParserT)
 import Parsing.Combinators (choice, optionMaybe, optional, sepEndBy, (<?>))
 import Parsing.Token (eof) as Token
 type Id = Int
 data Tree
   = NodeExpr Id String
-  | CloudExpr Id String
+  | CloudExpr Id
   | StockExpr Id String
   | FaucetRExpr Id String Tree (Maybe Tree)
   | FaucetLExpr Id String Tree (Maybe Tree)
@@ -30,7 +30,7 @@ derive instance genericTree :: Generic Tree _
 instance showTree :: Show Tree where
   show (NodeExpr i s) = "Node#" <> show i <> "(" <> s <> ")"
   show (StockExpr i s) = "Stock#" <> show i <> "(" <> show s <> ")"
-  show (CloudExpr i s) = "Cloud#" <> show i <> "(" <> show s <> ")"
+  show (CloudExpr i) = "Cloud#" <> show i
   show (FaucetRExpr i s l r) = "FaucetR#" <> show i <> "[" <> show s <> "](" <> show l <> " -> " <> show r <> " )"
   show (FaucetLExpr i s l r) = "FaucetL#" <> show i <> "[" <> show s <> "](" <> show l <> " <- " <> show r <> " )"
   show (ArrowRExpr i l r) = "ArrowR#" <> show i <> "(" <> show l <> " -> " <> show r <> ")"
@@ -40,7 +40,6 @@ instance showTree :: Show Tree where
 -- | ParserT's MonadState instance routes `state` to the base monad, so
 -- | `fresh` mints AST ids directly inside parsing code.
 type P a = ParserT (List PosToken) (State Id) a
--- | Anonymous counter: hand back the next unused id, bump the state.
 fresh :: P Id
 fresh = state \n -> Tuple n (n + 1)
 parse :: List PosToken -> Either String (List Tree)
@@ -76,7 +75,6 @@ satisfyMap f = do
   where
   nextPos _ (nxt : _) = nxt.pos
   nextPos consumed Nil = consumed.pos
--- | Match one exact token.
 tk :: Token -> P Unit
 tk t = satisfyMap \tok -> if tok == t then Just unit else Nothing
 opTok :: Operator -> P Unit
@@ -84,10 +82,6 @@ opTok o = tk (TokOp o)
 identTok :: P String
 identTok = satisfyMap case _ of
   TokIdent s -> Just s
-  _ -> Nothing
-cloudTok :: P String
-cloudTok = satisfyMap case _ of
-  TokCloud s -> Just s
   _ -> Nothing
 -- | program := sep? (expression sepEndBy sep) eof
 -- | The lexer collapses every newline run into a single TokSep, so one
@@ -120,8 +114,8 @@ exprTail left = choice
   , pure left
   ]
 -- | arrow tail := expression  (operator already consumed). The id mints
--- | after the operator and before the right operand -- the same order the
--- | previous parser used, which keeps ids byte-stable across the rewrite.
+-- | after the operator and before the right operand -- minting order is
+-- | pinned byte-exactly by test/golden.mjs, so don't reorder.
 arrowTail :: (Id -> Tree -> Tree -> Tree) -> String -> Tree -> P Tree
 arrowTail mk opName left = do
   i <- fresh
@@ -162,9 +156,9 @@ stockTerm = do
 -- | identifier as its label (`|a` is a parse error -- write `|->a`).
 cloudTerm :: P Tree
 cloudTerm = do
-  s <- cloudTok
+  tk TokCloud
   i <- fresh
-  pure (CloudExpr i s)
+  pure (CloudExpr i)
 identTerm :: P Tree
 identTerm = do
   name <- identTok
@@ -178,20 +172,3 @@ parenTerm = do
   inner <- expression
   tk TokRParen <?> "a closing ')'"
   pure (ParenExpr i inner)
--- | Human rendering for "unexpected <token>" messages.
-describeToken :: Token -> String
-describeToken (TokIdent s) = "name '" <> s <> "'"
-describeToken (TokOp op) = "'" <> opSymbol op <> "'"
-describeToken (TokCloud _) = "'|'"
-describeToken TokLParen = "'('"
-describeToken TokRParen = "')'"
-describeToken TokLBracket = "'['"
-describeToken TokRBracket = "']'"
-describeToken TokSep = "end of line"
-opSymbol :: Operator -> String
-opSymbol ArrowR = "->"
-opSymbol ArrowL = "<-"
-opSymbol FaucetR = "=>"
-opSymbol FaucetL = "<="
-opSymbol StockR = "]"
-opSymbol StockL = "["

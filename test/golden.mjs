@@ -16,7 +16,7 @@ resource->yield per unit capital->extraction
 yield per unit capital->price->profit
 capital->depreciation`;
 
-// Happy-path inputs pinned byte-exactly (captured pre-rewrite, 2026-07-19).
+// Happy-path inputs pinned byte-exactly.
 const goldenInputs = [
   'a->b',
   'a->b=>c d',
@@ -29,16 +29,16 @@ const goldenInputs = [
   '[a]=>fill',
   '(a=>f)->b',
   'a=>j[b]',
-  '|->a->b=>c [d]=>e|',   // example button 6 (post cloud-quirk removal)
+  '|->a->b=>c [d]=>e|',   // example button 6
   'a->b\na->c',
   'a->b\n\nc->d',
   '\na->b\n',
   '  a  ->  b',
   '',
   EX_BIG,
-  // Combined multi-statement graphs (captured 2026-07-19): bands + arrows,
-  // band merging, source-order numbering, name identity across kinds,
-  // paren-linked bands, feedback loops, reversed flows.
+  // Combined multi-statement graphs: bands + arrows, band merging,
+  // source-order numbering, name identity across kinds, paren-linked bands,
+  // feedback loops, reversed flows.
   '[a]=>f[b]\nb->c\nc->[a]',
   '[a]=>f[b]\n[b]=>g[c]',
   'x->y\n[c]=>g\n[a]=>f',
@@ -51,7 +51,6 @@ const goldenInputs = [
   'a<-b<-c',
   '|=>inflow[pop]=>outflow|\npop->growth->inflow',
   // Operators after a dangling faucet apply to the faucet itself
-  // (grammar extension, 2026-07-19: faucet tail re-enters exprTail)
   'a=>b->c',
   'a<=b->c',
   'a=>f=>g',
