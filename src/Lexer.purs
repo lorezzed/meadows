@@ -1,9 +1,9 @@
 module Lexer
   ( Operator(..)
+  , PosToken
   , Token(..)
-  , accept
   , cloud
-  , lookAhead
+  , formatParseError
   , tokenize
   )
   where
@@ -13,18 +13,15 @@ import Prelude
 import Control.Alt ((<|>))
 import Data.Array as Array
 import Data.Either (Either(..))
-import Data.List (List(..), (:))
-import Data.List as List
+import Data.List (List, (:))
 import Data.String.CodeUnits as SCU
 import Data.String (joinWith)
-import Parsing (Parser, ParseError, runParser, fail)
-import Parsing.Combinators (many, try)
-import Parsing.String (char, string, satisfy, eof)
--- import Parsing.Token (letter, alphaNum)
-import Parsing.String.Basic (oneOf, noneOf, letter, alphaNum)
+import Parsing (Parser, ParseError, Position(..), parseErrorMessage, parseErrorPosition, position, runParser)
+import Parsing.Combinators (many, try, (<?>))
+import Parsing.String (char, string, eof)
+import Parsing.String.Basic (oneOf, letter, alphaNum)
 
 import Data.Show.Generic (genericShow)
-import Data.Show (class Show)
 import Data.Generic.Rep (class Generic)
 
 data Operator
@@ -40,40 +37,31 @@ derive instance eqOperator :: Eq Operator
 derive instance genericOperator :: Generic Operator _
 instance showOperator :: Show Operator where
   show = genericShow
--- instance showOperator :: Show Operator where
---   show ArrowR = "->"
---   show ArrowL = "<-"
---   show StockR = "]"
---   show StockL = "["
---   show FaucetR = "=>"
---   show FaucetL = "<="
 
-data Token 
+data Token
   = TokIdent String
   | TokOp Operator
   | TokCloud String
-  | TokLFaucet
-  | TokRFaucet
   | TokLParen
   | TokRParen
   | TokLBracket
   | TokRBracket
   | TokSep
-  | TokEnd
-  
+
 derive instance eqToken :: Eq Token
 derive instance genericToken :: Generic Token _
 instance showToken :: Show Token where
   show = genericShow
 
--- Helper functions for list processing
-lookAhead :: List Token -> Token
-lookAhead Nil = TokEnd
-lookAhead (t : _) = t
+-- | A token together with the source position where it starts.
+type PosToken = { pos :: Position, tok :: Token }
 
-accept :: List Token -> List Token
-accept Nil = Nil
-accept (_ : ts) = ts
+-- | Render a ParseError as "line L, column C: msg". Shared by the lexer and
+-- | parser seams so both kinds of failure read the same in the UI.
+formatParseError :: ParseError -> String
+formatParseError err = case parseErrorPosition err of
+  Position { line, column } ->
+    "line " <> show line <> ", column " <> show column <> ": " <> parseErrorMessage err
 
 -- Parsers for individual tokens
 -- Horizontal whitespace only: newlines are significant (they become TokSep).
@@ -105,10 +93,6 @@ arrowLeftOp :: Parser String Operator
 arrowLeftOp = ArrowL <$ string "<-"
 arrowRightOp :: Parser String Operator
 arrowRightOp = ArrowR <$ string "->"
-stockRightOp :: Parser String Operator
-stockRightOp = StockR <$ string "]"
-stockLeftOp :: Parser String Operator
-stockLeftOp = StockL <$ string "["
 faucetRightOp :: Parser String Operator
 faucetRightOp = FaucetR <$ (try (string "=>") <|> string "=")
 faucetLeftOp :: Parser String Operator
@@ -138,8 +122,6 @@ token
   =   (TokOp <$> operator)
   <|> (TokLParen <$ leftParen)
   <|> (TokRParen <$ rightParen)
-  <|> (TokLFaucet <$ faucetLeftOp)
-  <|> (TokRFaucet <$ faucetRightOp)
   <|> (TokLBracket <$ leftBracket)
   <|> (TokRBracket <$ rightBracket)
   <|> (TokCloud <$> cloud)
@@ -154,22 +136,28 @@ separator = do
   _ <- many $ oneOf [' ', '\t', '\n', '\r']
   pure TokSep
 
-item :: Parser String Token
+-- | A token stamped with the source position where it starts (any preceding
+-- | horizontal whitespace was consumed by the previous item, so `position`
+-- | really is the token's own start; a separator's position is the newline,
+-- | i.e. the end of the previous line -- where "missing operand" errors
+-- | should point).
+item :: Parser String PosToken
 item = do
+  pos <- position
   t <- separator <|> token
   hspaces
-  pure t
+  pure { pos, tok: t }
 
 -- Main tokenizer
-tokens :: Parser String (List Token)
+tokens :: Parser String (List PosToken)
 tokens = do
   hspaces
   toks <- many item
-  eof
+  eof <?> "end of input (cannot read this character)"
   pure toks
 
-tokenize :: String -> Either String (List Token)
-tokenize input = 
+tokenize :: String -> Either String (List PosToken)
+tokenize input =
   case runParser input tokens of
-    Left err -> Left $ show err
+    Left err -> Left (formatParseError err)
     Right toks -> Right toks

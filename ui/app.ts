@@ -47,7 +47,7 @@ examples.append('button')
     loadExample(this.textContent);
   });
 examples.append('button')
-  .text('|a->b=>c [d]=>e|')
+  .text('|->a->b=>c [d]=>e|')
   .on('click', function () {
     loadExample(this.textContent);
   });
@@ -91,11 +91,20 @@ const textInput = container
       }
       const input = e.target.value;
       const output = interpreter.go(input);
-      const parse = JSON.parse(output) as System
+      const result = JSON.parse(output) as unknown;
+      if (typeof result === 'string') {
+        // Compile error: show it and keep the last good graph on screen.
+        pre.style('color', '#b00020')
+          .style('border', '1px solid #b00020')
+          .text(result);
+        return;
+      }
+      const parse = result as System;
       console.log('parse::', parse)
 
-      const pretty = JSON.stringify(parse, null, 2)
-      pre.text(pretty);
+      pre.style('color', null)
+        .style('border', '1px solid black')
+        .text(JSON.stringify(parse, null, 2));
       update(parse)
     } catch (error: unknown) {
       if (error instanceof Error) {

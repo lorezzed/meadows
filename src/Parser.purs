@@ -4,21 +4,24 @@ module Parser
   , parse
   ) where
 import Prelude
+import Control.Lazy (defer)
 import Control.Monad.State (State, evalState, state)
 import Data.Either (Either(..))
-import Data.List (List(..), filter, null, span, (:))
-import Data.Tuple (Tuple(..))
-import Lexer (Token(..), Operator(..), tokenize, lookAhead, accept)
-import Data.Show.Generic (genericShow)
-import Data.Show (class Show)
 import Data.Generic.Rep (class Generic)
+import Data.List (List(..), (:))
+import Data.Maybe (Maybe(..))
+import Data.Tuple (Tuple(..), fst)
+import Lexer (Operator(..), PosToken, Token(..), formatParseError)
+import Parsing (ParseState(..), ParserT, fail, failWithPosition, getParserT, initialPos, runParserT', stateParserT)
+import Parsing.Combinators (choice, optionMaybe, optional, sepEndBy, (<?>))
+import Parsing.Token (eof) as Token
 type Id = Int
 data Tree
   = NodeExpr Id String
   | CloudExpr Id String
   | StockExpr Id String
-  | FaucetRExpr Id String Tree Tree
-  | FaucetLExpr Id String Tree Tree
+  | FaucetRExpr Id String Tree (Maybe Tree)
+  | FaucetLExpr Id String Tree (Maybe Tree)
   | ArrowRExpr Id Tree Tree
   | ArrowLExpr Id Tree Tree
   | ParenExpr Id Tree
@@ -33,103 +36,162 @@ instance showTree :: Show Tree where
   show (ArrowRExpr i l r) = "ArrowR#" <> show i <> "(" <> show l <> " -> " <> show r <> ")"
   show (ArrowLExpr i l r) = "ArrowL#" <> show i <> "(" <> show l <> " <- " <> show r <> ")"
   show (ParenExpr i expr) = "Paren#" <> show i <> "(" <> show expr <> ")"
+-- | The token parser: positioned tokens over a `State Id` base monad.
+-- | ParserT's MonadState instance routes `state` to the base monad, so
+-- | `fresh` mints AST ids directly inside parsing code.
+type P a = ParserT (List PosToken) (State Id) a
 -- | Anonymous counter: hand back the next unused id, bump the state.
-fresh :: State Id Id
+fresh :: P Id
 fresh = state \n -> Tuple n (n + 1)
-parse :: List Token -> Either String (List Tree)
-parse tokens = evalState (parseGroups (splitStatements tokens)) 0
-
--- | Split the token stream into statements on TokSep boundaries, dropping any
--- | empty groups (blank or trailing lines).
-splitStatements :: List Token -> List (List Token)
-splitStatements toks = filter (not <<< null) (go toks)
+parse :: List PosToken -> Either String (List Tree)
+parse toks =
+  let
+    -- Seed the parser position at the first token so a failure before any
+    -- consumption points at it rather than at line 1, column 1.
+    startPos = case toks of
+      { pos } : _ -> pos
+      Nil -> initialPos
+  in
+    case fst (evalState (runParserT' (ParseState toks startPos false) program) 0) of
+      Left err -> Left (formatParseError err)
+      Right trees -> Right trees
+-- | Consume one token when the projection yields a payload.
+-- |
+-- | This exists instead of Parsing.Token's `when`/`match`, which leave the
+-- | parser position on the token they just *consumed* -- every later
+-- | `fail`-based message (including `<?>` labels) would then point one token
+-- | to the left. This primitive keeps the invariant "position = start of the
+-- | next unconsumed token": it fails *without consuming*, positioned at the
+-- | offending token itself, and on success advances the position to the next
+-- | token -- so `<?>` and `Token.eof` report exact locations for free, and
+-- | alternatives never need `try`.
+satisfyMap :: forall b. (Token -> Maybe b) -> P b
+satisfyMap f = do
+  ParseState input _ _ <- getParserT
+  case input of
+    Nil -> fail "unexpected end of input"
+    head : tail -> case f head.tok of
+      Nothing -> failWithPosition ("unexpected " <> describeToken head.tok) head.pos
+      Just b -> stateParserT \_ -> Tuple b (ParseState tail (nextPos head tail) true)
   where
-  go Nil = Nil
-  go ts =
-    let { init: grp, rest } = span (\t -> t /= TokSep) ts
-    in grp : go (dropSep rest)
-  dropSep Nil = Nil
-  dropSep (_ : r) = r
-
--- | Parse each statement with a *shared* fresh-id counter so ids stay globally
--- | unique across lines. A name reused across statements still collapses to a
--- | single node later, via the evaluator's name registry.
-parseGroups :: List (List Token) -> State Id (Either String (List Tree))
-parseGroups Nil = pure (Right Nil)
-parseGroups (g : gs) = do
-  { tree, rest } <- expression g
-  case rest of
-    Nil -> do
-      res <- parseGroups gs
-      pure case res of
-        Right trees -> Right (tree : trees)
-        Left e -> Left e
-    _ -> pure (Left ("Leftover tokens: " <> show rest))
-expression :: List Token -> State Id { tree :: Tree, rest :: List Token }
-expression tokens = do
-  { tree: termTree, rest: rest' } <- term tokens
-  case lookAhead rest' of
-    TokOp ArrowR -> do
-      i <- fresh
-      { tree: exprTree, rest: rest'' } <- expression (accept rest')
-      pure { tree: ArrowRExpr i termTree exprTree, rest: rest'' }
-    TokOp ArrowL -> do
-      i <- fresh
-      { tree: exprTree, rest: rest'' } <- expression (accept rest')
-      pure { tree: ArrowLExpr i termTree exprTree, rest: rest'' }
-    TokOp FaucetR ->
-      case lookAhead (accept rest') of
-        TokIdent name -> do
-          i <- fresh
-          { tree: exprTree, rest: rest'' } <- expression (accept (accept rest'))
-          pure { tree: FaucetRExpr i name termTree exprTree, rest: rest'' }
-        _ -> errorAt tokens
-    TokOp FaucetL ->
-      case lookAhead (accept rest') of
-        TokIdent name -> do
-          i <- fresh
-          { tree: exprTree, rest: rest'' } <- expression (accept (accept rest'))
-          pure { tree: FaucetLExpr i name termTree exprTree, rest: rest'' }
-        _ -> errorAt tokens
-    _ -> pure { tree: termTree, rest: rest' }
-term :: List Token -> State Id { tree :: Tree, rest :: List Token }
-term tokens =
-  case lookAhead tokens of
-    TokLBracket ->
-      case lookAhead (accept tokens) of
-        TokIdent str ->
-          case lookAhead (accept (accept tokens)) of
-            TokRBracket -> do
-              i <- fresh
-              pure { tree: StockExpr i str, rest: accept (accept (accept tokens)) }
-            _ -> errorAt tokens
-        _ -> errorAt tokens
-    _ -> factor tokens
-factor :: List Token -> State Id { tree :: Tree, rest :: List Token }
-factor tokens =
-  case lookAhead tokens of
-    TokIdent str -> do
-      i <- fresh
-      pure { tree: NodeExpr i str, rest: accept tokens }
-    TokCloud str ->
-      case lookAhead (accept tokens) of
-        TokIdent name -> do
-          i <- fresh
-          pure { tree: CloudExpr i name, rest: accept (accept tokens) }
-        _ -> do
-          i <- fresh
-          pure { tree: CloudExpr i str, rest: accept tokens }
-    TokLParen -> do
-      i <- fresh
-      { tree: exprTree, rest: rest' } <- expression (accept tokens)
-      case lookAhead rest' of
-        TokRParen -> pure { tree: ParenExpr i exprTree, rest: accept rest' }
-        _ -> errorAt tokens
-    _ -> errorAt tokens
--- | Every failure path previously returned NodeExpr "ERROR" with the id
--- | field bolted on, that constructor now needs an id too — so failures
--- | still consume a counter tick. Keeps behaviour identical to before.
-errorAt :: List Token -> State Id { tree :: Tree, rest :: List Token }
-errorAt tokens = do
+  nextPos _ (nxt : _) = nxt.pos
+  nextPos consumed Nil = consumed.pos
+-- | Match one exact token.
+tk :: Token -> P Unit
+tk t = satisfyMap \tok -> if tok == t then Just unit else Nothing
+opTok :: Operator -> P Unit
+opTok o = tk (TokOp o)
+identTok :: P String
+identTok = satisfyMap case _ of
+  TokIdent s -> Just s
+  _ -> Nothing
+cloudTok :: P String
+cloudTok = satisfyMap case _ of
+  TokCloud s -> Just s
+  _ -> Nothing
+-- | program := sep? (expression sepEndBy sep) eof
+-- | The lexer collapses every newline run into a single TokSep, so one
+-- | optional leading separator plus sepEndBy covers blank leading, interior,
+-- | and trailing lines without ever producing an empty statement.
+program :: P (List Tree)
+program = do
+  optional (tk TokSep)
+  trees <- sepEndBy expression (tk TokSep)
+  Token.eof <?> "an operator ('->', '<-', '=>', '<='), a new line, or the end of the input"
+  pure trees
+-- | expression := term tail?
+-- | The `defer` (here and on `term`) breaks the expression -> term ->
+-- | parenTerm -> expression reference cycle: purs rejects top-level value
+-- | cycles unless every in-cycle reference sits under a lambda.
+expression :: P Tree
+expression = defer \_ -> do
+  left <- term
+  exprTail left
+-- | One-token dispatch on the operator after a term. Every alternative
+-- | commits by consuming its operator first, so no ids are minted
+-- | speculatively and `<|>` never has to undo consumption; the bare-term
+-- | fallback must stay last.
+exprTail :: Tree -> P Tree
+exprTail left = choice
+  [ opTok ArrowR *> arrowTail ArrowRExpr "->" left
+  , opTok ArrowL *> arrowTail ArrowLExpr "<-" left
+  , opTok FaucetR *> faucetTail FaucetRExpr "=>" left
+  , opTok FaucetL *> faucetTail FaucetLExpr "<=" left
+  , pure left
+  ]
+-- | arrow tail := expression  (operator already consumed). The id mints
+-- | after the operator and before the right operand -- the same order the
+-- | previous parser used, which keeps ids byte-stable across the rewrite.
+arrowTail :: (Id -> Tree -> Tree -> Tree) -> String -> Tree -> P Tree
+arrowTail mk opName left = do
   i <- fresh
-  pure { tree: NodeExpr i "ERROR", rest: tokens }
+  right <- expression <?> ("an expression after '" <> opName <> "'")
+  pure (mk i left right)
+-- | faucet tail := NAME expression? tail  (operator already consumed). The
+-- | target is optional -- a flow may end at its faucet (`a=>j`). optionMaybe
+-- | does not backtrack partial consumption, so a malformed *started* target
+-- | surfaces its own positioned error instead of vanishing into Nothing.
+-- | Re-entering exprTail lets an operator after a dangling faucet apply to
+-- | the faucet itself (`a=>b->c` == `(a=>b)->c`); a present target has
+-- | already consumed any trailing operators, so exprTail then falls through
+-- | its bare-term alternative -- one path serves both shapes.
+faucetTail :: (Id -> String -> Tree -> Maybe Tree -> Tree) -> String -> Tree -> P Tree
+faucetTail mk opName left = do
+  name <- identTok <?> ("a faucet name after '" <> opName <> "'")
+  i <- fresh
+  mtarget <- optionMaybe expression
+  exprTail (mk i name left mtarget)
+-- | term := '[' NAME ']' | '|' | '(' expression ')' | NAME
+-- | The alternatives dispatch on disjoint first tokens and satisfyMap never
+-- | consumes on failure, so the grammar needs no `try` anywhere.
+term :: P Tree
+term = defer \_ -> choice
+  [ stockTerm
+  , cloudTerm
+  , parenTerm
+  , identTerm
+  ] <?> "a name, a '[stock]', a '|' cloud, or '('"
+stockTerm :: P Tree
+stockTerm = do
+  tk TokLBracket
+  name <- identTok <?> "a stock name after '['"
+  tk TokRBracket <?> "a closing ']'"
+  i <- fresh
+  pure (StockExpr i name)
+-- | `|` is always a bare anonymous cloud; it never takes a following
+-- | identifier as its label (`|a` is a parse error -- write `|->a`).
+cloudTerm :: P Tree
+cloudTerm = do
+  s <- cloudTok
+  i <- fresh
+  pure (CloudExpr i s)
+identTerm :: P Tree
+identTerm = do
+  name <- identTok
+  i <- fresh
+  pure (NodeExpr i name)
+-- | ParenExpr mints BEFORE its inner expression (id-stability point).
+parenTerm :: P Tree
+parenTerm = do
+  tk TokLParen
+  i <- fresh
+  inner <- expression
+  tk TokRParen <?> "a closing ')'"
+  pure (ParenExpr i inner)
+-- | Human rendering for "unexpected <token>" messages.
+describeToken :: Token -> String
+describeToken (TokIdent s) = "name '" <> s <> "'"
+describeToken (TokOp op) = "'" <> opSymbol op <> "'"
+describeToken (TokCloud _) = "'|'"
+describeToken TokLParen = "'('"
+describeToken TokRParen = "')'"
+describeToken TokLBracket = "'['"
+describeToken TokRBracket = "']'"
+describeToken TokSep = "end of line"
+opSymbol :: Operator -> String
+opSymbol ArrowR = "->"
+opSymbol ArrowL = "<-"
+opSymbol FaucetR = "=>"
+opSymbol FaucetL = "<="
+opSymbol StockR = "]"
+opSymbol StockL = "["

@@ -1,4 +1,4 @@
-.PHONY: init done shell code setup lock hash dev build run run-with
+.PHONY: init done shell code setup lock hash dev build run run-with test
 
 # ---------------------------------------------------------------------------
 # One-time setup (run once, or whenever esbuild/d3 deps change in package.json)
@@ -41,19 +41,29 @@ code:
 build:
 	nix --experimental-features 'nix-command flakes' develop --command spago build
 
+# Compiler tests: the PureScript unit suite (test/Main.purs — token streams &
+# positions, exact Tree shapes, evaluator identity/links/groups) plus the golden
+# battery (byte-exact graph JSON + positioned error messages).
+# After an INTENDED output change: node test/golden.mjs --capture
+test: build
+	nix --experimental-features 'nix-command flakes' develop --command spago test
+	node test/golden.mjs
+
 # Run the esbuild dev server against ui/index.html
 dev:
 	nix --experimental-features 'nix-command flakes' develop --command esbuild ui/index.js --bundle --watch --outdir=./ui --servedir=./ui --loader:.svg=dataurl
 # 	nix --experimental-features 'nix-command flakes' develop --command esbuild ui/index.ts --bundle --watch --outdir=./ui --servedir=./ui
-# Compile and run the PureScript entrypoint (src/Main.purs) via spago
+# Compile and run the CLI entrypoint (src/CLI.purs); with no input it prints usage
 run:
-	nix --experimental-features 'nix-command flakes' develop --command spago run
+	nix --experimental-features 'nix-command flakes' develop --command spago run --main CLI
 
-# # 	make run-with "ab -> bd"
+# Compile a DSL string and print the graph JSON:
+# 	make run-with "a->b"
+# 	make run-with in="[a]=>fill[b]"
+# The in= form is REQUIRED when the input contains '=' (faucets): make parses
+# a bare goal like "a=>j" as a variable override and the input arrives empty.
 run-with:
-	nix --experimental-features 'nix-command flakes' develop --command spago run --exec-args "\"$(strip $(filter-out $@,$(MAKECMDGOALS)))\""
-# # 	make run-with ARGS="abc"
-# 	nix --experimental-features 'nix-command flakes' develop --command spago run -- "$(ARGS)"
+	nix --experimental-features 'nix-command flakes' develop --command spago run --main CLI --exec-args "\"$(strip $(if $(in),$(in),$(filter-out $@,$(MAKECMDGOALS))))\""
 
 
 # Catch-all: swallow the extra word (e.g. "abc") so make doesn't try

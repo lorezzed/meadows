@@ -104,18 +104,24 @@ evaluateNode (FaucetRExpr i name left right) = do
   l <- evaluateNode left
   fid <- resolveNamed Faucet i name
   addLink l fid "flow"
-  rid <- leftmostId right
-  addLink fid rid "flow"
-  evaluateNode right
+  case right of
+    Nothing -> pure fid
+    Just r -> do
+      rid <- leftmostId r
+      addLink fid rid "flow"
+      evaluateNode r
 -- | `<=` flows right-to-left: the right operand feeds the faucet, which pours
 -- | into the left operand (mirrors how ArrowL swaps its endpoints).
 evaluateNode (FaucetLExpr i name left right) = do
   l <- evaluateNode left
   fid <- resolveNamed Faucet i name
   addLink fid l "flow"
-  rid <- leftmostId right
-  addLink rid fid "flow"
-  evaluateNode right
+  case right of
+    Nothing -> pure fid
+    Just r -> do
+      rid <- leftmostId r
+      addLink rid fid "flow"
+      evaluateNode r
 evaluateNode (ArrowRExpr _ left right) = do
   l <- evaluateNode left
   rid <- leftmostId right
