@@ -63,11 +63,10 @@ capital->depreciation`)
   });
 
 
-const svgWidth = 600
-const svgHeight = 400
+const svgWidth = 700
+const svgHeight = 600
 // Current viewBox, eased toward the auto-fit target each tick (zoom-out only).
 let viewX = 0, viewY = 0, viewW = svgWidth, viewH = svgHeight;
-const fitPad = 35; // node half-size (20) + label/arrowhead overhang
 
 const svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, any> = container
   .append('svg')
@@ -145,22 +144,52 @@ defs.append("marker")
   .attr("orient", "auto")
   .append("path")
   .attr("d", "M0,0L10,5L0,10Z")
-  .attr("fill", "#999");
+  .attr("fill", "#000");
+// Small open circle at an info arc's tail (Meadows notation): centered on the
+// path's start point, so the trimmed arc must begin at the source's edge.
+const infoTailRadius = 4;
+defs.append("marker")
+  .attr("id", "info-tail")
+  .attr("viewBox", "0 0 10 10")
+  .attr("refX", 5)
+  .attr("refY", 5)
+  .attr("markerWidth", infoTailRadius * 2)
+  .attr("markerHeight", infoTailRadius * 2)
+  .attr("markerUnits", "userSpaceOnUse")
+  .attr("orient", "auto")
+  .append("circle")
+  .attr("cx", 5)
+  .attr("cy", 5)
+  .attr("r", 4)
+  .attr("fill", "#fff")
+  .attr("stroke", "#000")
+  .attr("stroke-width", 1.5);
 
 let link = svg.append("g")
-  .attr("stroke", "#00f")
-  .attr("stroke-opacity", 0.6)
   .attr("fill", "none")
   .selectAll<SVGPathElement, Link>("path");
 
-const dotRadius = 20;
-const nodeEdge = 20; // every shape is ~40px, so its boundary sits ~20px from center
-const stockWidth = 40;
-const stockHeight = 40;
+// Meadows size hierarchy, faucet held at 40px as the reference unit: stocks
+// dominate (~2.3x the faucet, 4:3), clouds sit between, aux dots are tiny.
+const dotRadius = 5;
+const stockWidth = 96;
+const stockHeight = 72;
 const faucetWidth = 40;
 const faucetHeight = 40
-const cloudWidth = 40;
-const cloudHeight = 40;
+const cloudWidth = 52;
+const cloudHeight = 52;
+
+// Distance from a node's center to where links should stop. Stock uses its
+// half-width (pipes enter horizontally); info arcs into a stock's top/bottom
+// stop a touch early — acceptable scalar approximation.
+function edgeOf(d: Node): number {
+  switch (d.type) {
+    case "stock": return stockWidth / 2;
+    case "cloud": return cloudWidth / 2;
+    case "dot": return dotRadius + 4;
+    default: return faucetWidth / 2;
+  }
+}
 
 // Each node is a <g> that holds its shape *and* its text label, so the two
 // move together (positioned via a transform in ticked()).
@@ -179,11 +208,16 @@ const system: System = { nodes: systemNodes, links: systemLinks }
 
 const simulation = d3.forceSimulation<Node, Link>(systemNodes)
   .force("link", d3.forceLink<Node, Link>(systemLinks).id(d => d.id).distance(80))
-  // Stocks are the diagram's anchors: they repel harder than other nodes...
-  .force("charge", d3.forceManyBody<Node>().strength(d => d.type === "stock" ? -300 : -200))
-  // ...and carry a bigger collision radius so they push clouds/faucets out of
-  // their space instead of letting them overlap; other nodes just avoid touching.
-  .force("collide", d3.forceCollide<Node>().radius(d => d.type === "stock" ? 42 : 24).strength(0.85))
+  // Stocks are the diagram's anchors: they repel harder than other nodes;
+  // dots repel a bit more than faucets/clouds so the aux web spreads through
+  // the inter-band region instead of clumping at the midline.
+  .force("charge", d3.forceManyBody<Node>().strength(d =>
+    d.type === "stock" ? -300 : d.type === "dot" ? -250 : -200))
+  // Collision radii track the size hierarchy so big shapes push neighbors out
+  // of their space; dots are tiny but their label above needs clearance.
+  .force("collide", d3.forceCollide<Node>().radius(d =>
+    d.type === "stock" ? 62 : d.type === "cloud" ? 30 : d.type === "dot" ? 26 : 24
+  ).strength(0.85))
   .force("center", d3.forceCenter<Node>(svgWidth / 2, svgHeight / 2))
   // Stocks pull hard to their slot x (evenly spaced per band, see update());
   // everything else gets only gentle x-centering — too strong crowds each band
@@ -210,18 +244,18 @@ function update(system: System) {
   link = link
     .data(links)
     .join("path")
-    .attr("fill", "none")
-    .attr("stroke", "#999");
+    .attr("fill", "none");
   nodeDot = nodeDot
     .data(nodes.filter(x => x.type === 'dot'), d => d.id)
     .join(enter => {
       const g = enter.append("g");
       g.append("circle")
         .attr("r", dotRadius)
-        .attr("fill", "rgba(0, 0, 255, 0.5)")
-        .attr("stroke", "#00f")
+        .attr("fill", "#fff")
+        .attr("stroke", "#000")
         .attr("stroke-width", 1.5);
-      appendLabel(g);
+      // Label above the tiny circle so it stays visible.
+      appendLabel(g, -12);
       return g;
     })
     .call(sel => sel.select<SVGTextElement>("text").text(d => d.label))
@@ -235,10 +269,11 @@ function update(system: System) {
         .attr("y", -stockHeight / 2)
         .attr("width", stockWidth)
         .attr("height", stockHeight)
-        .attr("stroke", "#f00")
-        .attr("stroke-width", 1.5)
-        .attr("fill", "rgba(255, 0, 0, 0.5)");
-      appendLabel(g);
+        .attr("stroke", "#000")
+        .attr("stroke-width", 2)
+        .attr("fill", "#fff");
+      // Label inside the rectangle, slightly larger than the others.
+      appendLabel(g, 0, 12);
       return g;
     })
     .call(sel => sel.select<SVGTextElement>("text").text(d => d.label))
@@ -253,7 +288,8 @@ function update(system: System) {
         .attr("y", -faucetHeight / 2)
         .attr("width", faucetWidth)
         .attr("height", faucetHeight);
-      appendLabel(g);
+      // Label above the icon, as in the reference figure.
+      appendLabel(g, -28);
       return g;
     })
     .call(sel => sel.select<SVGTextElement>("text").text(d => d.label))
@@ -261,6 +297,7 @@ function update(system: System) {
   nodeCloud = nodeCloud
     .data(nodes.filter(x => x.type === 'cloud'), d => d.id)
     .join(enter => {
+      // Clouds carry no label (theirs is just "|").
       const g = enter.append("g");
       g.append("image")
         .attr("href", cloudSvg)
@@ -268,16 +305,14 @@ function update(system: System) {
         .attr("y", -cloudHeight / 2)
         .attr("width", cloudWidth)
         .attr("height", cloudHeight);
-      appendLabel(g);
       return g;
     })
-    .call(sel => sel.select<SVGTextElement>("text").text(d => d.label))
     .call(drag(), undefined);
 
   // Lay nodes out in horizontal bands. The compiler assigns each node a `group`
   // (a flow-connected chain of stocks/faucets/clouds), numbered top to bottom;
   // dots and reservoir-less faucets have no group and float.
-  const bandGap = 120;
+  const bandGap = 260;
   const gs = nodes.map(n => n.group).filter((g): g is number => g != null);
   const groupCount = gs.length ? Math.max(...gs) + 1 : 0;
   for (const d of nodes) {
@@ -322,13 +357,15 @@ function update(system: System) {
     if (t?.type === "cloud") t.gx = svgWidth - edgeMargin;
   }
 
-  // Flow links render as thick straight pipes (Meadows notation); the segment
-  // entering a stock/cloud carries the big triangular arrowhead — none into a
-  // faucet, where the pipe visually passes through. Info arrows stay thin
-  // curved arcs with a small head.
+  // Flow links render as thick gray straight pipes (Meadows notation); the
+  // segment entering a stock/cloud carries the big triangular arrowhead — none
+  // into a faucet, where the pipe visually passes through. Info links are thin
+  // black curved arcs with a small head and an open circle at the tail.
   link
+    .attr("stroke", d => d.type === "flow" ? "#999" : "#000")
     .attr("stroke-width", d => d.type === "flow" ? 8 : 1.5)
-    .attr("stroke-opacity", d => d.type === "flow" ? 1 : 0.6)
+    .attr("stroke-opacity", 1)
+    .attr("marker-start", d => d.type === "flow" ? null : "url(#info-tail)")
     .attr("marker-end", d => {
       if (d.type !== "flow") return "url(#info-arrow)";
       const t = nodeById.get(d.target as string);
@@ -346,13 +383,15 @@ function update(system: System) {
 }
 
 // The info-link arc is the minor arc (sweep 1) of the circle with radius equal
-// to the chord that passes through both endpoints. Back the endpoint up along
-// that same circle by `margin` arc-pixels, so the shortened path still lies
-// exactly on the original arc and the marker orients to its true tangent.
-function trimArcEnd(sx: number, sy: number, tx: number, ty: number, margin: number): { x: number, y: number } {
+// to the chord that passes through both endpoints. Move both endpoints along
+// that same circle — start forward by `mStart`, end back by `mEnd` arc-pixels —
+// so the shortened path still lies exactly on the original arc and both
+// markers orient to their true tangents.
+function trimArc(sx: number, sy: number, tx: number, ty: number, mStart: number, mEnd: number): { start: { x: number, y: number }, end: { x: number, y: number } } {
+  const untrimmed = { start: { x: sx, y: sy }, end: { x: tx, y: ty } };
   const dx = tx - sx, dy = ty - sy;
   const d = Math.hypot(dx, dy);
-  if (d < margin + 4) return { x: tx, y: ty }; // too short to trim
+  if (d < mStart + mEnd + 8) return untrimmed; // too short to trim
   const r = d;
   const mx = (sx + tx) / 2, my = (sy + ty) / 2;
   const h = Math.sqrt(Math.max(0, r * r - (d / 2) * (d / 2)));
@@ -367,11 +406,15 @@ function trimArcEnd(sx: number, sy: number, tx: number, ty: number, margin: numb
     while (da <= -Math.PI) da += 2 * Math.PI;
     while (da > Math.PI) da -= 2 * Math.PI;
     if (da > 0) {
-      const a = a1 - margin / r; // arc length -> angle
-      return { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
+      const as = a0 + mStart / r; // arc length -> angle
+      const ae = a1 - mEnd / r;
+      return {
+        start: { x: cx + r * Math.cos(as), y: cy + r * Math.sin(as) },
+        end: { x: cx + r * Math.cos(ae), y: cy + r * Math.sin(ae) },
+      };
     }
   }
-  return { x: tx, y: ty };
+  return untrimmed;
 }
 
 function ticked() {
@@ -394,28 +437,32 @@ function ticked() {
         // 0), so reservoir targets are trimmed by node edge + head length and
         // the tip lands on the node's edge. Faucet ends stay untrimmed — the
         // faucet icon sits on top of the pipe.
-        const st = source.type === "faucet" ? 0 : nodeEdge;
-        const tt = target.type === "faucet" ? 0 : nodeEdge + flowArrowLength;
+        const st = source.type === "faucet" ? 0 : edgeOf(source);
+        const tt = target.type === "faucet" ? 0 : edgeOf(target) + flowArrowLength;
         const f = dr > st + tt + 6 ? 1 : dr / (st + tt + 6); // degenerate: scale down
         const ux = dx / dr, uy = dy / dr;
         return `M${sx + ux * st * f},${sy + uy * st * f}L${tx - ux * tt * f},${ty - uy * tt * f}`;
       }
-      // Info arc: back the endpoint up along the arc's own circle so the small
-      // head sits at the node's edge instead of buried under the shape.
-      const e = trimArcEnd(sx, sy, tx, ty, nodeEdge + infoArrowLength);
-      return `M${sx},${sy}A${dr},${dr} 0 0,1 ${e.x},${e.y}`;
+      // Info arc: move both endpoints along the arc's own circle so the tail
+      // circle sits on the source's edge and the small head at the target's,
+      // instead of buried under the shapes.
+      const a = trimArc(sx, sy, tx, ty, edgeOf(source) + infoTailRadius, edgeOf(target) + infoArrowLength);
+      return `M${a.start.x},${a.start.y}A${dr},${dr} 0 0,1 ${a.end.x},${a.end.y}`;
     });
 
   // Zoom out (never in) so all nodes stay visible: target viewBox = union of
   // the nominal canvas and the padded node bbox, eased 20%/tick for smoothness.
-  // The x-pad grows with the label so wide names ("yield per unit capital")
-  // never clip — ~3px per char ≈ half the rendered width at font-size 10.
+  // Pads follow each node's own size; the x-pad also grows with the label so
+  // wide names ("yield per unit capital") never clip — ~3px per char ≈ half
+  // the rendered width at font-size 10; the y-pad leaves room for the labels
+  // that sit above dots and faucets.
   let x0 = 0, y0 = 0, x1 = svgWidth, y1 = svgHeight;
   for (const d of simulation.nodes()) {
     if (d.x == null || d.y == null) continue;
-    const padX = Math.max(fitPad, d.label.length * 3);
-    x0 = Math.min(x0, d.x - padX); y0 = Math.min(y0, d.y - fitPad);
-    x1 = Math.max(x1, d.x + padX); y1 = Math.max(y1, d.y + fitPad);
+    const padX = Math.max(edgeOf(d) + 12, d.label.length * 3);
+    const padY = edgeOf(d) + 24;
+    x0 = Math.min(x0, d.x - padX); y0 = Math.min(y0, d.y - padY);
+    x1 = Math.max(x1, d.x + padX); y1 = Math.max(y1, d.y + padY);
   }
   const ease = 0.2;
   viewX += (x0 - viewX) * ease;
@@ -442,13 +489,15 @@ function loadExample(text: string) {
   textInput.node()?.dispatchEvent(new Event('input'));
 }
 
-// Append a centered text label to a per-node <g>. The text is drawn on top of
-// the node's shape and moves with it (the group carries the transform).
-function appendLabel(g: d3.Selection<SVGGElement, Node, SVGGElement, unknown>) {
+// Append a centered text label to a per-node <g>; the text moves with the
+// shape (the group carries the transform). `y` shifts the label off the shape
+// (negative = above); 0 keeps it vertically centered on the node.
+function appendLabel(g: d3.Selection<SVGGElement, Node, SVGGElement, unknown>, y = 0, fontSize = 10) {
   g.append("text")
     .attr("text-anchor", "middle")
+    .attr("y", y)
     .attr("dy", "0.32em")
-    .attr("font-size", 10)
+    .attr("font-size", fontSize)
     .attr("font-family", "sans-serif")
     .attr("fill", "#000")
     .attr("pointer-events", "none");
