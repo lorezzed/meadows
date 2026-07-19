@@ -65,6 +65,9 @@ capital->depreciation`)
 
 const svgWidth = 600
 const svgHeight = 400
+// Current viewBox, eased toward the auto-fit target each tick (zoom-out only).
+let viewX = 0, viewY = 0, viewW = svgWidth, viewH = svgHeight;
+const fitPad = 35; // node half-size (20) + label/arrowhead overhang
 
 const svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, any> = container
   .append('svg')
@@ -72,7 +75,7 @@ const svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, any> = container
   .style('order', 1) // flexbox ordering
   .style('width', svgWidth)
   .style('height', svgHeight)
-  // .attr("viewBox", [-width / 2, -height / 2, width, height])
+  .attr("viewBox", `0 0 ${svgWidth} ${svgHeight}`)
   .style('border', '1px solid black')
   .on("click", click)
 const textInput = container
@@ -400,6 +403,24 @@ function ticked() {
       const e = trimArcEnd(sx, sy, tx, ty, nodeEdge + infoArrowLength);
       return `M${sx},${sy}A${dr},${dr} 0 0,1 ${e.x},${e.y}`;
     });
+
+  // Zoom out (never in) so all nodes stay visible: target viewBox = union of
+  // the nominal canvas and the padded node bbox, eased 20%/tick for smoothness.
+  // The x-pad grows with the label so wide names ("yield per unit capital")
+  // never clip — ~3px per char ≈ half the rendered width at font-size 10.
+  let x0 = 0, y0 = 0, x1 = svgWidth, y1 = svgHeight;
+  for (const d of simulation.nodes()) {
+    if (d.x == null || d.y == null) continue;
+    const padX = Math.max(fitPad, d.label.length * 3);
+    x0 = Math.min(x0, d.x - padX); y0 = Math.min(y0, d.y - fitPad);
+    x1 = Math.max(x1, d.x + padX); y1 = Math.max(y1, d.y + fitPad);
+  }
+  const ease = 0.2;
+  viewX += (x0 - viewX) * ease;
+  viewY += (y0 - viewY) * ease;
+  viewW += ((x1 - x0) - viewW) * ease;
+  viewH += ((y1 - y0) - viewH) * ease;
+  svg.attr("viewBox", `${viewX} ${viewY} ${viewW} ${viewH}`);
 }
 
 function click(event: MouseEvent) {
