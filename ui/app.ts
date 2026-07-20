@@ -4,6 +4,7 @@ import * as interpreter from '../output/Main/index'
 import type { Node, Link, System } from "./type";
 import faucetSvg from './shape/faucet.svg'
 import cloudSvg from './shape/cloud.svg'
+import { exampleList } from "./example";
 
 const container = d3.select('body')
   .append('div')
@@ -51,20 +52,14 @@ examples.append('button')
   .on('click', function () {
     loadExample(this.textContent);
   });
-examples.append('button')
-  .text(`|=>investment[capital]=>depreciation|
-|=>regeneration[resource]=>harvest|
-capital->growth goal->investment
-R(investment<-profit<-capital)
-B(depreciation<-capital)
-capital lifetime->depreciation
-B(profit <- capital -> harvest)
-profit<-price<-yield per unit capital->harvest
-resource->yield per unit capital
-regeneration<-regeneration rate<-resource->regeneration`)
-  .on('click', function () {
-    loadExample(this.textContent);
-  });
+exampleList.map(x => {
+  const { label, content } = x
+  examples.append('button')
+    .text(label)
+    .on('click', function () {
+      loadExample(content);
+    });
+})
 
 
 const svgWidth = 700
@@ -230,7 +225,15 @@ const simulation = d3.forceSimulation<Node, Link>(systemNodes)
   // default strength they reel a dragged dot back to rest-length, so e.g.
   // `growth goal` could never float above its band — every equilibrium sat
   // pinned on the band line. Soft arrows let hand placement win.
-  .force("link", d3.forceLink<Node, Link>(systemLinks).id(d => d.id).distance(80)
+  // A flow pipe's rest length is the horizontal gap between its endpoints' row
+  // slots, so the pipe pulls its faucet toward the slot it was laid out in
+  // rather than toward its reservoir — a long branch pipe then holds its faucet
+  // out along the wide row instead of collapsing it back onto the stock. Info
+  // arrows keep the fixed rest length (they aren't slotted).
+  .force("link", d3.forceLink<Node, Link>(systemLinks).id(d => d.id)
+    .distance(l => l.type === "flow"
+      ? Math.max(40, Math.abs(((l.source as Node).gx ?? 0) - ((l.target as Node).gx ?? 0)))
+      : 80)
     .strength(l => l.type === "flow" ? 0.5 : 0.2))
   // Stocks are the diagram's anchors: they repel harder than other nodes;
   // dots repel a bit more than faucets/clouds so the aux web spreads through
@@ -388,64 +391,50 @@ function update(system: System) {
       : svgHeight / 2 + (d.group - (groupCount - 1) / 2) * bandGap;
   }
 
-  // Stocks are the main elements: give each band's stocks evenly-spaced x
-  // slots (in source order) that they anchor to; faucets/clouds arrange
-  // themselves around the stocks via the link/collision forces.
+  // Lay every band member out along its horizontal line as one spaced,
+  // left-to-right sequence (ordered by source, i.e. parser id), so faucets and
+  // clouds get their own room instead of piling onto the stocks. A stock with a
+  // second outflow therefore reads as one wide row — the extra branch sits
+  // further along the line, reached by a longer pipe — with nothing
+  // overlapping. The whole row is centred on the canvas; when it runs wider than
+  // the canvas the auto-fit viewBox zooms out to keep it in view.
   const parserId = (id: string) => {
     const n = parseInt(id.slice(id.indexOf("#") + 1), 10);
     return isNaN(n) ? 0 : n;
   };
-  const stocksByBand = new Map<number, Node[]>();
+  const nodeById = new Map(nodes.map(n => [n.id, n]));
+  // Half the horizontal room a node claims on its row: the largest of its icon
+  // half-width, its label half-width (~3px/char, as the viewBox padding also
+  // assumes), and its collision radius (so the spacing force can't shove
+  // neighbours off their slots). Keeps adjacent nodes and labels from touching.
+  const slotHalf = (d: Node) => {
+    const icon = d.type === "stock" ? stockWidth / 2 : d.type === "cloud" ? cloudWidth / 2 : d.type === "dot" ? dotRadius : faucetWidth / 2;
+    const collide = d.type === "stock" ? 62 : d.type === "cloud" ? 30 : d.type === "dot" ? 26 : 24;
+    return Math.max(icon, d.label.length * 3, collide);
+  };
+  const slotPad = 10; // extra breathing room between adjacent slots
+  const membersByBand = new Map<number, Node[]>();
   for (const d of nodes) {
     d.gx = undefined; // clear stale slots on recycled nodes
-    if (d.type === "stock" && d.group != null) {
-      const arr = stocksByBand.get(d.group) ?? [];
+    if (d.group != null && d.type !== "dot") {
+      const arr = membersByBand.get(d.group) ?? [];
       arr.push(d);
-      stocksByBand.set(d.group, arr);
+      membersByBand.set(d.group, arr);
     }
   }
-  for (const arr of stocksByBand.values()) {
+  for (const arr of membersByBand.values()) {
     arr.sort((a, b) => parserId(a.id) - parserId(b.id));
-    arr.forEach((d, i) => { d.gx = svgWidth * (i + 1) / (arr.length + 1); });
-  }
-
-  // Clouds are a band's sources/sinks and float to its outside: a cloud that
-  // feeds a flow (source) targets the left edge, one that receives (sink) the
-  // right edge. (Links still hold string ids here — resolved by the link force
-  // only further down.)
-  const nodeById = new Map(nodes.map(n => [n.id, n]));
-  const edgeMargin = 50;
-  for (const l of links) {
-    if (l.type !== "flow") continue;
-    const s = nodeById.get(l.source as string);
-    const t = nodeById.get(l.target as string);
-    if (s?.type === "cloud") s.gx = edgeMargin;
-    if (t?.type === "cloud") t.gx = svgWidth - edgeMargin;
-  }
-
-  // Faucets regulate the flow between two reservoirs, so place each at the mean
-  // x of its flow neighbours (stocks/clouds, which now have slots) — the pipe
-  // then reads source → faucet → target left-to-right, instead of the faucet
-  // drifting onto the wrong side of its stock (e.g. `extraction` landing left of
-  // `resource` and overlapping it). Runs after stock slots + cloud edges.
-  const faucetNbrX = new Map<string, number[]>();
-  const addFaucetNbr = (id: string, x: number) => {
-    const arr = faucetNbrX.get(id) ?? [];
-    arr.push(x);
-    faucetNbrX.set(id, arr);
-  };
-  for (const l of links) {
-    if (l.type !== "flow") continue;
-    const s = nodeById.get(l.source as string);
-    const t = nodeById.get(l.target as string);
-    if (s?.type === "faucet" && t?.gx != null) addFaucetNbr(s.id, t.gx);
-    if (t?.type === "faucet" && s?.gx != null) addFaucetNbr(t.id, s.gx);
-  }
-  for (const d of nodes) {
-    if (d.type === "faucet" && d.group != null) {
-      const xs = faucetNbrX.get(d.id);
-      if (xs?.length) d.gx = xs.reduce((a, b) => a + b, 0) / xs.length;
+    // Walk left to right: each node's centre sits its own half-width past the
+    // previous node's far edge (plus padding), so no two slots overlap.
+    let cursor = 0;
+    for (const d of arr) {
+      cursor += slotHalf(d);
+      d.gx = cursor;
+      cursor += slotHalf(d) + slotPad;
     }
+    const span = cursor - slotPad;          // left edge of first .. right edge of last
+    const shift = svgWidth / 2 - span / 2;   // centre the row on the canvas
+    for (const d of arr) d.gx = (d.gx ?? 0) + shift;
   }
 
   // Flow links render as thick gray straight pipes (Meadows notation); the
