@@ -165,7 +165,8 @@ defs.append("marker")
   .attr("stroke", "#000")
   .attr("stroke-width", 1.5);
 
-let link = svg.append("g")
+// Flow pipes render BELOW the nodes (a faucet must sit on top of its pipe).
+let flowLink = svg.append("g")
   .attr("fill", "none")
   .selectAll<SVGPathElement, Link>("path");
 
@@ -201,6 +202,13 @@ let nodeFaucet = svg.append<SVGGElement>("g")
   .selectAll<SVGGElement, Node>("g");
 let nodeCloud = svg.append<SVGGElement>("g")
   .selectAll<SVGGElement, Node>("g");
+
+// Info links render ABOVE the nodes so their open tail circles (and heads) stay
+// visible where they meet a stock/cloud, and the arcs read as continuous rather
+// than vanishing behind shapes.
+let infoLink = svg.append("g")
+  .attr("fill", "none")
+  .selectAll<SVGPathElement, Link>("path");
 
 const systemNodes: Node[] = [];
 const systemLinks: Link[] = []
@@ -241,8 +249,12 @@ function update(system: System) {
   });
   const links = system.links.map(d => ({ ...d }));
 
-  link = link
-    .data(links)
+  flowLink = flowLink
+    .data(links.filter(l => l.type === "flow"))
+    .join("path")
+    .attr("fill", "none");
+  infoLink = infoLink
+    .data(links.filter(l => l.type !== "flow"))
     .join("path")
     .attr("fill", "none");
   nodeDot = nodeDot
@@ -312,9 +324,18 @@ function update(system: System) {
   // Lay nodes out in horizontal bands. The compiler assigns each node a `group`
   // (a flow-connected chain of stocks/faucets/clouds), numbered top to bottom;
   // dots and reservoir-less faucets have no group and float.
-  const bandGap = 260;
   const gs = nodes.map(n => n.group).filter((g): g is number => g != null);
   const groupCount = gs.length ? Math.max(...gs) + 1 : 0;
+  // Allocate the vertical gap between bands dynamically (any number of groups):
+  // spread them to fill the canvas — outer bands near the top/bottom edges,
+  // leaving the middle open for the floating aux web — but never tighter than a
+  // comfortable minimum. With many bands the stack overflows the canvas and the
+  // auto-fit viewBox zooms out, keeping the gap readable rather than cramming.
+  const bandMargin = svgHeight * 0.12;
+  const minBandGap = 200;
+  const bandGap = groupCount > 1
+    ? Math.max(minBandGap, (svgHeight - 2 * bandMargin) / (groupCount - 1))
+    : 0;
   for (const d of nodes) {
     d.inFlow = d.group != null;
     d.gy = d.group == null
@@ -357,11 +378,36 @@ function update(system: System) {
     if (t?.type === "cloud") t.gx = svgWidth - edgeMargin;
   }
 
+  // Faucets regulate the flow between two reservoirs, so place each at the mean
+  // x of its flow neighbours (stocks/clouds, which now have slots) — the pipe
+  // then reads source → faucet → target left-to-right, instead of the faucet
+  // drifting onto the wrong side of its stock (e.g. `extraction` landing left of
+  // `resource` and overlapping it). Runs after stock slots + cloud edges.
+  const faucetNbrX = new Map<string, number[]>();
+  const addFaucetNbr = (id: string, x: number) => {
+    const arr = faucetNbrX.get(id) ?? [];
+    arr.push(x);
+    faucetNbrX.set(id, arr);
+  };
+  for (const l of links) {
+    if (l.type !== "flow") continue;
+    const s = nodeById.get(l.source as string);
+    const t = nodeById.get(l.target as string);
+    if (s?.type === "faucet" && t?.gx != null) addFaucetNbr(s.id, t.gx);
+    if (t?.type === "faucet" && s?.gx != null) addFaucetNbr(t.id, s.gx);
+  }
+  for (const d of nodes) {
+    if (d.type === "faucet" && d.group != null) {
+      const xs = faucetNbrX.get(d.id);
+      if (xs?.length) d.gx = xs.reduce((a, b) => a + b, 0) / xs.length;
+    }
+  }
+
   // Flow links render as thick gray straight pipes (Meadows notation); the
   // segment entering a stock/cloud carries the big triangular arrowhead — none
   // into a faucet, where the pipe visually passes through. Info links are thin
   // black curved arcs with a small head and an open circle at the tail.
-  link
+  const styleLink = (sel: d3.Selection<SVGPathElement, Link, any, any>) => sel
     .attr("stroke", d => d.type === "flow" ? "#999" : "#000")
     .attr("stroke-width", d => d.type === "flow" ? 8 : 1.5)
     .attr("stroke-opacity", 1)
@@ -371,6 +417,8 @@ function update(system: System) {
       const t = nodeById.get(d.target as string);
       return t && t.type !== "faucet" ? "url(#flow-arrow)" : null;
     });
+  styleLink(flowLink);
+  styleLink(infoLink);
 
   simulation.nodes(nodes);
 
@@ -382,8 +430,17 @@ function update(system: System) {
   simulation.alpha(0.5).restart();
 }
 
-// The info-link arc is the minor arc (sweep 1) of the circle with radius equal
-// to the chord that passes through both endpoints. Move both endpoints along
+// How round the info arcs are: arc radius = chord length × this factor, so it
+// fixes the arc's angular sweep regardless of distance. Must be ≥ 0.5:
+//   0.5  -> semicircle (180°), maximum roundness
+//   0.6  -> ~113° arc, the pronounced swoop of the Meadows reference figure
+//   0.75 -> ~84° arc, halfway
+//   1.0  -> 60° arc, the gentle bend this app previously drew
+const infoArcCurvature = 0.6;
+const infoArcRadius = (chord: number) => chord * infoArcCurvature;
+
+// The info-link arc is the minor arc (sweep 1) of the circle of radius
+// `infoArcRadius(chord)` through both endpoints. Move both endpoints along
 // that same circle — start forward by `mStart`, end back by `mEnd` arc-pixels —
 // so the shortened path still lies exactly on the original arc and both
 // markers orient to their true tangents.
@@ -392,7 +449,7 @@ function trimArc(sx: number, sy: number, tx: number, ty: number, mStart: number,
   const dx = tx - sx, dy = ty - sy;
   const d = Math.hypot(dx, dy);
   if (d < mStart + mEnd + 8) return untrimmed; // too short to trim
-  const r = d;
+  const r = infoArcRadius(d);
   const mx = (sx + tx) / 2, my = (sy + ty) / 2;
   const h = Math.sqrt(Math.max(0, r * r - (d / 2) * (d / 2)));
   const ux = dx / d, uy = dy / d;
@@ -423,8 +480,7 @@ function ticked() {
   nodeFaucet.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
   nodeCloud.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
 
-  link
-    .attr("d", d => {
+  const pathFor = (d: Link) => {
       const source = d.source as Node;
       const target = d.target as Node;
       const sx = source.x ?? 0, sy = source.y ?? 0;
@@ -445,10 +501,13 @@ function ticked() {
       }
       // Info arc: move both endpoints along the arc's own circle so the tail
       // circle sits on the source's edge and the small head at the target's,
-      // instead of buried under the shapes.
+      // instead of buried under the shapes. The radius must match trimArc's.
+      const r = infoArcRadius(dr);
       const a = trimArc(sx, sy, tx, ty, edgeOf(source) + infoTailRadius, edgeOf(target) + infoArrowLength);
-      return `M${a.start.x},${a.start.y}A${dr},${dr} 0 0,1 ${a.end.x},${a.end.y}`;
-    });
+      return `M${a.start.x},${a.start.y}A${r},${r} 0 0,1 ${a.end.x},${a.end.y}`;
+  };
+  flowLink.attr("d", pathFor);
+  infoLink.attr("d", pathFor);
 
   // Zoom out (never in) so all nodes stay visible: target viewBox = union of
   // the nominal canvas and the padded node bbox, eased 20%/tick for smoothness.
