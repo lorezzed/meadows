@@ -13,12 +13,13 @@ import Data.Int as Int
 import Data.List (List(..), (:))
 import Data.List as List
 import Data.Map as Map
-import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Maybe (Maybe(..), fromMaybe, maybe)
 import Data.Set (Set)
 import Data.Set as Set
 import Data.String (Pattern(..), split)
 import Data.Tuple (Tuple(..), fst)
 import Control.Monad.State (State, runState, gets, modify_)
+import Lexer (loopLetter)
 import Parser (Tree(..), Id)
 import Simple.JSON (class WriteForeign, writeImpl)
 
@@ -32,7 +33,7 @@ instance showNodeType :: Show NodeType where
 instance writeForeignNodeType :: WriteForeign NodeType where
   writeImpl = writeImpl <<< show
 
-type Node = { type :: NodeType, id :: String, label :: String, group :: Maybe Int }
+type Node = { type :: NodeType, id :: String, label :: String, group :: Maybe Int, loop :: Maybe (Array String) }
 type Link = { type :: String, source :: String, target :: String }
 type Graph = { nodes :: Array Node, links :: Array Link }
 
@@ -41,10 +42,16 @@ type Graph = { nodes :: Array Node, links :: Array Link }
 -- | (e.g. two occurrences of `a`) resolve to one graph node. Ids themselves
 -- | are opaque, built from the parser's per-node counter -- never the raw
 -- | source text -- so links reference identity, not spelling.
+-- |
+-- | `loopTags` collects each node's loop memberships (node id -> loop names,
+-- | in annotation order); `loopCount` numbers the annotations by source order
+-- | (statements evaluate in order), the way band groups are numbered.
 type EvalState =
   { registry :: Map.Map String String
   , nodes :: Map.Map String { ty :: NodeType, label :: String }
   , links :: Array Link
+  , loopTags :: Map.Map String (Array String)
+  , loopCount :: Int
   }
 
 type Evaluator = State EvalState
@@ -97,6 +104,7 @@ leftmostId (FaucetLExpr _ _ left _) = leftmostId left
 leftmostId (ArrowRExpr _ left _) = leftmostId left
 leftmostId (ArrowLExpr _ left _) = leftmostId left
 leftmostId (ParenExpr _ expr) = leftmostId expr
+leftmostId (LoopExpr _ _ expr) = leftmostId expr
 
 -- | Evaluate a subtree, registering nodes/links as a side effect, and
 -- | return the id (never the label) of the node it resolves to.
@@ -131,12 +139,58 @@ evaluateNode (ArrowRExpr _ left right) = do
   rid <- leftmostId right
   addLink l rid "arrow"
   evaluateNode right
+-- | `<-` mirrors ArrowR: the link comes from the *nearest* term of the right
+-- | subtree (its leftmost leaf), not the chain's far end, so `a<-b->c` fans
+-- | out from b (b->a and b->c) -- exactly how FaucetLExpr picks its source.
 evaluateNode (ArrowLExpr _ left right) = do
   l <- evaluateNode left
-  r <- evaluateNode right
-  addLink r l "arrow"
+  rid <- leftmostId right
+  addLink rid l "arrow"
+  _ <- evaluateNode right
   pure l
 evaluateNode (ParenExpr _ expr) = evaluateNode expr
+-- | A loop annotation is transparent to evaluation: the inner expression
+-- | emits its nodes and links as if unwrapped; afterwards every node it
+-- | mentions is tagged with the loop's generated name ("R0", "B1", ... --
+-- | the kind's letter plus one source-order counter across the program).
+evaluateNode (LoopExpr _ kind inner) = do
+  rid <- evaluateNode inner
+  members <- Array.nub <$> memberIds inner
+  n <- gets _.loopCount
+  let name = loopLetter kind <> show n
+  modify_ \s -> s
+    { loopCount = n + 1
+    , loopTags = foldl (addLoopTag name) s.loopTags members
+    }
+  pure rid
+
+-- | Append a loop name to a node's tag list (creating the list on first tag).
+addLoopTag :: String -> Map.Map String (Array String) -> String -> Map.Map String (Array String)
+addLoopTag name m id = Map.alter (Just <<< maybe [ name ] (_ <> [ name ])) id m
+
+-- | Source-order ids of every node a subtree mentions. Runs *after* the
+-- | subtree has been evaluated, so every name is registered and
+-- | resolveNamed/freshAnon are idempotent lookups (registry hit; a cloud
+-- | re-inserts under its existing parser-id key, a no-op).
+memberIds :: Tree -> Evaluator (Array String)
+memberIds (NodeExpr i s) = Array.singleton <$> resolveNamed Dot i s
+memberIds (StockExpr i s) = Array.singleton <$> resolveNamed Stock i s
+memberIds (CloudExpr i) = Array.singleton <$> freshAnon Cloud i cloudLabel
+memberIds (FaucetRExpr i name left right) = faucetMembers i name left right
+memberIds (FaucetLExpr i name left right) = faucetMembers i name left right
+memberIds (ArrowRExpr _ left right) = append <$> memberIds left <*> memberIds right
+memberIds (ArrowLExpr _ left right) = append <$> memberIds left <*> memberIds right
+memberIds (ParenExpr _ expr) = memberIds expr
+memberIds (LoopExpr _ _ expr) = memberIds expr
+
+-- | Shared by both faucet directions: left operand, the faucet itself, then
+-- | the optional target -- source order.
+faucetMembers :: Id -> String -> Tree -> Maybe Tree -> Evaluator (Array String)
+faucetMembers i name left right = do
+  ls <- memberIds left
+  fid <- resolveNamed Faucet i name
+  rs <- maybe (pure []) memberIds right
+  pure (ls <> [ fid ] <> rs)
 
 -- | Undirected adjacency over a set of links (used for flow connectivity).
 buildAdjacency :: Array Link -> Map.Map String (Set String)
@@ -196,10 +250,10 @@ computeGroups st =
 -- | different statements resolve (via the registry) to a single graph node.
 evaluate :: List Tree -> Graph
 evaluate trees =
-  let initialState = { registry: Map.empty, nodes: Map.empty, links: [] }
+  let initialState = { registry: Map.empty, nodes: Map.empty, links: [], loopTags: Map.empty, loopCount: 0 }
       Tuple _ finalState = runState (traverse_ evaluateNode trees) initialState
       nodeArray = (Map.toUnfoldable finalState.nodes :: Array (Tuple String { ty :: NodeType, label :: String }))
       groupOf = computeGroups finalState
-      nodes = map (\(Tuple id v) -> { type: v.ty, id, label: v.label, group: Map.lookup id groupOf }) nodeArray
+      nodes = map (\(Tuple id v) -> { type: v.ty, id, label: v.label, group: Map.lookup id groupOf, loop: Map.lookup id finalState.loopTags }) nodeArray
   in { nodes, links: finalState.links }
 

@@ -74,11 +74,17 @@ JSON error string):
    - `[` `]` → stock brackets (a `[name]` is a **stock** node)
    - `=>` / `<=` → faucets (`FaucetR` / `FaucetL`)
    - `|` → cloud (`TokCloud`)
+   - `R(` / `B(` → loop-open (`TokLoop`, exact uppercase two-char lexeme, tried
+     before identifiers with backtracking — a bare `R`, `R->b`, or `Rx(` still
+     lex as identifiers); `)` (`TokRParen`) closes the annotation
 
 2. **`Parser.purs`** — `parse :: List PosToken -> Either String (List Tree)`, one `Tree`
    per newline-separated statement. A combinator parser over the token stream:
-   `ParserT (List PosToken) (State Id)` with productions `program`/`expression`/
-   `exprTail`/`term`. Its one custom primitive, `satisfyMap`, keeps the parser position
+   `ParserT (List PosToken) (State Id)` with productions `program`/`statement`/
+   `expression`/`exprTail`/`term`. A statement is a loop annotation (`R(expr)` /
+   `B(expr)` → `LoopExpr`, minting before its body like `ParenExpr`) or a bare
+   expression; loops are whole statements only, never terms (`a->R(b)` and
+   `R(a)->b` are positioned errors). Its one custom primitive, `satisfyMap`, keeps the parser position
    on the *next unconsumed* token so `<?>` labels and `eof` report exact locations —
    the library's own `Parsing.Token` primitives leave the position on the consumed
    token, so don't swap them back in. The grammar uses no `try`: alternatives dispatch
@@ -98,10 +104,19 @@ JSON error string):
      never coalesce.
    - Ids are opaque (`"dot#3"`, `"stock#5"`, …) built from the node type prefix + parser
      `Id`, never from source text. Links reference these ids, i.e. identity not spelling.
+   - **Loop annotations** are transparent to evaluation: `LoopExpr`'s inner
+     expression emits its nodes/links as if unwrapped, then every node it mentions
+     (collected by the `memberIds` walk, run *after* evaluation so lookups are
+     idempotent) is tagged in `loopTags` with a generated name — the kind's letter
+     plus one source-order counter (`"R0"`, `"B1"`, …, like group numbering).
+   - `<-` links each hop from the *nearest* term of its right subtree
+     (`leftmostId`, same as the faucets), so `a<-b->c` fans out from `b`.
 
-   Output types: `Node = { type, id, label }`, `Link = { type, source, target }`,
-   `Graph = { nodes, links }`. `NodeType` (`Dot`/`Stock`/`Faucet`/`Cloud`) has a
-   `WriteForeign` instance so the whole graph serializes to the JSON the UI expects.
+   Output types: `Node = { type, id, label, group :: Maybe Int, loop :: Maybe (Array String) }`
+   (`Maybe` fields omit their JSON key on `Nothing` — goldens rely on that),
+   `Link = { type, source, target }`, `Graph = { nodes, links }`. `NodeType`
+   (`Dot`/`Stock`/`Faucet`/`Cloud`) has a `WriteForeign` instance so the whole
+   graph serializes to the JSON the UI expects.
 
 `Main` exports only `go`. The terminal runner is `src/CLI.purs` (argv → `go` → stdout),
 kept out of `Main` so the browser bundle never pulls in node-process.
@@ -119,8 +134,11 @@ kept out of `Main` so the browser bundle never pulls in node-process.
   the `<pre>` and passed to `update(system)`.
 - `update()` does the d3 data-join per node type (dots→`circle`, stocks→`rect`,
   faucets/clouds→`image` with inlined SVGs from `ui/shape/`), rebinds the link/charge/
-  center forces, and restarts the simulation.
-- `ticked()` positions everything each frame; links are drawn as curved SVG arc paths.
+  center forces, and restarts the simulation. It also groups nodes by their `loop`
+  names into one floating letter (`<text>`) per annotation — a pure overlay that
+  never enters `simulation.nodes()`.
+- `ticked()` positions everything each frame; links are drawn as curved SVG arc
+  paths, and each loop letter parks at the centroid of its member nodes.
 - Clicking empty svg space adds a dot node linked from the previous node (a manual
   editing affordance separate from the DSL path).
 

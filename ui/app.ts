@@ -52,12 +52,16 @@ examples.append('button')
     loadExample(this.textContent);
   });
 examples.append('button')
-  .text(`|=>investment[capital]=depreciation|
-capital->profit->investment
-[resource]=>extraction|
-resource->yield per unit capital->extraction
-yield per unit capital->price->profit
-capital->depreciation`)
+  .text(`|=>investment[capital]=>depreciation|
+|=>regeneration[resource]=>harvest|
+capital->growth goal->investment
+R(investment<-profit<-capital)
+B(depreciation<-capital)
+capital lifetime->depreciation
+B(profit <- capital -> harvest)
+profit<-price<-yield per unit capital->harvest
+resource->yield per unit capital
+regeneration<-regeneration rate<-resource->regeneration`)
   .on('click', function () {
     loadExample(this.textContent);
   });
@@ -210,12 +214,24 @@ let infoLink = svg.append("g")
   .attr("fill", "none")
   .selectAll<SVGPathElement, Link>("path");
 
+// Loop letters render topmost: each R(...)/B(...) annotation floats its letter
+// at the centroid of the member nodes carrying its name (a pure overlay — loop
+// labels are not simulation nodes and feel no forces).
+type LoopInstance = { name: string, letter: string, members: Node[] };
+let loopLabel = svg.append("g")
+  .selectAll<SVGTextElement, LoopInstance>("text");
+
 const systemNodes: Node[] = [];
 const systemLinks: Link[] = []
 const system: System = { nodes: systemNodes, links: systemLinks }
 
 const simulation = d3.forceSimulation<Node, Link>(systemNodes)
-  .force("link", d3.forceLink<Node, Link>(systemLinks).id(d => d.id).distance(80))
+  // Flow pipes stay stiff, but info arrows are soft suggestions: at the d3
+  // default strength they reel a dragged dot back to rest-length, so e.g.
+  // `growth goal` could never float above its band — every equilibrium sat
+  // pinned on the band line. Soft arrows let hand placement win.
+  .force("link", d3.forceLink<Node, Link>(systemLinks).id(d => d.id).distance(80)
+    .strength(l => l.type === "flow" ? 0.5 : 0.2))
   // Stocks are the diagram's anchors: they repel harder than other nodes;
   // dots repel a bit more than faucets/clouds so the aux web spreads through
   // the inter-band region instead of clumping at the midline.
@@ -232,8 +248,10 @@ const simulation = d3.forceSimulation<Node, Link>(systemNodes)
   // inward, and collision then escapes vertically (waving the line).
   .force("x", d3.forceX<Node>(d => d.gx ?? svgWidth / 2).strength(d => d.gx != null ? 0.25 : 0.02))
   // Stocks pin to their band's y hardest, other band members strongly (forming
-  // a horizontal line); floating nodes keep a gentle pull to center.
-  .force("y", d3.forceY<Node>(d => d.gy ?? svgHeight / 2).strength(d => d.type === "stock" ? 1.0 : d.inFlow ? 0.9 : 0.05))
+  // a horizontal line); floating nodes get only a barely-there tie-breaker
+  // toward center — weak enough that a dot dragged to the other side of its
+  // band stays there (links + charge dominate) instead of drifting back.
+  .force("y", d3.forceY<Node>(d => d.gy ?? svgHeight / 2).strength(d => d.type === "stock" ? 1.0 : d.inFlow ? 0.9 : 0.01))
   .on("tick", ticked);
 
 let nextId = systemNodes.length;
@@ -245,7 +263,10 @@ function update(system: System) {
   const old = new Map(simulation.nodes().map(d => [d.id, d] as [string, Node]));
   const nodes = system.nodes.map(d => {
     const prev = old.get(d.id);
-    return prev ? Object.assign(prev, d) : { ...d };
+    // Clear the Maybe-omitted compiler fields before merging: a recycled node
+    // would otherwise keep a stale `group`/`loop` after losing it upstream
+    // (the JSON simply omits the key, so Object.assign wouldn't overwrite).
+    return prev ? Object.assign(prev, { group: null, loop: null }, d) : { ...d };
   });
   const links = system.links.map(d => ({ ...d }));
 
@@ -320,6 +341,30 @@ function update(system: System) {
       return g;
     })
     .call(drag(), undefined);
+
+  // One floating letter per loop annotation: group the nodes by loop name
+  // (a node can be in several loops) and derive each letter from its name
+  // ("R0" -> "R"). ticked() parks the letter at its members' centroid.
+  const loopMembers = new Map<string, Node[]>();
+  for (const d of nodes) {
+    for (const name of d.loop ?? []) {
+      const arr = loopMembers.get(name) ?? [];
+      arr.push(d);
+      loopMembers.set(name, arr);
+    }
+  }
+  const loopInstances: LoopInstance[] = [...loopMembers.entries()]
+    .map(([name, members]) => ({ name, letter: name.charAt(0), members }));
+  loopLabel = loopLabel
+    .data(loopInstances, d => d.name)
+    .join("text")
+    .attr("text-anchor", "middle")
+    .attr("dy", "0.32em")
+    .attr("font-size", 28)
+    .attr("font-family", "sans-serif")
+    .attr("fill", "#444")
+    .attr("pointer-events", "none")
+    .text(d => d.letter);
 
   // Lay nodes out in horizontal bands. The compiler assigns each node a `group`
   // (a flow-connected chain of stocks/faucets/clouds), numbered top to bottom;
@@ -439,12 +484,15 @@ function update(system: System) {
 const infoArcCurvature = 0.6;
 const infoArcRadius = (chord: number) => chord * infoArcCurvature;
 
-// The info-link arc is the minor arc (sweep 1) of the circle of radius
-// `infoArcRadius(chord)` through both endpoints. Move both endpoints along
-// that same circle — start forward by `mStart`, end back by `mEnd` arc-pixels —
-// so the shortened path still lies exactly on the original arc and both
-// markers orient to their true tangents.
-function trimArc(sx: number, sy: number, tx: number, ty: number, mStart: number, mEnd: number): { start: { x: number, y: number }, end: { x: number, y: number } } {
+// The info-link arc is the minor arc of the circle of radius
+// `infoArcRadius(chord)` through both endpoints, drawn with the given sweep
+// flag. Move both endpoints along that same circle — start forward by
+// `mStart`, end back by `mEnd` arc-pixels — so the shortened path still lies
+// exactly on the original arc and both markers orient to their true tangents.
+// For a minor arc the sweep-1 circle center always sits at w = +1 (and the
+// sweep-0 center mirrors it at w = -1); angular travel runs in the direction
+// of `w`, so the start advances by +w and the end backs up by -w arc-pixels.
+function trimArc(sx: number, sy: number, tx: number, ty: number, mStart: number, mEnd: number, sweep: 0 | 1): { start: { x: number, y: number }, end: { x: number, y: number } } {
   const untrimmed = { start: { x: sx, y: sy }, end: { x: tx, y: ty } };
   const dx = tx - sx, dy = ty - sy;
   const d = Math.hypot(dx, dy);
@@ -453,25 +501,30 @@ function trimArc(sx: number, sy: number, tx: number, ty: number, mStart: number,
   const mx = (sx + tx) / 2, my = (sy + ty) / 2;
   const h = Math.sqrt(Math.max(0, r * r - (d / 2) * (d / 2)));
   const ux = dx / d, uy = dy / d;
-  // Two candidate circle centers; sweep-flag 1 means the angle from center
-  // increases (screen coords), so pick the center that yields a positive sweep.
-  for (const w of [1, -1]) {
-    const cx = mx - w * uy * h, cy = my + w * ux * h;
-    const a0 = Math.atan2(sy - cy, sx - cx);
-    const a1 = Math.atan2(ty - cy, tx - cx);
-    let da = a1 - a0;
-    while (da <= -Math.PI) da += 2 * Math.PI;
-    while (da > Math.PI) da -= 2 * Math.PI;
-    if (da > 0) {
-      const as = a0 + mStart / r; // arc length -> angle
-      const ae = a1 - mEnd / r;
-      return {
-        start: { x: cx + r * Math.cos(as), y: cy + r * Math.sin(as) },
-        end: { x: cx + r * Math.cos(ae), y: cy + r * Math.sin(ae) },
-      };
-    }
-  }
-  return untrimmed;
+  const w = sweep === 1 ? 1 : -1;
+  const cx = mx - w * uy * h, cy = my + w * ux * h;
+  const a0 = Math.atan2(sy - cy, sx - cx);
+  const a1 = Math.atan2(ty - cy, tx - cx);
+  const as = a0 + w * (mStart / r); // arc length -> angle, along travel
+  const ae = a1 - w * (mEnd / r);
+  return {
+    start: { x: cx + r * Math.cos(as), y: cy + r * Math.sin(as) },
+    end: { x: cx + r * Math.cos(ae), y: cy + r * Math.sin(ae) },
+  };
+}
+
+// Bulge apex of the candidate arc for a sweep flag: the minor arc's midpoint
+// sits (r - h) off the chord midpoint, perpendicular to the chord — sweep 1
+// on one side, sweep 0 mirrored. Used to score which side has more room.
+function arcBulge(sx: number, sy: number, tx: number, ty: number, sweep: 0 | 1): { x: number, y: number } | null {
+  const dx = tx - sx, dy = ty - sy;
+  const d = Math.hypot(dx, dy);
+  if (d === 0) return null;
+  const r = infoArcRadius(d);
+  const h = Math.sqrt(Math.max(0, r * r - (d / 2) * (d / 2)));
+  const ux = dx / d, uy = dy / d;
+  const w = sweep === 1 ? 1 : -1;
+  return { x: (sx + tx) / 2 + w * uy * (r - h), y: (sy + ty) / 2 - w * ux * (r - h) };
 }
 
 function ticked() {
@@ -479,6 +532,40 @@ function ticked() {
   nodeStock.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
   nodeFaucet.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
   nodeCloud.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
+  // A loop letter sits at the centroid of its member nodes, tracking them
+  // through the simulation (and through drags) for free.
+  loopLabel.attr("transform", d => {
+    const n = d.members.length || 1;
+    const cx = d.members.reduce((acc, m) => acc + (m.x ?? 0), 0) / n;
+    const cy = d.members.reduce((acc, m) => acc + (m.y ?? 0), 0) / n;
+    return `translate(${cx},${cy})`;
+  });
+
+  // Each info arc bows away from the nearest clutter: score both candidate
+  // bulge apexes by their clearance to the nearest uninvolved node and keep
+  // the roomier side. Without this the sweep flag was a constant, so the bow
+  // side was an accident of chord direction — a dot dragged above its band
+  // got arcs sagging back down into the band. Hysteresis keeps near-ties
+  // from flickering while the simulation jiggles; ties keep the legacy side.
+  const sweepHysteresis = 16;
+  const obstacles = simulation.nodes();
+  infoLink.each(d => {
+    const s = d.source as Node, t = d.target as Node;
+    const sx = s.x ?? 0, sy = s.y ?? 0, tx = t.x ?? 0, ty = t.y ?? 0;
+    const clearance = (b: { x: number, y: number } | null) => {
+      if (!b) return 0;
+      let min = Infinity;
+      for (const n of obstacles) {
+        if (n === s || n === t) continue;
+        min = Math.min(min, Math.hypot((n.x ?? 0) - b.x, (n.y ?? 0) - b.y));
+      }
+      return min;
+    };
+    const c1 = clearance(arcBulge(sx, sy, tx, ty, 1));
+    const c0 = clearance(arcBulge(sx, sy, tx, ty, 0));
+    if (d.sweep === undefined) d.sweep = c0 > c1 ? 0 : 1;
+    else if ((d.sweep === 1 ? c0 - c1 : c1 - c0) > sweepHysteresis) d.sweep = d.sweep === 1 ? 0 : 1;
+  });
 
   const pathFor = (d: Link) => {
       const source = d.source as Node;
@@ -502,9 +589,10 @@ function ticked() {
       // Info arc: move both endpoints along the arc's own circle so the tail
       // circle sits on the source's edge and the small head at the target's,
       // instead of buried under the shapes. The radius must match trimArc's.
+      const sweep = d.sweep ?? 1;
       const r = infoArcRadius(dr);
-      const a = trimArc(sx, sy, tx, ty, edgeOf(source) + infoTailRadius, edgeOf(target) + infoArrowLength);
-      return `M${a.start.x},${a.start.y}A${r},${r} 0 0,1 ${a.end.x},${a.end.y}`;
+      const a = trimArc(sx, sy, tx, ty, edgeOf(source) + infoTailRadius, edgeOf(target) + infoArrowLength, sweep);
+      return `M${a.start.x},${a.start.y}A${r},${r} 0 0,${sweep} ${a.end.x},${a.end.y}`;
   };
   flowLink.attr("d", pathFor);
   infoLink.attr("d", pathFor);

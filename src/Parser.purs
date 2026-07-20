@@ -11,7 +11,7 @@ import Data.Generic.Rep (class Generic)
 import Data.List (List(..), (:))
 import Data.Maybe (Maybe(..))
 import Data.Tuple (Tuple(..), fst)
-import Lexer (Operator(..), PosToken, Token(..), describeToken, formatParseError)
+import Lexer (LoopKind, Operator(..), PosToken, Token(..), describeToken, formatParseError, loopLetter)
 import Parsing (ParseState(..), ParserT, fail, failWithPosition, getParserT, initialPos, runParserT', stateParserT)
 import Parsing.Combinators (choice, optionMaybe, optional, sepEndBy, (<?>))
 import Parsing.Token (eof) as Token
@@ -25,6 +25,7 @@ data Tree
   | ArrowRExpr Id Tree Tree
   | ArrowLExpr Id Tree Tree
   | ParenExpr Id Tree
+  | LoopExpr Id LoopKind Tree
 derive instance eqTree :: Eq Tree
 derive instance genericTree :: Generic Tree _
 instance showTree :: Show Tree where
@@ -36,6 +37,7 @@ instance showTree :: Show Tree where
   show (ArrowRExpr i l r) = "ArrowR#" <> show i <> "(" <> show l <> " -> " <> show r <> ")"
   show (ArrowLExpr i l r) = "ArrowL#" <> show i <> "(" <> show l <> " <- " <> show r <> ")"
   show (ParenExpr i expr) = "Paren#" <> show i <> "(" <> show expr <> ")"
+  show (LoopExpr i k expr) = "Loop#" <> show i <> "(" <> loopLetter k <> " " <> show expr <> ")"
 -- | The token parser: positioned tokens over a `State Id` base monad.
 -- | ParserT's MonadState instance routes `state` to the base monad, so
 -- | `fresh` mints AST ids directly inside parsing code.
@@ -83,16 +85,35 @@ identTok :: P String
 identTok = satisfyMap case _ of
   TokIdent s -> Just s
   _ -> Nothing
--- | program := sep? (expression sepEndBy sep) eof
+loopTok :: P LoopKind
+loopTok = satisfyMap case _ of
+  TokLoop k -> Just k
+  _ -> Nothing
+-- | program := sep? (statement sepEndBy sep) eof
 -- | The lexer collapses every newline run into a single TokSep, so one
 -- | optional leading separator plus sepEndBy covers blank leading, interior,
 -- | and trailing lines without ever producing an empty statement.
 program :: P (List Tree)
 program = do
   optional (tk TokSep)
-  trees <- sepEndBy expression (tk TokSep)
+  trees <- sepEndBy statement (tk TokSep)
   Token.eof <?> "an operator ('->', '<-', '=>', '<='), a new line, or the end of the input"
   pure trees
+-- | statement := loop | expression
+-- | Loop annotations are whole statements, never terms: `a->R(b)` and
+-- | `R(a)->b` are positioned parse errors. The alternatives dispatch on
+-- | disjoint first tokens (TokLoop starts only a loop), so still no `try`.
+statement :: P Tree
+statement = choice [ loopStmt, expression ]
+-- | loop := LOOPKIND expression ')'   (the `R(`/`B(` lexeme is one token).
+-- | Mints BEFORE its body, like ParenExpr (id-stability point).
+loopStmt :: P Tree
+loopStmt = do
+  kind <- loopTok
+  i <- fresh
+  inner <- expression <?> ("an expression inside '" <> loopLetter kind <> "(...)'")
+  tk TokRParen <?> "a closing ')'"
+  pure (LoopExpr i kind inner)
 -- | expression := term tail?
 -- | The `defer` (here and on `term`) breaks the expression -> term ->
 -- | parenTerm -> expression reference cycle: purs rejects top-level value

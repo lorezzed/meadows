@@ -17,7 +17,7 @@ import Effect (Effect)
 import Effect.Console (log)
 import Effect.Exception (throw)
 import Evaluator (Graph, Link, evaluate)
-import Lexer (Operator(..), Token(..), tokenize)
+import Lexer (LoopKind(..), Operator(..), Token(..), tokenize)
 import Parser (Tree(..), parse)
 import Parsing (Position(..))
 
@@ -63,6 +63,11 @@ labelGroups :: String -> Either String (Array (Tuple String (Maybe Int)))
 labelGroups s =
   (Array.sortWith fst <<< map (\n -> Tuple n.label n.group) <<< _.nodes) <$> graphOf s
 
+-- | (label, loop names) per node, sorted by label.
+labelLoops :: String -> Either String (Array (Tuple String (Maybe (Array String))))
+labelLoops s =
+  (Array.sortWith fst <<< map (\n -> Tuple n.label n.loop) <<< _.nodes) <$> graphOf s
+
 tests :: Array (Maybe String)
 tests =
   -- Lexer: token streams
@@ -87,6 +92,22 @@ tests =
       (posOf "a\nb")
   , expectErrorAt "unlexable input reports its position"
       "line 1, column 1" (toksOf "?")
+  -- Lexer: loop annotations (`R(`/`B(` is one loop-open lexeme)
+  , expectEq "R( lexes as a loop-open token"
+      (Right (TokLoop Reinforcing : TokIdent "a" : TokOp ArrowR : TokIdent "b" : TokRParen : Nil))
+      (toksOf "R(a->b)")
+  , expectEq "B( lexes as a loop-open token"
+      (Right (TokLoop Balancing : TokIdent "a" : TokRParen : Nil))
+      (toksOf "B(a)")
+  , expectEq "a bare R stays an identifier"
+      (Right (TokIdent "R" : TokOp ArrowR : TokIdent "b" : Nil))
+      (toksOf "R->b")
+  , expectEq "only the exact lexeme opens a loop: Rx( is a name plus '('"
+      (Right (TokIdent "Rx" : TokLParen : TokIdent "a" : TokRParen : Nil))
+      (toksOf "Rx(a)")
+  , expectEq "loop tokens carry their start positions"
+      (Right (Tuple 1 1 : Tuple 1 3 : Tuple 1 4 : Nil))
+      (posOf "R(a)")
   -- Parser: tree shapes and exact ids (mint order: atoms after their tokens,
   -- operators after op+name before the right operand, parens before the body)
   , expectEq "arrow AST (ids: left 0, operator 1, right 2)"
@@ -111,6 +132,9 @@ tests =
   , expectEq "paren mints before its body"
       (Right (ArrowRExpr 3 (ParenExpr 0 (FaucetRExpr 2 "f" (NodeExpr 1 "a") Nothing)) (NodeExpr 4 "b") : Nil))
       (parseAll "(a=>f)->b")
+  , expectEq "loop AST: the annotation mints before its body"
+      (Right (LoopExpr 0 Reinforcing (ArrowRExpr 2 (NodeExpr 1 "a") (NodeExpr 3 "b")) : Nil))
+      (parseAll "R(a->b)")
   , expectEq "statements share one id counter"
       (Right (ArrowRExpr 1 (NodeExpr 0 "a") (NodeExpr 2 "b") : NodeExpr 3 "c" : Nil))
       (parseAll "a->b\nc")
@@ -134,6 +158,14 @@ tests =
       "line 1, column 2" (parseAll "[a")
   , expectErrorAt "errors land on the right line"
       "line 2, column 2" (parseAll "a->b\nc->")
+  , expectErrorAt "an unclosed loop is an error"
+      "line 1, column 3" (parseAll "R(a")
+  , expectErrorAt "an empty loop needs an expression"
+      "line 1, column 3" (parseAll "R()")
+  , expectErrorAt "loops are statements, not terms"
+      "line 1, column 4" (parseAll "a->R(b)")
+  , expectErrorAt "a loop closes its statement: no operator may follow"
+      "line 1, column 5" (parseAll "R(a)->b")
   -- Evaluator: name identity
   , expectEq "repeating a name references one node"
       (Right 1) (nodeCount "a->a")
@@ -175,6 +207,21 @@ tests =
       (Right [ Tuple "a" (Just 0), Tuple "b" (Just 0), Tuple "c" (Just 1)
              , Tuple "d" (Just 1), Tuple "f" (Just 0), Tuple "g" (Just 1) ])
       (labelGroups "[a]=>f[b]\n[c]=>g[d]")
+  -- Evaluator: loop annotations tag members, never add nodes or links
+  , expectEq "a loop tags its members with a generated name"
+      (Right [ Tuple "a" (Just [ "R0" ]), Tuple "b" (Just [ "R0" ]) ])
+      (labelLoops "R(a->b)")
+  , expectEq "a loop annotation leaves the links untouched"
+      (Right [ { type: "arrow", source: "dot#1", target: "dot#3" } ])
+      (linksOf "R(a->b)")
+  , expectEq "overlapping loops stack names in statement order"
+      (Right [ Tuple "a" (Just [ "R0" ]), Tuple "b" (Just [ "R0", "B1" ]), Tuple "c" (Just [ "B1" ]) ])
+      (labelLoops "R(a->b)\nB(b->c)")
+  , expectEq "loop members resolve through the registry (a stock, a faucet)"
+      (Right [ Tuple "a" (Just [ "B0" ]), Tuple "f" (Just [ "B0" ]) ])
+      (labelLoops "[a]=>f\nB(f<-a)")
+  , expectEq "a loop adds no nodes, even across statements"
+      (Right 2) (nodeCount "[a]=>f\nB(f<-a)")
   -- Combined graphs: multiple statements mixing arrows, flows, stocks,
   -- clouds, and parens
   , expectEq "arrow edges hanging off a flow band"
@@ -233,14 +280,18 @@ tests =
              , Tuple "pop" (Just 0), Tuple "|" (Just 0), Tuple "|" (Just 0) ])
       (labelGroups "|=>inflow[pop]=>outflow|\npop->growth->inflow")
   -- Mixed link directions
-  , expectEq "chained <- links right-to-left, innermost first"
-      (Right [ { type: "arrow", source: "dot#4", target: "dot#2" }
-             , { type: "arrow", source: "dot#2", target: "dot#0" } ])
+  , expectEq "chained <- links each hop from its nearest term, outermost first"
+      (Right [ { type: "arrow", source: "dot#2", target: "dot#0" }
+             , { type: "arrow", source: "dot#4", target: "dot#2" } ])
       (linksOf "a<-b<-c")
   , expectEq "a->b<-c fans in on b"
       (Right [ { type: "arrow", source: "dot#0", target: "dot#2" }
              , { type: "arrow", source: "dot#4", target: "dot#2" } ])
       (linksOf "a->b<-c")
+  , expectEq "a<-b->c fans out from b"
+      (Right [ { type: "arrow", source: "dot#2", target: "dot#0" }
+             , { type: "arrow", source: "dot#2", target: "dot#4" } ])
+      (linksOf "a<-b->c")
   , expectEq "chained leftward flows reverse the whole pipeline"
       (Right [ { type: "flow", source: "faucet#1", target: "stock#0" }
              , { type: "flow", source: "stock#2", target: "faucet#1" }

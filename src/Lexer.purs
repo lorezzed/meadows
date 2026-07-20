@@ -1,9 +1,11 @@
 module Lexer
-  ( Operator(..)
+  ( LoopKind(..)
+  , Operator(..)
   , PosToken
   , Token(..)
   , describeToken
   , formatParseError
+  , loopLetter
   , opSymbol
   , tokenize
   )
@@ -36,10 +38,24 @@ derive instance genericOperator :: Generic Operator _
 instance showOperator :: Show Operator where
   show = genericShow
 
+-- | The two feedback-loop annotation kinds: `R(...)` marks a reinforcing
+-- | loop, `B(...)` a balancing one.
+data LoopKind = Reinforcing | Balancing
+
+derive instance eqLoopKind :: Eq LoopKind
+derive instance genericLoopKind :: Generic LoopKind _
+instance showLoopKind :: Show LoopKind where
+  show = genericShow
+
+loopLetter :: LoopKind -> String
+loopLetter Reinforcing = "R"
+loopLetter Balancing = "B"
+
 data Token
   = TokIdent String
   | TokOp Operator
   | TokCloud
+  | TokLoop LoopKind
   | TokLParen
   | TokRParen
   | TokLBracket
@@ -112,9 +128,17 @@ rightBracket = char ']'
 cloud :: Parser String Char
 cloud = char '|'
 
+-- | A loop annotation opens with the exact two-char lexeme `R(` or `B(`
+-- | (uppercase, no space) -- a loop-open, the way `[` is a stock-open. The
+-- | `try` backtracks a partial match, so a bare `R`, `R->b`, or `Rx(` still
+-- | lex as identifiers. Must be tried before `identifier` in `token`.
+loopOpen :: Parser String LoopKind
+loopOpen = (Reinforcing <$ try (string "R(")) <|> (Balancing <$ try (string "B("))
+
 token :: Parser String Token
 token
   =   (TokOp <$> operator)
+  <|> (TokLoop <$> loopOpen)
   <|> (TokLParen <$ leftParen)
   <|> (TokRParen <$ rightParen)
   <|> (TokLBracket <$ leftBracket)
@@ -162,6 +186,7 @@ describeToken :: Token -> String
 describeToken (TokIdent s) = "name '" <> s <> "'"
 describeToken (TokOp op) = "'" <> opSymbol op <> "'"
 describeToken TokCloud = "'|'"
+describeToken (TokLoop k) = "'" <> loopLetter k <> "('"
 describeToken TokLParen = "'('"
 describeToken TokRParen = "')'"
 describeToken TokLBracket = "'['"

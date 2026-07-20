@@ -16,6 +16,18 @@ resource->yield per unit capital->extraction
 yield per unit capital->price->profit
 capital->depreciation`;
 
+// The full Meadows reference model, with R(...)/B(...) loop annotations.
+const EX_LOOPS = `|=>investment[capital]=>depreciation|
+|=>regeneration[resource]=>harvest|
+capital->growth goal->investment
+R(investment<-profit<-capital)
+B(depreciation<-capital)
+capital lifetime->depreciation
+B(profit <- capital -> harvest)
+profit<-price<-yield per unit capital->harvest
+resource->yield per unit capital
+regeneration<-regeneration rate<-resource->regeneration`;
+
 // Happy-path inputs pinned byte-exactly.
 const goldenInputs = [
   'a->b',
@@ -55,6 +67,16 @@ const goldenInputs = [
   'a<=b->c',
   'a=>f=>g',
   'a=>b[x]->c',   // with a target present, the arrow belongs to the target
+  // `<-` links each hop from its nearest right term: a<-b->c fans out from b
+  'a<-b->c',
+  // Loop annotations: R(...)/B(...) tag members' `loop` arrays with generated
+  // names ("R0", "B1", ... by source order); nodes/links stay as unwrapped
+  'R(a->b)',
+  'B(a<-b)',
+  'R(a)',
+  '[a]=>f\nB(f<-a)',
+  'R(a->b)\nB(b->c)',
+  EX_LOOPS,
 ];
 
 // Errors: the "kind: line L, column C:" prefix is contractual; wording may be tuned.
@@ -74,6 +96,12 @@ const errorCases = [
   ['[a]=>f[b]\nb->\nc',      /^Parsing error: line 2, column 4: /],
   ['([s]=>f)->([t]=>g',      /^Parsing error: line 1, column 17: /],
   ['a->b\nc->d\ne=>',        /^Parsing error: line 3, column 2: /],
+  // Loop annotations
+  ['R(a',       /^Parsing error: line 1, column 3: /],  // unclosed loop
+  ['R()',       /^Parsing error: line 1, column 3: /],  // empty loop
+  ['a->R(b)',   /^Parsing error: line 1, column 4: /],  // loops are statements, not terms
+  ['R(a)->b',   /^Parsing error: line 1, column 5: /],  // nothing may follow a loop
+  ['r(a)',      /^Parsing error: line 1, column 2: /],  // lowercase r is just a name
 ];
 
 if (process.argv.includes('--capture')) {
@@ -114,6 +142,15 @@ const big = JSON.parse(M.go(EX_BIG));
 if (big.nodes.length !== 11) fail('big model', `11 nodes expected, got ${big.nodes.length}`);
 if (new Set(big.nodes.map(n => n.group).filter(g => g != null)).size !== 2)
   fail('big model', '2 groups expected');
+const loops = JSON.parse(M.go(EX_LOOPS));
+const loopOf = label => loops.nodes.find(n => n.label === label)?.loop;
+if (loops.nodes.length !== 16) fail('loops model', `16 nodes expected, got ${loops.nodes.length}`);
+if (JSON.stringify(loopOf('capital')) !== JSON.stringify(['R0', 'B1', 'B2']))
+  fail('loops model', `capital should be in R0/B1/B2, got ${JSON.stringify(loopOf('capital'))}`);
+if (JSON.stringify(loopOf('harvest')) !== JSON.stringify(['B2']))
+  fail('loops model', `harvest should be in B2 only, got ${JSON.stringify(loopOf('harvest'))}`);
+if (loopOf('growth goal') !== undefined)
+  fail('loops model', 'growth goal is in no loop, its `loop` key should be absent');
 
 console.log(failures ? `${failures} FAILURE(S)` : 'ALL CHECKS PASSED');
 process.exit(failures ? 1 : 0);
