@@ -56,6 +56,24 @@ B(heating <- warming discrepancy <- iced coffee)
 room temperature -> warming discrepancy`
     },
     {
+        label: 'Figure 12 & 13',
+        content: `|=>interest at two[two percent interest: 100]
+R(interest at two <- two percent interest)
+rate at two: 0.02 -> interest at two
+|=>interest at four[four percent interest: 100]
+R(interest at four <- four percent interest)
+rate at four: 0.04 -> interest at four
+|=>interest at six[six percent interest: 100]
+R(interest at six <- six percent interest)
+rate at six: 0.06 -> interest at six
+|=>interest at eight[eight percent interest: 100]
+R(interest at eight <- eight percent interest)
+rate at eight: 0.08 -> interest at eight
+|=>interest at ten[ten percent interest: 100]
+R(interest at ten <- ten percent interest)
+rate at ten: 0.1 -> interest at ten`
+    },
+    {
         label: 'Figure 42',
         content: `|=>investment[capital]=>depreciation|
 |=>regeneration[resource]=>harvest|

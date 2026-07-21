@@ -134,5 +134,48 @@ room temperature -> warming discrepancy`;
     fail('ambiguous goals', 'no goal should register for the chart');
 }
 
+// Figures 12 & 13: reinforcing interest. A bare faucet fed one constant AND
+// its own stock's level (the drawn R-loop arrow) compounds: rate = factor ×
+// level, so each Euler step multiplies the level by (1 + factor·DT) —
+// exponential growth. The factor constant is NOT a goal: no dashed rule.
+{
+  const F12 = `|=>interest added[money in bank account: 100]
+R(interest added <- money in bank account)
+interest rate: 0.1 -> interest added`;
+  const system = sys(F12);
+  const money = simulate(system).find(s => s.label === 'money in bank account');
+  let want = 100;
+  for (let n = 0; n < Math.round(T_END / DT); n++) want = want + (0.1 * want) * DT;
+  if (Math.abs(last(money) - want) > 1e-9)
+    fail('figure 13', `ends at ${last(money)}, want ${want}`);
+  if (!money.levels.every((v, i) => i === 0 || v > money.levels[i - 1]))
+    fail('figure 13', 'compound interest must grow strictly');
+  if (goalRefs(system).length !== 0)
+    fail('figure 13', 'a factor constant is not a goal — no dashed rule should register');
+}
+
+// The same wiring on an outflow decays exponentially toward 0, never below.
+{
+  const series = simulate(sys('[charge: 100]=>leak|\nR(leak <- charge)\nleak rate: 0.3 -> leak'));
+  const charge = series[0];
+  let want = 100;
+  for (let n = 0; n < Math.round(T_END / DT); n++) want = want - (0.3 * want) * DT;
+  if (Math.abs(last(charge) - want) > 1e-9)
+    fail('decay', `ends at ${last(charge)}, want ${want}`);
+  if (!charge.levels.every((v, i) => v >= 0 && (i === 0 || v < charge.levels[i - 1])))
+    fail('decay', 'levels must decay strictly and stay nonnegative');
+}
+
+// The R loop must actually be drawn: a bare faucet fed only a constant stays
+// a closed tap. Feedback through a value-less relay dot still counts.
+{
+  const flat = simulate(sys('|=>f[a: 100]\nc: 0.5 -> f'))[0];
+  if (!flat.levels.every(v => v === 100))
+    fail('no loop', 'a bare faucet without the drawn feedback must stay closed');
+  const relayed = simulate(sys('|=>f[a: 100]\nR(f <- statement <- a)\nc: 0.1 -> f'))[0];
+  if (!(last(relayed) > 100))
+    fail('relayed loop', 'feedback through a relay dot must still compound');
+}
+
 console.log(failures ? `${failures} FAILURE(S)` : 'SIMULATE CHECKS PASSED');
 process.exit(failures ? 1 : 0);

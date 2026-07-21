@@ -16,6 +16,14 @@
 // rate = gain × (level − goal) draining an outflow, gain × (goal − level)
 // filling an inflow, clamped at 0 — exponential approach to the goal from
 // either side, flattening as the discrepancy shrinks.
+//
+// A faucet with NO annotation of its own reads the same web as REINFORCING
+// (the compound-interest loop of figures 12 & 13) — provided the walk also
+// reaches back to the faucet's own stock, i.e. the level→faucet info arrow
+// that closes the R loop is actually drawn. Then the constant multiplies
+// the level: rate = factor × level — exponential growth filling, exponential
+// decay draining. Without the drawn feedback a bare faucet stays a closed
+// tap, exactly as before.
 import type { Link, Node, System } from "./type";
 
 export const T_END = 10; // simulated time units
@@ -42,17 +50,26 @@ export function hasNumbers(system: System): boolean {
 
 // A faucet's attached stock side(s) — the first stock→faucet flow link and
 // the first faucet→stock one; further attachments are ignored (v1 rule) —
-// plus, when the goal-seeking pattern matches, the valued dot serving as its
-// goal. The goal is found by walking the info arrows INTO the faucet
-// backwards, straight through value-less relay dots; anything else (stocks,
-// faucets, clouds) ends a branch. Exactly one valued dot reached makes it
-// the goal; two (ambiguous) keep the plain constant-rate reading, as does a
-// faucet with stocks on both sides (no single "actual" to compare — v1 rule).
+// plus the feedback reading of its info-arrow web, when one matches. The
+// web is walked backwards from the faucet, straight through value-less
+// relay dots; anything else (stocks, faucets, clouds) ends a branch.
+// Exactly one valued dot reached arms a feedback rate — which one depends
+// on where the number sits (a faucet with stocks on both sides keeps the
+// plain constant-rate reading: no single level to feed back — as does an
+// ambiguous web with two constants):
+//   - a faucet with its own annotation reads the dot as its GOAL and the
+//     annotation as a gain (figures 10 & 11): rate = gain × discrepancy.
+//   - a bare faucet whose web also reaches its own attached stock — the
+//     drawn level→faucet arrow closing figure 12's R loop — reads the dot
+//     as a FACTOR on that level (figures 12 & 13): rate = factor × level.
+//     The loop must be drawn: a bare faucet fed only a constant stays a
+//     closed tap.
 type Wiring = {
   id: string;
   source: string | null;
   sink: string | null;
   goal: Node | null;
+  factor: Node | null;
 };
 
 function faucetWiring(system: System): Wiring[] {
@@ -65,21 +82,23 @@ function faucetWiring(system: System): Wiring[] {
     const t = endId(l.target);
     arrowsInto.set(t, [...(arrowsInto.get(t) ?? []), endId(l.source)]);
   }
-  const goalOf = (fid: string): Node | null => {
-    const goals = new Set<Node>();
+  const infoWeb = (fid: string, attached: string): { dot: Node | null; loops: boolean } => {
+    const dots = new Set<Node>();
+    let loops = false;
     const seen = new Set<string>();
     const stack = [...(arrowsInto.get(fid) ?? [])];
     while (stack.length) {
       const id = stack.pop();
       if (id == null || seen.has(id)) continue;
       seen.add(id);
+      if (id === attached) loops = true;
       const n = nodeById.get(id);
       if (!n || n.type !== "dot") continue;
-      if (n.value != null) goals.add(n);
+      if (n.value != null) dots.add(n);
       else stack.push(...(arrowsInto.get(id) ?? []));
     }
-    const [only] = goals;
-    return goals.size === 1 && only ? only : null;
+    const [only] = dots;
+    return { dot: dots.size === 1 && only ? only : null, loops };
   };
   return system.nodes
     .filter(n => n.type === "faucet")
@@ -88,8 +107,11 @@ function faucetWiring(system: System): Wiring[] {
       const snk = flows.find(l => endId(l.source) === f.id && stockIds.has(endId(l.target)));
       const source = src ? endId(src.source) : null;
       const sink = snk ? endId(snk.target) : null;
-      const goal = (source === null) !== (sink === null) ? goalOf(f.id) : null;
-      return { id: f.id, source, sink, goal };
+      const attached = (source === null) !== (sink === null) ? source ?? sink : null;
+      const web = attached != null ? infoWeb(f.id, attached) : null;
+      const goal = f.value != null ? (web?.dot ?? null) : null;
+      const factor = f.value == null && web?.loops ? web.dot : null;
+      return { id: f.id, source, sink, goal, factor };
     });
 }
 
@@ -117,7 +139,9 @@ export function simulate(system: System): StockSeries[] {
   // A faucet's plain rate is its schedule's last segment whose start time is
   // ≤ t: the initial `value` at t=0 plus any `steps`, kept sorted by time
   // (stable, so a step written at t=0 overrides the initial). A goal-seeking
-  // faucet reads the same schedule as its gain instead (see the rate loop).
+  // faucet reads the same schedule as its gain instead, and a reinforcing
+  // one has no schedule at all — its rate is factor × level (see the rate
+  // loop).
   const wireById = new Map(faucetWiring(system).map(w => [w.id, w] as [string, Wiring]));
   const faucets = system.nodes
     .filter(n => n.type === "faucet")
@@ -131,6 +155,7 @@ export function simulate(system: System): StockSeries[] {
         source: w?.source ?? null,
         sink: w?.sink ?? null,
         goal: w?.goal?.value ?? null,
+        factor: w?.factor?.value ?? null,
       };
     });
   const rateAt = (segs: { at: number; rate: number }[], t: number): number => {
@@ -150,6 +175,11 @@ export function simulate(system: System): StockSeries[] {
     // multi-outflow generalization of min(rate, level/dt), order-independent
     // and conserving. Rates are sampled at the step's start time.
     const rates = faucets.map(f => {
+      // Reinforcing: the constant multiplies the faucet's own stock level —
+      // compound interest filling, exponential decay draining (the outflow
+      // ration below still guards overdraw, so a hot factor empties the
+      // stock and stops rather than going negative).
+      if (f.factor != null) return f.factor * (level.get((f.source ?? f.sink)!) ?? 0);
       const gain = rateAt(f.segs, i * DT);
       if (f.goal == null) return gain;
       // Goal-seeking: the schedule value acts as a gain on the discrepancy,

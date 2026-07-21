@@ -26,6 +26,24 @@ room temperature: 18 -> discrepancy
 B(heating <- warming discrepancy <- iced coffee)
 room temperature -> warming discrepancy`;
 
+// Figures 12 & 13: the reinforcing interest loop, five accounts wide — bare
+// faucets, valued rate dots, and the drawn level→faucet feedback arrows.
+const EX_INTEREST = `|=>interest at two[two percent interest: 100]
+R(interest at two <- two percent interest)
+rate at two: 0.02 -> interest at two
+|=>interest at four[four percent interest: 100]
+R(interest at four <- four percent interest)
+rate at four: 0.04 -> interest at four
+|=>interest at six[six percent interest: 100]
+R(interest at six <- six percent interest)
+rate at six: 0.06 -> interest at six
+|=>interest at eight[eight percent interest: 100]
+R(interest at eight <- eight percent interest)
+rate at eight: 0.08 -> interest at eight
+|=>interest at ten[ten percent interest: 100]
+R(interest at ten <- ten percent interest)
+rate at ten: 0.1 -> interest at ten`;
+
 const EX_LOOPS = `|=>investment[capital]=>depreciation|
 |=>regeneration[resource]=>harvest|
 capital->growth goal->investment
@@ -104,6 +122,7 @@ const goldenInputs = [
   'room temperature: 18 -> discrepancy',
   'a: 5\na: 9',   // the first dot constant wins
   EX_COFFEE,      // figures 10 & 11
+  EX_INTEREST,    // figures 12 & 13
 ];
 
 // Errors: the "kind: line L, column C:" prefix is contractual; wording may be tuned.
@@ -208,6 +227,18 @@ if (!(room?.type === 'dot' && room.value === 18))
   fail('coffee model', `room temperature should be a dot valued 18, got ${JSON.stringify(room)}`);
 if (coffee.nodes.filter(n => n.label === 'room temperature').length !== 1)
   fail('coffee model', 'the shared constant should be one node');
+const interest = JSON.parse(M.go(EX_INTEREST));
+if (interest.nodes.length !== 20)   // 5 × (cloud, faucet, stock, rate dot)
+  fail('interest model', `20 nodes expected, got ${interest.nodes.length}`);
+if (new Set(interest.nodes.map(n => n.group).filter(g => g != null)).size !== 5)
+  fail('interest model', '5 bands expected, one per account');
+const iOf = label => interest.nodes.find(n => n.label === label);
+if (JSON.stringify(iOf('ten percent interest')?.loop) !== JSON.stringify(['R4']))
+  fail('interest model', `ten percent interest should be in R4, got ${JSON.stringify(iOf('ten percent interest')?.loop)}`);
+if (!(iOf('rate at ten')?.type === 'dot' && iOf('rate at ten')?.value === 0.1))
+  fail('interest model', 'rate at ten should be a dot valued 0.1');
+if (iOf('interest at ten')?.value !== undefined)
+  fail('interest model', 'the interest faucets carry no rate of their own');
 
 console.log(failures ? `${failures} FAILURE(S)` : 'ALL CHECKS PASSED');
 process.exit(failures ? 1 : 0);

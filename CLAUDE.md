@@ -194,10 +194,16 @@ the diagram's figure 5):
   constant is its goal and the schedule value becomes a *gain* —
   `rate = gain × (level − goal)` draining / `× (goal − level)` filling,
   clamped at 0 and capped at `1/DT` so a hot gain lands on the goal instead
-  of oscillating; exponential approach from either side. Ambiguous webs (two
+  of oscillating; exponential approach from either side. A *bare* faucet (no
+  annotation of its own) in the same one-valued-dot web instead turns
+  **reinforcing** (figures 12 & 13) when the walk also reaches the faucet's
+  own attached stock — the drawn level→faucet arrow closing the R loop: the
+  constant is a *factor* on the level, `rate = factor × level` — compound
+  interest filling, exponential decay draining; without the drawn feedback a
+  bare faucet stays a closed tap. Ambiguous webs (two
   constants) or stocks on both sides fall back to the constant-rate reading.
   `goalRefs` exports the constants serving as goals for the chart's dashed
-  reference rules.
+  reference rules (factor constants are not goals and draw no rule).
 - **`ui/chart.ts`** — the panel below the diagram (equal flex `order` 1;
   DOM-insertion order places it). One 2px line per stock with an ink label at
   its end, recessive axes, rendered once per `update()` (never per tick).
