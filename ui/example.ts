@@ -26,6 +26,18 @@ export const exampleList = [
         content: `|=>inflow: 0 @5: 5[water in tub: 50]=>outflow: 5|`
     },
     {
+        label: 'Figure 8',
+        content: `|=>inflow[stock1]->inflow
+[stock2]=>outflow|
+stock2->outflow`
+    },
+    {
+        label: 'Figure 9',
+        content: `[stored energy in body]=>metabolic mobilization of energy[energy available for work]=>energy expenditure|
+B(metabolic mobilization of energy <- coffee intake <- discrepancy <- energy available for work)
+desired energy level <- discrepancy`
+    },
+    {
         label: 'Figure 42',
         content: `|=>investment[capital]=>depreciation|
 |=>regeneration[resource]=>harvest|

@@ -263,15 +263,21 @@ const simulation = d3.forceSimulation<Node, Link>(systemNodes)
   .force("collide", d3.forceCollide<Node>().radius(d =>
     d.type === "stock" ? 62 : d.type === "cloud" ? 30 : d.type === "dot" ? 26 : 24
   ).strength(0.85))
-  .force("center", d3.forceCenter<Node>(svgWidth / 2, svgHeight / 2))
+  // No forceCenter: it rigidly translates ALL nodes every tick (unscaled by
+  // alpha) until their MEAN sits at the canvas center. With bands pinned to
+  // absolute slots, that forbids any asymmetric rest pose — figure 9's aux
+  // web could never hang below its band, and every settle or drag slid the
+  // whole diagram. Bands anchor the layout absolutely; floaters hold to the
+  // weak pulls below.
   // Stocks pull hard to their slot x (evenly spaced per band, see update());
   // everything else gets only gentle x-centering — too strong crowds each band
   // inward, and collision then escapes vertically (waving the line).
   .force("x", d3.forceX<Node>(d => d.gx ?? svgWidth / 2).strength(d => d.gx != null ? 0.25 : 0.02))
   // Stocks pin to their band's y hardest, other band members strongly (forming
   // a horizontal line); floating nodes get only a barely-there tie-breaker
-  // toward center — weak enough that a dot dragged to the other side of its
-  // band stays there (links + charge dominate) instead of drifting back.
+  // toward their float line (floatY in update()) — weak enough that a dot
+  // dragged to the other side of its band stays there (links + charge
+  // dominate) instead of drifting back.
   .force("y", d3.forceY<Node>(d => d.gy ?? svgHeight / 2).strength(d => d.type === "stock" ? 1.0 : d.inFlow ? 0.9 : 0.01))
   .on("tick", ticked);
 
@@ -403,10 +409,18 @@ function update(system: System) {
   const bandGap = groupCount > 1
     ? Math.max(minBandGap, (svgHeight - 2 * bandMargin) / (groupCount - 1))
     : 0;
+  const rowGap = 120; // vertical drop from a band to a branch row below it
+  // Floaters rest at the canvas midline — the open inter-band region — but
+  // with a single band the midline IS the band line: dots seeded on it get
+  // kicked out to an arbitrary side, splitting the aux web above/below the
+  // flow. Bias them one row below instead, where the reference figures hang
+  // their aux webs (figure 9). The pull toward floatY stays a tie-breaker, so
+  // a dot dragged above the band still stays put.
+  const floatY = groupCount === 1 ? svgHeight / 2 + rowGap : svgHeight / 2;
   for (const d of nodes) {
     d.inFlow = d.group != null;
     d.gy = d.group == null
-      ? svgHeight / 2
+      ? floatY
       : svgHeight / 2 + (d.group - (groupCount - 1) / 2) * bandGap;
   }
 
@@ -434,7 +448,6 @@ function update(system: System) {
   const endId = (e: Link["source"]): string =>
     typeof e === "object" && e !== null ? (e as Node).id : String(e);
   const nodeById = new Map(nodes.map(n => [n.id, n]));
-  const rowGap = 120; // vertical drop from a band to a branch row below it
   const slotHalf = (d: Node) => {
     const icon = d.type === "stock" ? stockWidth / 2 : d.type === "cloud" ? cloudWidth / 2 : d.type === "dot" ? dotRadius : faucetWidth / 2;
     const collide = d.type === "stock" ? 62 : d.type === "cloud" ? 30 : d.type === "dot" ? 26 : 24;
@@ -603,8 +616,9 @@ function update(system: System) {
   // and the initial charge burst flings clumped floaters far off-canvas,
   // stranding the auto-fit viewBox zoomed out when alpha dies before the
   // easing catches up. Slotted nodes seed exactly at their slot; floaters
-  // (dots) seed on the same phyllotaxis spiral d3 uses, but centred on the
-  // canvas. Recycled nodes keep their position (drags and edits stay smooth).
+  // (dots) seed on the same phyllotaxis spiral d3 uses, centred on their
+  // float rest point (canvas mid-x, floatY). Recycled nodes keep their
+  // position (drags and edits stay smooth).
   nodes.forEach((d, i) => {
     if (d.x != null || d.y != null) return;
     if (d.gx != null && d.gy != null) {

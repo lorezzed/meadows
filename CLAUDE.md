@@ -158,8 +158,11 @@ kept out of `Main` so the browser bundle never pulls in node-process.
   skipped (the last good graph stays). Otherwise the `System` is pretty-printed into
   the `<pre>` and passed to `update(system)`.
 - `update()` does the d3 data-join per node type (dots→`circle`, stocks→`rect`,
-  faucets/clouds→`image` with inlined SVGs from `ui/shape/`), rebinds the link/charge/
-  center forces, and restarts the simulation. It also groups nodes by their `loop`
+  faucets/clouds→`image` with inlined SVGs from `ui/shape/`), rebinds the link
+  force, and restarts the simulation. (There is deliberately no `forceCenter`:
+  it would translate the whole graph to keep the node MEAN centered, fighting
+  the band pins and forbidding the aux web from hanging below a lone band —
+  floaters instead rest at `floatY`, one row below a single band.) It also groups nodes by their `loop`
   names into one floating letter (`<text>`) per annotation — a pure overlay that
   never enters `simulation.nodes()`. Node text renders via `displayLabel`: the
   name plus `: value` when the node carries one (`water in tub: 50`) — display
