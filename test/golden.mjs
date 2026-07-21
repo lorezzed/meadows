@@ -17,6 +17,15 @@ yield per unit capital->price->profit
 capital->depreciation`;
 
 // The full Meadows reference model, with R(...)/B(...) loop annotations.
+// Figures 10 & 11: goal-seeking balancing loops — dot constants (`room
+// temperature: 18`) wired through discrepancy dots into the faucets.
+const EX_COFFEE = `[hot coffee: 100]=>cooling: 0.26|
+B(cooling <- discrepancy <- hot coffee)
+room temperature: 18 -> discrepancy
+|=>heating: 0.26[iced coffee: 0]
+B(heating <- warming discrepancy <- iced coffee)
+room temperature -> warming discrepancy`;
+
 const EX_LOOPS = `|=>investment[capital]=>depreciation|
 |=>regeneration[resource]=>harvest|
 capital->growth goal->investment
@@ -89,6 +98,12 @@ const goldenInputs = [
   '|=>inflow: 0 @5: 5[water in tub: 50]=>outflow: 5|',   // figures 5 & 7
   'a=>f: 0 @2.5: 1 @7: 4',
   'a=>f: 9\na=>f: 0 @2: 1',   // first annotation wins as a unit
+  // Dot constants: a bare name takes a single `: N` (an auxiliary constant,
+  // e.g. a goal for the simulator's goal-seeking faucets).
+  'a: 5',
+  'room temperature: 18 -> discrepancy',
+  'a: 5\na: 9',   // the first dot constant wins
+  EX_COFFEE,      // figures 10 & 11
 ];
 
 // Errors: the "kind: line L, column C:" prefix is contractual; wording may be tuned.
@@ -114,8 +129,8 @@ const errorCases = [
   ['a->R(b)',   /^Parsing error: line 1, column 4: /],  // loops are statements, not terms
   ['R(a)->b',   /^Parsing error: line 1, column 5: /],  // nothing may follow a loop
   ['r(a)',      /^Parsing error: line 1, column 2: /],  // lowercase r is just a name
-  // Value annotations belong to stocks and faucets only
-  ['a: 5',      /^Parsing error: line 1, column 2: /],  // no values on bare dots
+  // Value annotations belong to stocks, faucets, and dots (a single constant)
+  ['a: 1 @2: 3', /^Parsing error: line 1, column 6: /], // dots never take schedules
   ['[a:]',      /^Parsing error: line 1, column 4: /],  // a colon needs a number
   ['[a: b]',    /^Parsing error: line 1, column 5: /],  // a name is not a value
   ['[a]: 5',    /^Parsing error: line 1, column 4: /],  // the value goes inside the brackets
@@ -187,6 +202,12 @@ if (!(fct.value === 0 && JSON.stringify(fct.steps) === JSON.stringify([{ value: 
   fail('a=>f: 0 @5: 5', `schedule expected value 0 + one step, got ${JSON.stringify(fct)}`);
 if ('steps' in JSON.parse(M.go('a=>f: 5')).nodes.find(n => n.type === 'faucet'))
   fail('a=>f: 5', 'a step-less rate should have no `steps` key');
+const coffee = JSON.parse(M.go(EX_COFFEE));
+const room = coffee.nodes.find(n => n.label === 'room temperature');
+if (!(room?.type === 'dot' && room.value === 18))
+  fail('coffee model', `room temperature should be a dot valued 18, got ${JSON.stringify(room)}`);
+if (coffee.nodes.filter(n => n.label === 'room temperature').length !== 1)
+  fail('coffee model', 'the shared constant should be one node');
 
 console.log(failures ? `${failures} FAILURE(S)` : 'ALL CHECKS PASSED');
 process.exit(failures ? 1 : 0);

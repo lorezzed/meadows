@@ -4,7 +4,7 @@
 // can run it directly (erasable-syntax type stripping, node >= 22.18).
 // Run with:   node test/simulate.mjs
 import * as M from '../output/Main/index.js';
-import { simulate, hasNumbers, T_END, DT } from '../ui/simulate.ts';
+import { simulate, hasNumbers, goalRefs, T_END, DT } from '../ui/simulate.ts';
 
 let failures = 0;
 const fail = (label, msg) => { failures++; console.log(`FAIL ${label}: ${msg}`); };
@@ -75,6 +75,63 @@ const last = (s) => s.levels[s.levels.length - 1];
   if (hasNumbers(sys('[a]'))) fail('hasNumbers', '[a] should have no numbers');
   if (!hasNumbers(sys('[a: 1]'))) fail('hasNumbers', '[a: 1] should have numbers');
   if (!hasNumbers(sys('a=>f: 5'))) fail('hasNumbers', 'a faucet rate counts');
+  if (!hasNumbers(sys('a: 5'))) fail('hasNumbers', 'a dot constant counts');
+}
+
+// Figures 10 & 11: goal-seeking rates. The faucet's annotation acts as a
+// gain on the discrepancy to the goal constant (found through the info-arrow
+// web), so hot coffee cools exponentially onto room temperature and iced
+// coffee warms up to it — Euler closed form:
+//   level_{n+1} = goal + (level_n − goal)·(1 − gain·DT)
+{
+  const F10 = `[hot coffee: 100]=>cooling: 0.26|
+B(cooling <- discrepancy <- hot coffee)
+room temperature: 18 -> discrepancy
+|=>heating: 0.26[iced coffee: 0]
+B(heating <- warming discrepancy <- iced coffee)
+room temperature -> warming discrepancy`;
+  const system = sys(F10);
+  const series = simulate(system);
+  const hot = series.find(s => s.label === 'hot coffee');
+  const iced = series.find(s => s.label === 'iced coffee');
+  const decay = Math.pow(1 - 0.26 * DT, Math.round(T_END / DT));
+  const wantHot = 18 + (100 - 18) * decay;
+  const wantIced = 18 + (0 - 18) * decay;
+  if (Math.abs(last(hot) - wantHot) > 1e-9)
+    fail('figure 11', `hot coffee ends at ${last(hot)}, want ${wantHot}`);
+  if (Math.abs(last(iced) - wantIced) > 1e-9)
+    fail('figure 11', `iced coffee ends at ${last(iced)}, want ${wantIced}`);
+  if (!hot.levels.every((v, i) => i === 0 || (v <= hot.levels[i - 1] && v >= 18)))
+    fail('figure 11', 'hot coffee must fall monotonically, never below the goal');
+  if (!iced.levels.every((v, i) => i === 0 || (v >= iced.levels[i - 1] && v <= 18)))
+    fail('figure 11', 'iced coffee must rise monotonically, never above the goal');
+  // The shared constant registers once as the chart's dashed reference rule.
+  const goals = goalRefs(system);
+  if (!(goals.length === 1 && goals[0].label === 'room temperature' && goals[0].value === 18))
+    fail('figure 11', `goalRefs: ${JSON.stringify(goals)}`);
+}
+
+// A gain hotter than 1/DT is capped at the remaining discrepancy: one step
+// lands exactly ON the goal — no overshoot, no oscillation.
+{
+  const series = simulate(sys('[a: 100]=>cool: 50|\nB(cool <- gap <- a)\ntarget: 20 -> gap'));
+  const a = series[0];
+  if (Math.abs(a.levels[1] - 20) > 1e-9) fail('gain cap', `first step to ${a.levels[1]}, want 20`);
+  if (a.levels.some(v => v < 20 - 1e-9)) fail('gain cap', 'level crossed below the goal');
+}
+
+// Fallbacks keep the plain constant-rate reading: an ambiguous web (two
+// constants reaching the faucet) and a stock-to-stock pipe (no single
+// "actual" to compare) both drain at the annotated rate — 5 × 10 = 50 gone.
+{
+  const amb = simulate(sys('[a: 100]=>f: 5|\ng1: 10 -> f\ng2: 20 -> f'))[0];
+  if (Math.abs(last(amb) - 50) > 1e-9)
+    fail('ambiguous goals', `ends at ${last(amb)}, want 50 (plain rate)`);
+  const s2s = simulate(sys('[a: 100]=>f: 5[b]\ngoal: 10 -> f')).find(s => s.label === 'a');
+  if (Math.abs(last(s2s) - 50) > 1e-9)
+    fail('stock-to-stock', `ends at ${last(s2s)}, want 50 (plain rate)`);
+  if (goalRefs(sys('[a: 100]=>f: 5|\ng1: 10 -> f\ng2: 20 -> f')).length !== 0)
+    fail('ambiguous goals', 'no goal should register for the chart');
 }
 
 console.log(failures ? `${failures} FAILURE(S)` : 'SIMULATE CHECKS PASSED');

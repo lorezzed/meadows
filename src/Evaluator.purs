@@ -94,7 +94,8 @@ freshAnon ty i label = do
   modify_ \s -> s { nodes = Map.insert newId { ty, label, value: Nothing, steps: Nothing } s.nodes }
   pure newId
 
--- | Attach a value annotation (a stock's initial level, a faucet's rate) to
+-- | Attach a value annotation (a stock's initial level, a faucet's rate, a
+-- | dot's auxiliary constant) to
 -- | an already-resolved node. First explicit value wins: a valueless mention
 -- | is a no-op, and later values never overwrite an existing one (`<|>`
 -- | keeps the first Just) -- mirroring the registry's first-mention-wins
@@ -123,7 +124,7 @@ setSched id (Just sch) = modify_ \s ->
 -- | Resolve (registering as needed) the id of the leftmost leaf of a
 -- | subtree, without walking the rest of the subtree's internal links.
 leftmostId :: Tree -> Evaluator String
-leftmostId (NodeExpr i s) = resolveNamed Dot i s
+leftmostId (NodeExpr i s _) = resolveNamed Dot i s
 leftmostId (StockExpr i s _) = resolveNamed Stock i s
 leftmostId (CloudExpr i) = freshAnon Cloud i cloudLabel
 leftmostId (FaucetRExpr _ _ _ left _) = leftmostId left
@@ -136,7 +137,10 @@ leftmostId (LoopExpr _ _ expr) = leftmostId expr
 -- | Evaluate a subtree, registering nodes/links as a side effect, and
 -- | return the id (never the label) of the node it resolves to.
 evaluateNode :: Tree -> Evaluator String
-evaluateNode (NodeExpr i s) = resolveNamed Dot i s
+evaluateNode (NodeExpr i s v) = do
+  did <- resolveNamed Dot i s
+  setValue did v
+  pure did
 evaluateNode (StockExpr i s v) = do
   sid <- resolveNamed Stock i s
   setValue sid v
@@ -205,7 +209,7 @@ addLoopTag name m id = Map.alter (Just <<< maybe [ name ] (_ <> [ name ])) id m
 -- | resolveNamed/freshAnon are idempotent lookups (registry hit; a cloud
 -- | re-inserts under its existing parser-id key, a no-op).
 memberIds :: Tree -> Evaluator (Array String)
-memberIds (NodeExpr i s) = Array.singleton <$> resolveNamed Dot i s
+memberIds (NodeExpr i s _) = Array.singleton <$> resolveNamed Dot i s
 memberIds (StockExpr i s _) = Array.singleton <$> resolveNamed Stock i s
 memberIds (CloudExpr i) = Array.singleton <$> freshAnon Cloud i cloudLabel
 memberIds (FaucetRExpr i name _ left right) = faucetMembers i name left right

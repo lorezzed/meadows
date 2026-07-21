@@ -5,7 +5,7 @@ import type { Node, Link, System } from "./type";
 import faucetSvg from './shape/faucet.svg'
 import cloudSvg from './shape/cloud.svg'
 import { exampleList } from "./example";
-import { hasNumbers, simulate } from "./simulate";
+import { goalRefs, hasNumbers, simulate } from "./simulate";
 import { createChart, STOCK_PALETTE } from "./chart";
 
 const container = d3.select('body')
@@ -651,7 +651,7 @@ function update(system: System) {
   const colorOf = (id: string): string =>
     (numeric ? STOCK_PALETTE[stockIds.indexOf(id)] : undefined) ?? "#000";
   nodeStock.select<SVGRectElement>("rect").attr("stroke", d => colorOf(d.id));
-  if (numeric && stockIds.length > 0) chart.render(simulate(system), colorOf);
+  if (numeric && stockIds.length > 0) chart.render(simulate(system), colorOf, goalRefs(system));
   else chart.hide();
 }
 

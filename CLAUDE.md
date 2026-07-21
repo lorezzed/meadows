@@ -99,8 +99,10 @@ JSON error string):
    (`NAME (':' NUMBER ('@' NUMBER ':' NUMBER)*)?` for both directions, e.g.
    `inflow: 0 @5: 5` = closed until t=5 then 5), carried as
    `Maybe Sched = Maybe { initial, steps :: Array { at, value } }` on
-   `Faucet*Expr`. A value anywhere else (`a: 5`, `[a]: 5`, a bare `5`, a
-   schedule inside stock brackets) is a positioned parse error, and
+   `Faucet*Expr`; bare names accept a single `: N` **dot constant**
+   (`room temperature: 18`, `Maybe Number` on `NodeExpr`) but never a
+   schedule. A value anywhere else (`[a]: 5`, a bare `5`, a schedule on a
+   stock or dot) is a positioned parse error, and
    `valueTail`/`schedTail` consume nothing when no `:` follows, so id-minting
    order for value-less input is untouched. Its one custom primitive, `satisfyMap`, keeps the parser position
    on the *next unconsumed* token so `<?>` labels and `eof` report exact locations —
@@ -130,10 +132,12 @@ JSON error string):
    - `<-` links each hop from the *nearest* term of its right subtree
      (`leftmostId`, same as the faucets), so `a<-b->c` fans out from `b`.
    - **Value annotations** land in `Node.value`/`Node.steps` via `setValue`
-     (stocks) and `setSched` (faucets): the *first explicit* annotation for a
+     (stocks and dot constants) and `setSched` (faucets): the *first explicit*
+     annotation for a
      name wins — value-less mentions never erase, later annotations never
      overwrite, and a faucet's schedule wins *as a unit* (value + steps
-     together). Semantically a stock's value is its initial level; a faucet's
+     together). Semantically a stock's value is its initial level; a dot's is
+     an auxiliary constant (e.g. a goal-seeking faucet's goal); a faucet's
      value is its initial rate, overridden from each step's `at` time onward.
      The compiler just carries the numbers.
 
@@ -184,10 +188,23 @@ the diagram's figure 5):
   source/sink stocks come from flow-link direction, clouds/dots infinite.
   Each synchronous step rations a stock's outflows by what it holds
   (`min(1, level/demand)`), so levels never go negative and chained stocks
-  conserve — an empty tub stops draining.
+  conserve — an empty tub stops draining. A faucet turns **goal-seeking**
+  (figures 10 & 11) when the info arrows into it, walked back through
+  value-less relay dots (`discrepancy`), reach exactly one valued dot: that
+  constant is its goal and the schedule value becomes a *gain* —
+  `rate = gain × (level − goal)` draining / `× (goal − level)` filling,
+  clamped at 0 and capped at `1/DT` so a hot gain lands on the goal instead
+  of oscillating; exponential approach from either side. Ambiguous webs (two
+  constants) or stocks on both sides fall back to the constant-rate reading.
+  `goalRefs` exports the constants serving as goals for the chart's dashed
+  reference rules.
 - **`ui/chart.ts`** — the panel below the diagram (equal flex `order` 1;
   DOM-insertion order places it). One 2px line per stock with an ink label at
-  its end, recessive axes, rendered once per `update()` (never per tick). A
+  its end, recessive axes, rendered once per `update()` (never per tick).
+  Goal constants draw as dashed horizontal rules under the series lines
+  (the book's "room temperature = 18°C"), labeled in the right margin; all
+  right-margin labels dodge vertically to a 12px rhythm so figure 11's
+  curves converging on one goal stay individually named. A
   hover layer snaps a crosshair to the nearest sample and shows one tooltip
   reading out every stock's level (keyboard parity: the svg is focusable,
   ←/→ steps a sample, Shift ×10, Escape dismisses); it reads the last

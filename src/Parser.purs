@@ -26,7 +26,7 @@ type Step = { at :: Number, value :: Number }
 -- | steps, e.g. `inflow: 0 @5: 5` = closed until t=5, then 5.
 type Sched = { initial :: Number, steps :: Array Step }
 data Tree
-  = NodeExpr Id String
+  = NodeExpr Id String (Maybe Number)
   | CloudExpr Id
   | StockExpr Id String (Maybe Number)
   | FaucetRExpr Id String (Maybe Sched) Tree (Maybe Tree)
@@ -38,7 +38,7 @@ data Tree
 derive instance eqTree :: Eq Tree
 derive instance genericTree :: Generic Tree _
 instance showTree :: Show Tree where
-  show (NodeExpr i s) = "Node#" <> show i <> "(" <> s <> ")"
+  show (NodeExpr i s v) = "Node#" <> show i <> "(" <> s <> showValue v <> ")"
   show (StockExpr i s v) = "Stock#" <> show i <> "(" <> show s <> showValue v <> ")"
   show (CloudExpr i) = "Cloud#" <> show i
   show (FaucetRExpr i s v l r) = "FaucetR#" <> show i <> "[" <> show s <> showSched v <> "](" <> show l <> " -> " <> show r <> " )"
@@ -111,7 +111,8 @@ numberTok :: P Number
 numberTok = satisfyMap case _ of
   TokNumber n -> Just n
   _ -> Nothing
--- | An optional `: N` value annotation (a stock's initial level).
+-- | An optional `: N` value annotation (a stock's initial level, a dot's
+-- | auxiliary constant).
 -- | optionMaybe does not backtrack partial consumption, so once the
 -- | ':' is consumed a missing or non-number value is a positioned error,
 -- | never a silent Nothing; with no ':' present nothing is consumed at all
@@ -231,11 +232,16 @@ cloudTerm = do
   tk TokCloud
   i <- fresh
   pure (CloudExpr i)
+-- | A bare name takes a single `: N` constant (`room temperature: 18`) but
+-- | never a schedule -- an `@` after it is a positioned error at the `@`.
+-- | valueTail consumes nothing when no ':' follows, and the id still mints
+-- | after the whole term, so value-less minting order is untouched.
 identTerm :: P Tree
 identTerm = do
   name <- identTok
+  mval <- valueTail
   i <- fresh
-  pure (NodeExpr i name)
+  pure (NodeExpr i name mval)
 -- | ParenExpr mints BEFORE its inner expression (id-stability point).
 parenTerm :: P Tree
 parenTerm = do

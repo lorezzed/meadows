@@ -8,7 +8,7 @@
 // there in one tooltip — it only reads the already-rendered series, so the
 // render-once contract holds.
 import * as d3 from "d3";
-import { DT, T_END, type StockSeries } from "./simulate";
+import { DT, T_END, type GoalRef, type StockSeries } from "./simulate";
 
 // Fixed-order categorical accents, one per stock in parser-id order, shared
 // with the stock rects in the diagram. The ordering is the CVD-safety
@@ -42,8 +42,27 @@ const font = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 // Tooltip numbers: thousands-comma'd, ≤2 decimals, trailing zeros trimmed.
 const fmt = d3.format(",.2~f");
 
+// Spread right-margin label anchors to a minimum rhythm inside [lo, hi],
+// moving each as little as possible: sort, push down (forward pass), pull
+// back up under the ceiling (backward pass). Figure 11's curves all converge
+// on one goal line — without this, every label piles onto the shared
+// asymptote. Returns positions in the input's order; if the labels can't all
+// fit, the gaps compress rather than spilling outside the plot.
+const labelGap = 12;
+function dodgeLabels(desired: number[], lo: number, hi: number): number[] {
+  const order = desired.map((y, i) => ({ y, i })).sort((a, b) => a.y - b.y);
+  const pos = order.map(o => o.y);
+  for (let k = 0; k < pos.length; k++)
+    pos[k] = Math.max(pos[k] ?? 0, k > 0 ? (pos[k - 1] ?? 0) + labelGap : lo);
+  for (let k = pos.length - 1; k >= 0; k--)
+    pos[k] = Math.min(pos[k] ?? 0, k < pos.length - 1 ? (pos[k + 1] ?? 0) - labelGap : hi);
+  const out: number[] = new Array(desired.length);
+  order.forEach((o, k) => { out[o.i] = pos[k] ?? o.y; });
+  return out;
+}
+
 export type Chart = {
-  render(series: StockSeries[], colorOf: (id: string) => string): void;
+  render(series: StockSeries[], colorOf: (id: string) => string, goals?: GoalRef[]): void;
   hide(): void;
 };
 
@@ -60,6 +79,8 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
     .style('border', '1px solid black')
     .style('display', 'none');
 
+  // Goal rules render under the series lines (a reference, never a subject).
+  const gGoals = svg.append("g");
   const gLines = svg.append("g");
   const gLabels = svg.append("g");
   const gxAxis = svg.append("g").attr("transform", `translate(0,${chartHeight - margin.bottom})`);
@@ -226,9 +247,13 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
       }
     });
 
-  function render(series: StockSeries[], colorOf: (id: string) => string): void {
+  function render(series: StockSeries[], colorOf: (id: string) => string, goals: GoalRef[] = []): void {
     const x = d3.scaleLinear([0, T_END], [margin.left, chartWidth - margin.right]);
-    const maxLevel = d3.max(series, s => d3.max(s.levels)) ?? 0;
+    // The domain covers the goal rules too: a goal above every curve (a level
+    // still filling toward it) must not clip off the top of the plot.
+    const maxLevel = Math.max(
+      d3.max(series, s => d3.max(s.levels)) ?? 0,
+      d3.max(goals, g => g.value) ?? 0);
     // max(1, ·) keeps an all-zero model from collapsing the scale.
     const y = d3.scaleLinear([0, Math.max(1, maxLevel)], [chartHeight - margin.bottom, margin.top]).nice();
 
@@ -249,13 +274,42 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
       .attr("stroke-width", 2)
       .attr("d", d => line(d.levels));
 
+    // One dashed rule per goal constant (the book's "room temperature = 18°C"
+    // line), full plot width, recessive ink under the series lines.
+    gGoals.selectAll<SVGLineElement, GoalRef>("line")
+      .data(goals, d => d.id)
+      .join("line")
+      .attr("x1", margin.left)
+      .attr("x2", chartWidth - margin.right)
+      .attr("y1", d => y(d.value))
+      .attr("y2", d => y(d.value))
+      .attr("stroke", secondaryInk)
+      .attr("stroke-width", 1.5)
+      .attr("stroke-dasharray", "7 5");
+
+    // Right-margin labels — series ends and goal rules together — dodge
+    // vertically so converging lines stay individually named.
+    const placed = dodgeLabels(
+      [...series.map(s => y(s.levels[s.levels.length - 1] ?? 0)),
+       ...goals.map(g => y(g.value))],
+      margin.top, chartHeight - margin.bottom);
+
     gLabels.selectAll<SVGTextElement, StockSeries>("text")
       .data(series, d => d.id)
       .join("text")
       .attr("x", x(T_END) + 8)
-      .attr("y", d => y(d.levels[d.levels.length - 1] ?? 0))
+      .attr("y", (_, i) => placed[i] ?? 0)
       .attr("dy", "0.32em")
       .attr("fill", labelInk)
+      .style("font", `11px ${font}`)
+      .text(d => d.label);
+    gGoals.selectAll<SVGTextElement, GoalRef>("text")
+      .data(goals, d => d.id)
+      .join("text")
+      .attr("x", x(T_END) + 8)
+      .attr("y", (_, i) => placed[series.length + i] ?? 0)
+      .attr("dy", "0.32em")
+      .attr("fill", secondaryInk)
       .style("font", `11px ${font}`)
       .text(d => d.label);
 

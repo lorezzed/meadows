@@ -141,50 +141,50 @@ tests =
   -- Parser: tree shapes and exact ids (mint order: atoms after their tokens,
   -- operators after op+name before the right operand, parens before the body)
   , expectEq "arrow AST (ids: left 0, operator 1, right 2)"
-      (Right (ArrowRExpr 1 (NodeExpr 0 "a") (NodeExpr 2 "b") : Nil))
+      (Right (ArrowRExpr 1 (NodeExpr 0 "a" Nothing) (NodeExpr 2 "b" Nothing) : Nil))
       (parseAll "a->b")
   , expectEq "dangling faucet has no target"
-      (Right (FaucetRExpr 1 "j" Nothing (NodeExpr 0 "a") Nothing : Nil))
+      (Right (FaucetRExpr 1 "j" Nothing (NodeExpr 0 "a" Nothing) Nothing : Nil))
       (parseAll "a=>j")
   , expectEq "faucet with a stock target"
-      (Right (FaucetRExpr 1 "j" Nothing (NodeExpr 0 "a") (Just (StockExpr 2 "b" Nothing)) : Nil))
+      (Right (FaucetRExpr 1 "j" Nothing (NodeExpr 0 "a" Nothing) (Just (StockExpr 2 "b" Nothing)) : Nil))
       (parseAll "a=>j[b]")
   , expectEq "leftward faucet mirrors the rightward one"
-      (Right (FaucetLExpr 1 "j" Nothing (NodeExpr 0 "a") Nothing : Nil))
+      (Right (FaucetLExpr 1 "j" Nothing (NodeExpr 0 "a" Nothing) Nothing : Nil))
       (parseAll "a<=j")
   , expectEq "an operator after a dangling faucet applies to the faucet"
-      (Right (ArrowRExpr 2 (FaucetRExpr 1 "b" Nothing (NodeExpr 0 "a") Nothing) (NodeExpr 3 "c") : Nil))
+      (Right (ArrowRExpr 2 (FaucetRExpr 1 "b" Nothing (NodeExpr 0 "a" Nothing) Nothing) (NodeExpr 3 "c" Nothing) : Nil))
       (parseAll "a=>b->c")
   , expectEq "with a target present the operator belongs to the target"
-      (Right (FaucetRExpr 1 "b" Nothing (NodeExpr 0 "a")
-                (Just (ArrowRExpr 3 (StockExpr 2 "x" Nothing) (NodeExpr 4 "c"))) : Nil))
+      (Right (FaucetRExpr 1 "b" Nothing (NodeExpr 0 "a" Nothing)
+                (Just (ArrowRExpr 3 (StockExpr 2 "x" Nothing) (NodeExpr 4 "c" Nothing))) : Nil))
       (parseAll "a=>b[x]->c")
   , expectEq "paren mints before its body"
-      (Right (ArrowRExpr 3 (ParenExpr 0 (FaucetRExpr 2 "f" Nothing (NodeExpr 1 "a") Nothing)) (NodeExpr 4 "b") : Nil))
+      (Right (ArrowRExpr 3 (ParenExpr 0 (FaucetRExpr 2 "f" Nothing (NodeExpr 1 "a" Nothing) Nothing)) (NodeExpr 4 "b" Nothing) : Nil))
       (parseAll "(a=>f)->b")
   , expectEq "loop AST: the annotation mints before its body"
-      (Right (LoopExpr 0 Reinforcing (ArrowRExpr 2 (NodeExpr 1 "a") (NodeExpr 3 "b")) : Nil))
+      (Right (LoopExpr 0 Reinforcing (ArrowRExpr 2 (NodeExpr 1 "a" Nothing) (NodeExpr 3 "b" Nothing)) : Nil))
       (parseAll "R(a->b)")
   , expectEq "statements share one id counter"
-      (Right (ArrowRExpr 1 (NodeExpr 0 "a") (NodeExpr 2 "b") : NodeExpr 3 "c" : Nil))
+      (Right (ArrowRExpr 1 (NodeExpr 0 "a" Nothing) (NodeExpr 2 "b" Nothing) : NodeExpr 3 "c" Nothing : Nil))
       (parseAll "a->b\nc")
   , expectEq "blank lines yield no empty statements"
-      (Right (NodeExpr 0 "a" : NodeExpr 1 "b" : Nil))
+      (Right (NodeExpr 0 "a" Nothing : NodeExpr 1 "b" Nothing : Nil))
       (parseAll "\na\n\nb\n")
   , expectEq "stock term"
       (Right (StockExpr 0 "s" Nothing : Nil)) (parseAll "[s]")
-  -- Parser: value annotations (stocks and faucets only)
+  -- Parser: value annotations (stocks, faucets, and dot constants)
   , expectEq "stock with an initial value"
       (Right (StockExpr 0 "a" (Just 50.0) : Nil))
       (parseAll "[a: 50]")
   , expectEq "faucet with a rate, no target"
-      (Right (FaucetRExpr 1 "f" (Just { initial: 5.0, steps: [] }) (NodeExpr 0 "a") Nothing : Nil))
+      (Right (FaucetRExpr 1 "f" (Just { initial: 5.0, steps: [] }) (NodeExpr 0 "a" Nothing) Nothing : Nil))
       (parseAll "a=>f: 5")
   , expectEq "leftward faucet with a rate"
-      (Right (FaucetLExpr 1 "f" (Just { initial: 5.0, steps: [] }) (NodeExpr 0 "a") Nothing : Nil))
+      (Right (FaucetLExpr 1 "f" (Just { initial: 5.0, steps: [] }) (NodeExpr 0 "a" Nothing) Nothing : Nil))
       (parseAll "a<=f: 5")
   , expectEq "an operator after a valued faucet still applies to the faucet"
-      (Right (ArrowRExpr 2 (FaucetRExpr 1 "f" (Just { initial: 5.0, steps: [] }) (NodeExpr 0 "a") Nothing) (NodeExpr 3 "c") : Nil))
+      (Right (ArrowRExpr 2 (FaucetRExpr 1 "f" (Just { initial: 5.0, steps: [] }) (NodeExpr 0 "a" Nothing) Nothing) (NodeExpr 3 "c" Nothing) : Nil))
       (parseAll "a=>f: 5->c")
   , expectEq "the figure 5 statement parses with its values"
       (Right (FaucetRExpr 1 "inflow" Nothing (CloudExpr 0)
@@ -193,13 +193,13 @@ tests =
       (parseAll "|=>inflow[water in tub: 50]=>outflow: 5|")
   -- Parser: faucet rate schedules (`@time: rate` steps)
   , expectEq "a faucet schedule parses its steps in order"
-      (Right (FaucetRExpr 1 "f" (Just { initial: 0.0, steps: [ { at: 5.0, value: 5.0 } ] }) (NodeExpr 0 "a") Nothing : Nil))
+      (Right (FaucetRExpr 1 "f" (Just { initial: 0.0, steps: [ { at: 5.0, value: 5.0 } ] }) (NodeExpr 0 "a" Nothing) Nothing : Nil))
       (parseAll "a=>f: 0 @5: 5")
   , expectEq "schedules chain and allow decimals"
-      (Right (FaucetRExpr 1 "f" (Just { initial: 0.0, steps: [ { at: 2.5, value: 1.0 }, { at: 7.0, value: 4.0 } ] }) (NodeExpr 0 "a") Nothing : Nil))
+      (Right (FaucetRExpr 1 "f" (Just { initial: 0.0, steps: [ { at: 2.5, value: 1.0 }, { at: 7.0, value: 4.0 } ] }) (NodeExpr 0 "a" Nothing) Nothing : Nil))
       (parseAll "a=>f: 0 @2.5: 1 @7: 4")
   , expectEq "a target may follow a schedule"
-      (Right (FaucetRExpr 1 "f" (Just { initial: 0.0, steps: [ { at: 5.0, value: 5.0 } ] }) (NodeExpr 0 "a")
+      (Right (FaucetRExpr 1 "f" (Just { initial: 0.0, steps: [ { at: 5.0, value: 5.0 } ] }) (NodeExpr 0 "a" Nothing)
                 (Just (StockExpr 2 "b" Nothing)) : Nil))
       (parseAll "a=>f: 0 @5: 5[b]")
   , expectErrorAt "a step needs a time"
@@ -210,9 +210,16 @@ tests =
       "line 1, column 11" (parseAll "a=>f: 0 @5:")
   , expectErrorAt "stocks take a single value, not a schedule"
       "line 1, column 7" (parseAll "[a: 1 @2: 3]")
+  -- Parser: dot constants (a single value; never a schedule)
+  , expectEq "a bare dot takes a constant"
+      (Right (NodeExpr 0 "a" (Just 5.0) : Nil))
+      (parseAll "a: 5")
+  , expectEq "a dot constant composes with arrows (ids: dot 0, arrow 1, dot 2)"
+      (Right (ArrowRExpr 1 (NodeExpr 0 "room" (Just 18.0)) (NodeExpr 2 "d" Nothing) : Nil))
+      (parseAll "room: 18 -> d")
+  , expectErrorAt "dots take a single value, not a schedule"
+      "line 1, column 6" (parseAll "a: 1 @2: 3")
   -- Parser: values are positioned errors anywhere else
-  , expectErrorAt "a value on a bare dot is an error"
-      "line 1, column 2" (parseAll "a: 5")
   , expectErrorAt "a colon needs a number"
       "line 1, column 4" (parseAll "[a:]")
   , expectErrorAt "a name is not a value"
@@ -287,9 +294,15 @@ tests =
   , expectEq "the first explicit value wins"
       (Right [ Tuple "a" (Just 5.0) ])
       (labelValues "[a: 5]\n[a: 9]")
-  , expectEq "via registry aliasing a value can land on a dot (inert)"
+  , expectEq "via registry aliasing a stock-syntax value lands on the dot"
       (Right [ Tuple "a" (Just 5.0), Tuple "b" Nothing ])
       (labelValues "a->b\n[a: 5]")
+  , expectEq "a dot constant lands on the dot"
+      (Right [ Tuple "a" (Just 5.0), Tuple "b" Nothing ])
+      (labelValues "a: 5\nb")
+  , expectEq "the first dot constant wins"
+      (Right [ Tuple "a" (Just 5.0) ])
+      (labelValues "a: 5\na: 9")
   -- Evaluator: rate schedules
   , expectEq "schedule steps land on the faucet; the initial rate is its value"
       (Right [ Tuple "a" Nothing, Tuple "f" (Just [ { at: 5.0, value: 5.0 } ]) ])

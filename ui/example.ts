@@ -38,6 +38,24 @@ B(metabolic mobilization of energy <- coffee intake <- discrepancy <- energy ava
 desired energy level <- discrepancy`
     },
     {
+        label: 'Figure 10',
+        content: `[coffee temperature1]=>cooling|
+B(coffee temperature1 -> discrepancy1 -> cooling)
+room temperature1 -> discrepancy1
+|=>heating[coffee temperature2]
+B(heating <- discrepancy2 <- coffee temperature2)
+discrepancy2 <- room temperature2`
+    },
+    {
+        label: 'Figure 10 & 11',
+        content: `[hot coffee: 100]=>cooling: 0.26|
+B(cooling <- discrepancy <- hot coffee)
+room temperature: 18 -> discrepancy
+|=>heating: 0.26[iced coffee: 0]
+B(heating <- warming discrepancy <- iced coffee)
+room temperature -> warming discrepancy`
+    },
+    {
         label: 'Figure 42',
         content: `|=>investment[capital]=>depreciation|
 |=>regeneration[resource]=>harvest|
