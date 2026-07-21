@@ -18,6 +18,10 @@ export const exampleList = [
 [wood in living trees]=>tree deaths|`
     },
     {
+        label: 'Figure 5 & 6',
+        content: `|=>inflow[water in tub: 50]=>outflow: 5|`
+    },
+    {
         label: 'Figure 42',
         content: `|=>investment[capital]=>depreciation|
 |=>regeneration[resource]=>harvest|

@@ -17,10 +17,12 @@ import Control.Alt ((<|>))
 import Data.Array as Array
 import Data.Either (Either(..))
 import Data.List (List, (:))
+import Data.Maybe (Maybe(..))
+import Data.Number as Number
 import Data.String.CodeUnits as SCU
 import Data.String (joinWith)
-import Parsing (Parser, ParseError, Position(..), parseErrorMessage, parseErrorPosition, position, runParser)
-import Parsing.Combinators (many, try, (<?>))
+import Parsing (Parser, ParseError, Position(..), fail, parseErrorMessage, parseErrorPosition, position, runParser)
+import Parsing.Combinators (many, option, try, (<?>))
 import Parsing.String (char, string, eof)
 import Parsing.String.Basic (oneOf, letter, alphaNum)
 
@@ -60,6 +62,8 @@ data Token
   | TokRParen
   | TokLBracket
   | TokRBracket
+  | TokColon
+  | TokNumber Number
   | TokSep
 
 derive instance eqToken :: Eq Token
@@ -101,6 +105,29 @@ identifier = do
     _ <- oneOf [' ', '\t']
     _ <- many (oneOf [' ', '\t'])
     word
+
+digitChar :: Parser String Char
+digitChar = oneOf [ '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' ]
+
+digits :: Parser String String
+digits = do
+  first <- digitChar
+  rest <- many digitChar
+  pure $ SCU.singleton first <> SCU.fromCharArray (Array.fromFoldable rest)
+
+-- | A number literal: one or more digits with an optional `.digits` fraction
+-- | (no sign, no exponent). The `try` mirrors the identifier's `spacedWord`:
+-- | a trailing bare dot (`5.`) backtracks, leaving the `.` to fail
+-- | tokenization at its own position. Digits are ASCII-only, so
+-- | `Number.fromString` cannot fail on the assembled lexeme.
+numberLit :: Parser String Number
+numberLit = do
+  whole <- digits
+  frac <- option "" (try (append "." <$> (char '.' *> digits)))
+  case Number.fromString (whole <> frac) of
+    Just n -> pure n
+    Nothing -> fail "invalid number literal"
+
 arrowLeftOp :: Parser String Operator
 arrowLeftOp = ArrowL <$ string "<-"
 arrowRightOp :: Parser String Operator
@@ -144,6 +171,8 @@ token
   <|> (TokLBracket <$ leftBracket)
   <|> (TokRBracket <$ rightBracket)
   <|> (TokCloud <$ cloud)
+  <|> (TokColon <$ char ':')
+  <|> (TokNumber <$> numberLit)
   <|> (TokIdent <$> identifier)
 
 -- A run of newlines (plus any surrounding blank space) becomes one TokSep,
@@ -191,6 +220,8 @@ describeToken TokLParen = "'('"
 describeToken TokRParen = "')'"
 describeToken TokLBracket = "'['"
 describeToken TokRBracket = "']'"
+describeToken TokColon = "':'"
+describeToken (TokNumber n) = "number " <> show n
 describeToken TokSep = "end of line"
 
 opSymbol :: Operator -> String

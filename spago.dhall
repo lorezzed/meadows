@@ -30,6 +30,7 @@ to generate this file without the comments in this block.
   -- , "newtype"
   , "node-process"
   -- , "node-readline"
+  , "numbers"
   , "ordered-collections"
   , "parsing"
   , "prelude"

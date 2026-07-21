@@ -19,9 +19,9 @@ type Id = Int
 data Tree
   = NodeExpr Id String
   | CloudExpr Id
-  | StockExpr Id String
-  | FaucetRExpr Id String Tree (Maybe Tree)
-  | FaucetLExpr Id String Tree (Maybe Tree)
+  | StockExpr Id String (Maybe Number)
+  | FaucetRExpr Id String (Maybe Number) Tree (Maybe Tree)
+  | FaucetLExpr Id String (Maybe Number) Tree (Maybe Tree)
   | ArrowRExpr Id Tree Tree
   | ArrowLExpr Id Tree Tree
   | ParenExpr Id Tree
@@ -30,14 +30,18 @@ derive instance eqTree :: Eq Tree
 derive instance genericTree :: Generic Tree _
 instance showTree :: Show Tree where
   show (NodeExpr i s) = "Node#" <> show i <> "(" <> s <> ")"
-  show (StockExpr i s) = "Stock#" <> show i <> "(" <> show s <> ")"
+  show (StockExpr i s v) = "Stock#" <> show i <> "(" <> show s <> showValue v <> ")"
   show (CloudExpr i) = "Cloud#" <> show i
-  show (FaucetRExpr i s l r) = "FaucetR#" <> show i <> "[" <> show s <> "](" <> show l <> " -> " <> show r <> " )"
-  show (FaucetLExpr i s l r) = "FaucetL#" <> show i <> "[" <> show s <> "](" <> show l <> " <- " <> show r <> " )"
+  show (FaucetRExpr i s v l r) = "FaucetR#" <> show i <> "[" <> show s <> showValue v <> "](" <> show l <> " -> " <> show r <> " )"
+  show (FaucetLExpr i s v l r) = "FaucetL#" <> show i <> "[" <> show s <> showValue v <> "](" <> show l <> " <- " <> show r <> " )"
   show (ArrowRExpr i l r) = "ArrowR#" <> show i <> "(" <> show l <> " -> " <> show r <> ")"
   show (ArrowLExpr i l r) = "ArrowL#" <> show i <> "(" <> show l <> " <- " <> show r <> ")"
   show (ParenExpr i expr) = "Paren#" <> show i <> "(" <> show expr <> ")"
   show (LoopExpr i k expr) = "Loop#" <> show i <> "(" <> loopLetter k <> " " <> show expr <> ")"
+
+showValue :: Maybe Number -> String
+showValue Nothing = ""
+showValue (Just n) = ": " <> show n
 -- | The token parser: positioned tokens over a `State Id` base monad.
 -- | ParserT's MonadState instance routes `state` to the base monad, so
 -- | `fresh` mints AST ids directly inside parsing code.
@@ -89,6 +93,17 @@ loopTok :: P LoopKind
 loopTok = satisfyMap case _ of
   TokLoop k -> Just k
   _ -> Nothing
+numberTok :: P Number
+numberTok = satisfyMap case _ of
+  TokNumber n -> Just n
+  _ -> Nothing
+-- | An optional `: N` value annotation (a stock's initial level, a faucet's
+-- | rate). optionMaybe does not backtrack partial consumption, so once the
+-- | ':' is consumed a missing or non-number value is a positioned error,
+-- | never a silent Nothing; with no ':' present nothing is consumed at all
+-- | (id-minting order for value-less input is untouched).
+valueTail :: P (Maybe Number)
+valueTail = optionMaybe (tk TokColon *> (numberTok <?> "a number after ':'"))
 -- | program := sep? (statement sepEndBy sep) eof
 -- | The lexer collapses every newline run into a single TokSep, so one
 -- | optional leading separator plus sepEndBy covers blank leading, interior,
@@ -150,12 +165,13 @@ arrowTail mk opName left = do
 -- | the faucet itself (`a=>b->c` == `(a=>b)->c`); a present target has
 -- | already consumed any trailing operators, so exprTail then falls through
 -- | its bare-term alternative -- one path serves both shapes.
-faucetTail :: (Id -> String -> Tree -> Maybe Tree -> Tree) -> String -> Tree -> P Tree
+faucetTail :: (Id -> String -> Maybe Number -> Tree -> Maybe Tree -> Tree) -> String -> Tree -> P Tree
 faucetTail mk opName left = do
   name <- identTok <?> ("a faucet name after '" <> opName <> "'")
+  mval <- valueTail
   i <- fresh
   mtarget <- optionMaybe expression
-  exprTail (mk i name left mtarget)
+  exprTail (mk i name mval left mtarget)
 -- | term := '[' NAME ']' | '|' | '(' expression ')' | NAME
 -- | The alternatives dispatch on disjoint first tokens and satisfyMap never
 -- | consumes on failure, so the grammar needs no `try` anywhere.
@@ -170,9 +186,10 @@ stockTerm :: P Tree
 stockTerm = do
   tk TokLBracket
   name <- identTok <?> "a stock name after '['"
+  mval <- valueTail
   tk TokRBracket <?> "a closing ']'"
   i <- fresh
-  pure (StockExpr i name)
+  pure (StockExpr i name mval)
 -- | `|` is always a bare anonymous cloud; it never takes a following
 -- | identifier as its label (`|a` is a parse error -- write `|->a`).
 cloudTerm :: P Tree

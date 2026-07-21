@@ -1,0 +1,276 @@
+// The behavior-over-time panel: the book's "figure 6" to the diagram's
+// "figure 5". One 2px line per stock over the simulated horizon, real axes,
+// each line named by an ink label at its right end (identity is never
+// color-alone). Rendered once per successful update — never per tick — and
+// hidden entirely while the model carries no numbers. A hover layer (also
+// reachable by keyboard: focus the panel, arrows step, Escape dismisses)
+// snaps a crosshair to the nearest sample and reads out every stock's level
+// there in one tooltip — it only reads the already-rendered series, so the
+// render-once contract holds.
+import * as d3 from "d3";
+import { DT, T_END, type StockSeries } from "./simulate";
+
+// Fixed-order categorical accents, one per stock in parser-id order, shared
+// with the stock rects in the diagram. The ordering is the CVD-safety
+// mechanism (validated adjacent-pair separation on the white surface), so
+// assign by slot and never cycle: a 9th+ stock falls back to ink and is
+// identified by its direct label alone. The sub-3:1 slots (aqua, yellow,
+// magenta) are legal because every line carries a visible ink label.
+export const STOCK_PALETTE = [
+  "#2a78d6", // blue
+  "#1baf7a", // aqua
+  "#eda100", // yellow
+  "#008300", // green
+  "#4a3aa7", // violet
+  "#e34948", // red
+  "#e87ba4", // magenta
+  "#eb6834", // orange
+];
+
+const chartWidth = 700; // matches the diagram svg, so the panels scale together
+const chartHeight = 260;
+// The right margin holds the line-end labels.
+const margin = { top: 16, right: 130, bottom: 32, left: 48 };
+
+// Recessive chrome: the series lines are the only dominant marks.
+const axisInk = "#c3c2b7";
+const tickInk = "#898781";
+const labelInk = "#000";
+const secondaryInk = "#52514e";
+const font = 'system-ui, -apple-system, "Segoe UI", sans-serif';
+
+// Tooltip numbers: thousands-comma'd, ≤2 decimals, trailing zeros trimmed.
+const fmt = d3.format(",.2~f");
+
+export type Chart = {
+  render(series: StockSeries[], colorOf: (id: string) => string): void;
+  hide(): void;
+};
+
+export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTMLElement, any>): Chart {
+  // Same flex order as the diagram svg; equal-order ties break by DOM order,
+  // so append this only after the diagram to land directly below it.
+  const svg = container
+    .append('svg')
+    .attr('class', 'chart')
+    .style('order', 1)
+    .style('width', chartWidth)
+    .style('height', chartHeight)
+    .attr('viewBox', `0 0 ${chartWidth} ${chartHeight}`)
+    .style('border', '1px solid black')
+    .style('display', 'none');
+
+  const gLines = svg.append("g");
+  const gLabels = svg.append("g");
+  const gxAxis = svg.append("g").attr("transform", `translate(0,${chartHeight - margin.bottom})`);
+  const gyAxis = svg.append("g").attr("transform", `translate(${margin.left},0)`);
+
+  // d3's axis generators paint their own chrome; re-ink it recessive after
+  // every .call.
+  const restyleAxis = (g: d3.Selection<SVGGElement, unknown, HTMLElement, any>) => {
+    g.selectAll("path, line").attr("stroke", axisInk);
+    g.selectAll<SVGTextElement, unknown>("text")
+      .attr("fill", tickInk)
+      .style("font", `10px ${font}`)
+      .style("font-variant-numeric", "tabular-nums");
+  };
+
+  // ---- Hover layer: crosshair + one tooltip reading out every series ----
+  // Drawn above the lines, never a pointer target itself (the whole svg is
+  // the hit area — the crosshair snaps, so nobody has to aim at a 2px line).
+  const gHover = svg.append("g")
+    .attr("pointer-events", "none")
+    .style("display", "none");
+  const crosshair = gHover.append("line")
+    .attr("stroke", axisInk)
+    .attr("stroke-width", 1)
+    .attr("y1", margin.top)
+    .attr("y2", chartHeight - margin.bottom);
+  const gMarkers = gHover.append("g");
+  const gTip = gHover.append("g");
+  const tipBg = gTip.append("rect")
+    .attr("fill", "#fff")
+    .attr("stroke", "rgba(11,11,11,0.15)")
+    .attr("rx", 3);
+  const gTipContent = gTip.append("g");
+  const tipHead = gTipContent.append("text")
+    .attr("fill", secondaryInk)
+    .style("font", `10px ${font}`)
+    .style("font-variant-numeric", "tabular-nums");
+  const gTipRows = gTipContent.append("g");
+  const rowH = 15; // vertical rhythm of tooltip rows
+
+  // What the hover layer reads: the scales and series of the last render.
+  // Null while the chart is hidden; hoverIdx is the shown sample or null.
+  let cur: {
+    series: StockSeries[];
+    colorOf: (id: string) => string;
+    x: d3.ScaleLinear<number, number>;
+    y: d3.ScaleLinear<number, number>;
+  } | null = null;
+  let hoverIdx: number | null = null;
+
+  const maxIdx = () => (cur?.series[0]?.levels.length ?? 1) - 1;
+  const clampIdx = (i: number) => Math.max(0, Math.min(maxIdx(), i));
+
+  function hideHover(): void {
+    hoverIdx = null;
+    gHover.style("display", "none");
+  }
+
+  // Place the crosshair + markers + tooltip at sample `idx`. `pointerY` (svg
+  // user space) vertically follows the cursor; null (keyboard) parks the
+  // tooltip at the top of the plot.
+  function showAt(idx: number, pointerY: number | null): void {
+    if (!cur || cur.series.length === 0) return;
+    const { series, colorOf, x, y } = cur;
+    hoverIdx = idx;
+    gHover.style("display", null);
+
+    const t = idx * DT;
+    const px = x(t);
+    crosshair.attr("x1", px).attr("x2", px);
+
+    // A marker on every line at the snapped time, ringed in surface white so
+    // it reads against its own line.
+    gMarkers.selectAll<SVGCircleElement, StockSeries>("circle")
+      .data(series, d => d.id)
+      .join("circle")
+      .attr("r", 3.5)
+      .attr("stroke", "#fff")
+      .attr("stroke-width", 2)
+      .attr("fill", d => colorOf(d.id))
+      .attr("cx", px)
+      .attr("cy", d => y(d.levels[idx] ?? 0));
+
+    // One tooltip, every series: value leads (strong ink), label follows
+    // (secondary), each row keyed by a short stroke of its line's color.
+    // All text lands via .text() → textContent, never markup.
+    tipHead.text(`t = ${fmt(t)}`);
+    const rows = gTipRows.selectAll<SVGGElement, StockSeries>("g")
+      .data(series, d => d.id)
+      .join(enter => {
+        const g = enter.append("g");
+        g.append("line").attr("class", "key")
+          .attr("x1", 0).attr("x2", 12).attr("y1", -3.5).attr("y2", -3.5)
+          .attr("stroke-width", 2);
+        g.append("text").attr("class", "val")
+          .attr("text-anchor", "end")
+          .attr("fill", labelInk)
+          .style("font", `600 11px ${font}`)
+          .style("font-variant-numeric", "tabular-nums");
+        g.append("text").attr("class", "lbl")
+          .attr("fill", secondaryInk)
+          .style("font", `11px ${font}`);
+        return g;
+      })
+      .attr("transform", (_, i) => `translate(0,${rowH + i * rowH})`);
+    rows.select<SVGLineElement>("line.key").attr("stroke", d => colorOf(d.id));
+    const vals = rows.select<SVGTextElement>("text.val").text(d => fmt(d.levels[idx] ?? 0));
+    rows.select<SVGTextElement>("text.lbl").text(d => d.label);
+
+    // Column layout needs real text widths: right-align the values, then
+    // start the labels one gutter after the widest value.
+    let valW = 0;
+    vals.each(function () { valW = Math.max(valW, this.getBBox().width); });
+    vals.attr("x", 18 + valW);
+    rows.select("text.lbl").attr("x", 18 + valW + 8);
+
+    // Size the surface around the content, then keep the whole box inside
+    // the panel — flipping to the crosshair's left near the right edge.
+    const pad = 8;
+    const box = gTipContent.node()!.getBBox();
+    tipBg
+      .attr("x", box.x - pad)
+      .attr("y", box.y - pad)
+      .attr("width", box.width + 2 * pad)
+      .attr("height", box.height + 2 * pad);
+    const boxW = box.width + 2 * pad;
+    const boxH = box.height + 2 * pad;
+    let tx = px + 12 - (box.x - pad);
+    if (px + 12 + boxW > chartWidth - 4) tx = px - 12 - boxW - (box.x - pad);
+    const anchorY = pointerY == null ? margin.top + 8 : pointerY - boxH / 2;
+    const ty = Math.max(margin.top + 4, Math.min(chartHeight - margin.bottom - boxH - 4, anchorY)) - (box.y - pad);
+    gTip.attr("transform", `translate(${tx},${ty})`);
+  }
+
+  // The pointer aims at a time anywhere in the panel; keyboard steps it
+  // (Shift for coarse steps), Escape dismisses. Focus gets the same readout
+  // as hover — tooltips enhance, they never gate.
+  svg
+    .attr("tabindex", 0)
+    .attr("role", "img")
+    .attr("aria-label", "stock levels over simulated time")
+    .on("pointermove", (event: PointerEvent) => {
+      if (!cur) return;
+      const [px, py] = d3.pointer(event);
+      showAt(clampIdx(Math.round(cur.x.invert(px) / DT)), py);
+    })
+    .on("pointerleave", () => hideHover())
+    .on("focus", () => {
+      if (cur && hoverIdx === null) showAt(clampIdx(Math.round(maxIdx() / 2)), null);
+    })
+    .on("blur", () => hideHover())
+    .on("keydown", (event: KeyboardEvent) => {
+      if (!cur) return;
+      const step = event.shiftKey ? 10 : 1;
+      const from = hoverIdx ?? Math.round(maxIdx() / 2);
+      if (event.key === "ArrowLeft") {
+        showAt(clampIdx(from - step), null);
+        event.preventDefault();
+      } else if (event.key === "ArrowRight") {
+        showAt(clampIdx(from + step), null);
+        event.preventDefault();
+      } else if (event.key === "Escape") {
+        hideHover();
+      }
+    });
+
+  function render(series: StockSeries[], colorOf: (id: string) => string): void {
+    const x = d3.scaleLinear([0, T_END], [margin.left, chartWidth - margin.right]);
+    const maxLevel = d3.max(series, s => d3.max(s.levels)) ?? 0;
+    // max(1, ·) keeps an all-zero model from collapsing the scale.
+    const y = d3.scaleLinear([0, Math.max(1, maxLevel)], [chartHeight - margin.bottom, margin.top]).nice();
+
+    gxAxis.call(d3.axisBottom(x));
+    gyAxis.call(d3.axisLeft(y).ticks(5));
+    restyleAxis(gxAxis);
+    restyleAxis(gyAxis);
+
+    const line = d3.line<number>()
+      .x((_, i) => x(i * DT))
+      .y(v => y(v));
+
+    gLines.selectAll<SVGPathElement, StockSeries>("path")
+      .data(series, d => d.id)
+      .join("path")
+      .attr("fill", "none")
+      .attr("stroke", d => colorOf(d.id))
+      .attr("stroke-width", 2)
+      .attr("d", d => line(d.levels));
+
+    gLabels.selectAll<SVGTextElement, StockSeries>("text")
+      .data(series, d => d.id)
+      .join("text")
+      .attr("x", x(T_END) + 8)
+      .attr("y", d => y(d.levels[d.levels.length - 1] ?? 0))
+      .attr("dy", "0.32em")
+      .attr("fill", labelInk)
+      .style("font", `11px ${font}`)
+      .text(d => d.label);
+
+    // Hand the fresh scales/series to the hover layer and drop any readout
+    // from the previous model (its sample index no longer means anything).
+    cur = { series, colorOf, x, y };
+    hideHover();
+    svg.style("display", null);
+  }
+
+  function hide(): void {
+    cur = null;
+    hideHover();
+    svg.style("display", "none");
+  }
+
+  return { render, hide };
+}

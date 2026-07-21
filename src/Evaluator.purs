@@ -18,6 +18,7 @@ import Data.Set (Set)
 import Data.Set as Set
 import Data.String (Pattern(..), split)
 import Data.Tuple (Tuple(..), fst)
+import Control.Alt ((<|>))
 import Control.Monad.State (State, runState, gets, modify_)
 import Lexer (loopLetter)
 import Parser (Tree(..), Id)
@@ -33,7 +34,7 @@ instance showNodeType :: Show NodeType where
 instance writeForeignNodeType :: WriteForeign NodeType where
   writeImpl = writeImpl <<< show
 
-type Node = { type :: NodeType, id :: String, label :: String, group :: Maybe Int, loop :: Maybe (Array String) }
+type Node = { type :: NodeType, id :: String, label :: String, value :: Maybe Number, group :: Maybe Int, loop :: Maybe (Array String) }
 type Link = { type :: String, source :: String, target :: String }
 type Graph = { nodes :: Array Node, links :: Array Link }
 
@@ -48,7 +49,7 @@ type Graph = { nodes :: Array Node, links :: Array Link }
 -- | (statements evaluate in order), the way band groups are numbered.
 type EvalState =
   { registry :: Map.Map String String
-  , nodes :: Map.Map String { ty :: NodeType, label :: String }
+  , nodes :: Map.Map String { ty :: NodeType, label :: String, value :: Maybe Number }
   , links :: Array Link
   , loopTags :: Map.Map String (Array String)
   , loopCount :: Int
@@ -77,7 +78,7 @@ resolveNamed ty i name = do
       let newId = prefixFor ty <> show i
       modify_ \s -> s
         { registry = Map.insert name newId s.registry
-        , nodes = Map.insert newId { ty, label: name } s.nodes
+        , nodes = Map.insert newId { ty, label: name, value: Nothing } s.nodes
         }
       pure newId
 
@@ -90,17 +91,27 @@ cloudLabel = "|"
 freshAnon :: NodeType -> Id -> String -> Evaluator String
 freshAnon ty i label = do
   let newId = prefixFor ty <> show i
-  modify_ \s -> s { nodes = Map.insert newId { ty, label } s.nodes }
+  modify_ \s -> s { nodes = Map.insert newId { ty, label, value: Nothing } s.nodes }
   pure newId
+
+-- | Attach a value annotation (a stock's initial level, a faucet's rate) to
+-- | an already-resolved node. First explicit value wins: a valueless mention
+-- | is a no-op, and later values never overwrite an existing one (`<|>`
+-- | keeps the first Just) -- mirroring the registry's first-mention-wins
+-- | identity rule while still letting `[a] ... [a: 5]` fill the blank in.
+setValue :: String -> Maybe Number -> Evaluator Unit
+setValue _ Nothing = pure unit
+setValue id mval = modify_ \s ->
+  s { nodes = Map.update (\rec -> Just rec { value = rec.value <|> mval }) id s.nodes }
 
 -- | Resolve (registering as needed) the id of the leftmost leaf of a
 -- | subtree, without walking the rest of the subtree's internal links.
 leftmostId :: Tree -> Evaluator String
 leftmostId (NodeExpr i s) = resolveNamed Dot i s
-leftmostId (StockExpr i s) = resolveNamed Stock i s
+leftmostId (StockExpr i s _) = resolveNamed Stock i s
 leftmostId (CloudExpr i) = freshAnon Cloud i cloudLabel
-leftmostId (FaucetRExpr _ _ left _) = leftmostId left
-leftmostId (FaucetLExpr _ _ left _) = leftmostId left
+leftmostId (FaucetRExpr _ _ _ left _) = leftmostId left
+leftmostId (FaucetLExpr _ _ _ left _) = leftmostId left
 leftmostId (ArrowRExpr _ left _) = leftmostId left
 leftmostId (ArrowLExpr _ left _) = leftmostId left
 leftmostId (ParenExpr _ expr) = leftmostId expr
@@ -110,11 +121,15 @@ leftmostId (LoopExpr _ _ expr) = leftmostId expr
 -- | return the id (never the label) of the node it resolves to.
 evaluateNode :: Tree -> Evaluator String
 evaluateNode (NodeExpr i s) = resolveNamed Dot i s
-evaluateNode (StockExpr i s) = resolveNamed Stock i s
+evaluateNode (StockExpr i s v) = do
+  sid <- resolveNamed Stock i s
+  setValue sid v
+  pure sid
 evaluateNode (CloudExpr i) = freshAnon Cloud i cloudLabel
-evaluateNode (FaucetRExpr i name left right) = do
+evaluateNode (FaucetRExpr i name v left right) = do
   l <- evaluateNode left
   fid <- resolveNamed Faucet i name
+  setValue fid v
   addLink l fid "flow"
   case right of
     Nothing -> pure fid
@@ -124,9 +139,10 @@ evaluateNode (FaucetRExpr i name left right) = do
       evaluateNode r
 -- | `<=` flows right-to-left: the right operand feeds the faucet, which pours
 -- | into the left operand (mirrors how ArrowL swaps its endpoints).
-evaluateNode (FaucetLExpr i name left right) = do
+evaluateNode (FaucetLExpr i name v left right) = do
   l <- evaluateNode left
   fid <- resolveNamed Faucet i name
+  setValue fid v
   addLink fid l "flow"
   case right of
     Nothing -> pure fid
@@ -174,10 +190,10 @@ addLoopTag name m id = Map.alter (Just <<< maybe [ name ] (_ <> [ name ])) id m
 -- | re-inserts under its existing parser-id key, a no-op).
 memberIds :: Tree -> Evaluator (Array String)
 memberIds (NodeExpr i s) = Array.singleton <$> resolveNamed Dot i s
-memberIds (StockExpr i s) = Array.singleton <$> resolveNamed Stock i s
+memberIds (StockExpr i s _) = Array.singleton <$> resolveNamed Stock i s
 memberIds (CloudExpr i) = Array.singleton <$> freshAnon Cloud i cloudLabel
-memberIds (FaucetRExpr i name left right) = faucetMembers i name left right
-memberIds (FaucetLExpr i name left right) = faucetMembers i name left right
+memberIds (FaucetRExpr i name _ left right) = faucetMembers i name left right
+memberIds (FaucetLExpr i name _ left right) = faucetMembers i name left right
 memberIds (ArrowRExpr _ left right) = append <$> memberIds left <*> memberIds right
 memberIds (ArrowLExpr _ left right) = append <$> memberIds left <*> memberIds right
 memberIds (ParenExpr _ expr) = memberIds expr
@@ -252,8 +268,8 @@ evaluate :: List Tree -> Graph
 evaluate trees =
   let initialState = { registry: Map.empty, nodes: Map.empty, links: [], loopTags: Map.empty, loopCount: 0 }
       Tuple _ finalState = runState (traverse_ evaluateNode trees) initialState
-      nodeArray = (Map.toUnfoldable finalState.nodes :: Array (Tuple String { ty :: NodeType, label :: String }))
+      nodeArray = (Map.toUnfoldable finalState.nodes :: Array (Tuple String { ty :: NodeType, label :: String, value :: Maybe Number }))
       groupOf = computeGroups finalState
-      nodes = map (\(Tuple id v) -> { type: v.ty, id, label: v.label, group: Map.lookup id groupOf, loop: Map.lookup id finalState.loopTags }) nodeArray
+      nodes = map (\(Tuple id v) -> { type: v.ty, id, label: v.label, value: v.value, group: Map.lookup id groupOf, loop: Map.lookup id finalState.loopTags }) nodeArray
   in { nodes, links: finalState.links }
 

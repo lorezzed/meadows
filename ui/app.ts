@@ -5,6 +5,8 @@ import type { Node, Link, System } from "./type";
 import faucetSvg from './shape/faucet.svg'
 import cloudSvg from './shape/cloud.svg'
 import { exampleList } from "./example";
+import { hasNumbers, simulate } from "./simulate";
+import { createChart, STOCK_PALETTE } from "./chart";
 
 const container = d3.select('body')
   .append('div')
@@ -76,6 +78,10 @@ const svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, any> = container
   .attr("viewBox", `0 0 ${svgWidth} ${svgHeight}`)
   .style('border', '1px solid black')
   .on("click", click)
+// The behavior-over-time panel. Appended right after the diagram svg: both
+// carry flex order 1, and equal orders resolve by DOM position, so it sits
+// directly below the diagram and above the order-2 examples/textarea.
+const chart = createChart(container)
 const textInput = container
   .append('textarea')
   .attr('class', 'text-input')
@@ -179,6 +185,13 @@ const faucetHeight = 40
 const cloudWidth = 52;
 const cloudHeight = 52;
 
+// What a node displays: its name, plus its value annotation when it carries
+// one ("water in tub: 50", "outflow: 5"). Display only — node ids and the
+// compiler's name registry stay keyed on the bare name, so `[water in tub]`
+// written elsewhere still resolves to the same node.
+const displayLabel = (d: Node): string =>
+  d.value != null ? `${d.label}: ${d.value}` : d.label;
+
 // Distance from a node's center to where links should stop. Stock uses its
 // half-width (pipes enter horizontally); info arcs into a stock's top/bottom
 // stop a touch early — acceptable scalar approximation.
@@ -268,9 +281,10 @@ function update(system: System) {
   const nodes = system.nodes.map(d => {
     const prev = old.get(d.id);
     // Clear the Maybe-omitted compiler fields before merging: a recycled node
-    // would otherwise keep a stale `group`/`loop` after losing it upstream
-    // (the JSON simply omits the key, so Object.assign wouldn't overwrite).
-    return prev ? Object.assign(prev, { group: null, loop: null }, d) : { ...d };
+    // would otherwise keep a stale `group`/`loop`/`value` after losing it
+    // upstream (the JSON simply omits the key, so Object.assign wouldn't
+    // overwrite).
+    return prev ? Object.assign(prev, { group: null, loop: null, value: null }, d) : { ...d };
   });
   const links = system.links.map(d => ({ ...d }));
 
@@ -295,7 +309,7 @@ function update(system: System) {
       appendLabel(g, -12);
       return g;
     })
-    .call(sel => sel.select<SVGTextElement>("text").text(d => d.label))
+    .call(sel => sel.select<SVGTextElement>("text").text(displayLabel))
     .call(drag(), undefined);
   nodeStock = nodeStock
     .data(nodes.filter(x => x.type === 'stock'), d => d.id)
@@ -313,7 +327,7 @@ function update(system: System) {
       appendLabel(g, 0, 12);
       return g;
     })
-    .call(sel => sel.select<SVGTextElement>("text").text(d => d.label))
+    .call(sel => sel.select<SVGTextElement>("text").text(displayLabel))
     .call(drag(), undefined);
   nodeFaucet = nodeFaucet
     .data(nodes.filter(x => x.type === 'faucet'), d => d.id)
@@ -329,7 +343,7 @@ function update(system: System) {
       appendLabel(g, -28);
       return g;
     })
-    .call(sel => sel.select<SVGTextElement>("text").text(d => d.label))
+    .call(sel => sel.select<SVGTextElement>("text").text(displayLabel))
     .call(drag(), undefined);
   nodeCloud = nodeCloud
     .data(nodes.filter(x => x.type === 'cloud'), d => d.id)
@@ -420,7 +434,7 @@ function update(system: System) {
   const slotHalf = (d: Node) => {
     const icon = d.type === "stock" ? stockWidth / 2 : d.type === "cloud" ? cloudWidth / 2 : d.type === "dot" ? dotRadius : faucetWidth / 2;
     const collide = d.type === "stock" ? 62 : d.type === "cloud" ? 30 : d.type === "dot" ? 26 : 24;
-    return Math.max(icon, d.label.length * 3, collide);
+    return Math.max(icon, displayLabel(d).length * 3, collide);
   };
   const slotPad = 10; // extra breathing room between adjacent slots
 
@@ -607,6 +621,20 @@ function update(system: System) {
   }
   linkForce.links(links);
   simulation.alpha(0.5).restart();
+
+  // Behavior-over-time panel (figure 6 to the diagram's figure 5): when the
+  // model carries numbers and has a stock to plot, simulate it and draw the
+  // chart, giving each stock the same accent color on its diagram rect and
+  // its chart line. Without numbers everything stays as before — black
+  // strokes, no chart.
+  const numeric = hasNumbers(system);
+  const stockIds = nodes.filter(n => n.type === "stock").map(n => n.id)
+    .sort((a, b) => parserId(a) - parserId(b));
+  const colorOf = (id: string): string =>
+    (numeric ? STOCK_PALETTE[stockIds.indexOf(id)] : undefined) ?? "#000";
+  nodeStock.select<SVGRectElement>("rect").attr("stroke", d => colorOf(d.id));
+  if (numeric && stockIds.length > 0) chart.render(simulate(system), colorOf);
+  else chart.hide();
 }
 
 // How round the info arcs are: arc radius = chord length × this factor, so it
@@ -757,7 +785,7 @@ function ticked() {
   let x0 = 0, y0 = 0, x1 = svgWidth, y1 = svgHeight;
   for (const d of simulation.nodes()) {
     if (d.x == null || d.y == null) continue;
-    const padX = Math.max(edgeOf(d) + 12, d.label.length * 3);
+    const padX = Math.max(edgeOf(d) + 12, displayLabel(d).length * 3);
     const padY = edgeOf(d) + 24;
     x0 = Math.min(x0, d.x - padX); y0 = Math.min(y0, d.y - padY);
     x1 = Math.max(x1, d.x + padX); y1 = Math.max(y1, d.y + padY);

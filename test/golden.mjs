@@ -77,6 +77,14 @@ const goldenInputs = [
   '[a]=>f\nB(f<-a)',
   'R(a->b)\nB(b->c)',
   EX_LOOPS,
+  // Value annotations: `[stock: N]` initial level, `=>faucet: N` rate.
+  // Serialized as an optional `value` key (absent when unannotated).
+  '|=>inflow[water in tub: 50]=>outflow: 5|',   // figures 5 & 6
+  '[a: 100]=>drain: 5[b]=>out: 2.5|',           // chained stocks, decimal rate
+  '[a: 2.5]',
+  'a=>f: 5',
+  '[a]\n[a: 5]',    // a later mention fills a blank value
+  '[a: 5]\n[a: 9]', // the first explicit value wins
 ];
 
 // Errors: the "kind: line L, column C:" prefix is contractual; wording may be tuned.
@@ -102,6 +110,14 @@ const errorCases = [
   ['a->R(b)',   /^Parsing error: line 1, column 4: /],  // loops are statements, not terms
   ['R(a)->b',   /^Parsing error: line 1, column 5: /],  // nothing may follow a loop
   ['r(a)',      /^Parsing error: line 1, column 2: /],  // lowercase r is just a name
+  // Value annotations belong to stocks and faucets only
+  ['a: 5',      /^Parsing error: line 1, column 2: /],  // no values on bare dots
+  ['[a:]',      /^Parsing error: line 1, column 4: /],  // a colon needs a number
+  ['[a: b]',    /^Parsing error: line 1, column 5: /],  // a name is not a value
+  ['[a]: 5',    /^Parsing error: line 1, column 4: /],  // the value goes inside the brackets
+  ['5',         /^Parsing error: line 1, column 1: /],  // a bare number is not a term
+  ['-5',        /^Tokenization error: line 1, column 1: /],  // no negative literals
+  ['[a: 5.]',   /^Tokenization error: line 1, column 6: /],  // no trailing bare dot
 ];
 
 if (process.argv.includes('--capture')) {
@@ -151,6 +167,10 @@ if (JSON.stringify(loopOf('harvest')) !== JSON.stringify(['B2']))
   fail('loops model', `harvest should be in B2 only, got ${JSON.stringify(loopOf('harvest'))}`);
 if (loopOf('growth goal') !== undefined)
   fail('loops model', 'growth goal is in no loop, its `loop` key should be absent');
+const v1 = JSON.parse(M.go('[a: 50]'));
+if (v1.nodes[0].value !== 50) fail('[a: 50]', `value 50 expected, got ${v1.nodes[0].value}`);
+const v2 = JSON.parse(M.go('[a]'));
+if ('value' in v2.nodes[0]) fail('[a]', 'unannotated node should have no `value` key');
 
 console.log(failures ? `${failures} FAILURE(S)` : 'ALL CHECKS PASSED');
 process.exit(failures ? 1 : 0);

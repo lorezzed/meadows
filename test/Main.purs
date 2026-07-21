@@ -68,6 +68,11 @@ labelLoops :: String -> Either String (Array (Tuple String (Maybe (Array String)
 labelLoops s =
   (Array.sortWith fst <<< map (\n -> Tuple n.label n.loop) <<< _.nodes) <$> graphOf s
 
+-- | (label, value) per node, sorted by label.
+labelValues :: String -> Either String (Array (Tuple String (Maybe Number)))
+labelValues s =
+  (Array.sortWith fst <<< map (\n -> Tuple n.label n.value) <<< _.nodes) <$> graphOf s
+
 tests :: Array (Maybe String)
 tests =
   -- Lexer: token streams
@@ -108,29 +113,46 @@ tests =
   , expectEq "loop tokens carry their start positions"
       (Right (Tuple 1 1 : Tuple 1 3 : Tuple 1 4 : Nil))
       (posOf "R(a)")
+  -- Lexer: values (':' + number literals)
+  , expectEq "a stock value lexes as colon + number"
+      (Right (TokLBracket : TokIdent "a" : TokColon : TokNumber 50.0 : TokRBracket : Nil))
+      (toksOf "[a: 50]")
+  , expectEq "decimal literals lex"
+      (Right (TokNumber 2.5 : Nil))
+      (toksOf "2.5")
+  , expectEq "a digit inside a word stays part of the identifier"
+      (Right (TokIdent "a2" : Nil))
+      (toksOf "a2")
+  , expectEq "value tokens carry their start positions"
+      (Right (Tuple 1 1 : Tuple 1 2 : Tuple 1 4 : Nil))
+      (posOf "x: 5")
+  , expectErrorAt "negative numbers are not lexable"
+      "line 1, column 1" (toksOf "-5")
+  , expectErrorAt "a number's trailing bare dot fails at the dot"
+      "line 1, column 2" (toksOf "5.")
   -- Parser: tree shapes and exact ids (mint order: atoms after their tokens,
   -- operators after op+name before the right operand, parens before the body)
   , expectEq "arrow AST (ids: left 0, operator 1, right 2)"
       (Right (ArrowRExpr 1 (NodeExpr 0 "a") (NodeExpr 2 "b") : Nil))
       (parseAll "a->b")
   , expectEq "dangling faucet has no target"
-      (Right (FaucetRExpr 1 "j" (NodeExpr 0 "a") Nothing : Nil))
+      (Right (FaucetRExpr 1 "j" Nothing (NodeExpr 0 "a") Nothing : Nil))
       (parseAll "a=>j")
   , expectEq "faucet with a stock target"
-      (Right (FaucetRExpr 1 "j" (NodeExpr 0 "a") (Just (StockExpr 2 "b")) : Nil))
+      (Right (FaucetRExpr 1 "j" Nothing (NodeExpr 0 "a") (Just (StockExpr 2 "b" Nothing)) : Nil))
       (parseAll "a=>j[b]")
   , expectEq "leftward faucet mirrors the rightward one"
-      (Right (FaucetLExpr 1 "j" (NodeExpr 0 "a") Nothing : Nil))
+      (Right (FaucetLExpr 1 "j" Nothing (NodeExpr 0 "a") Nothing : Nil))
       (parseAll "a<=j")
   , expectEq "an operator after a dangling faucet applies to the faucet"
-      (Right (ArrowRExpr 2 (FaucetRExpr 1 "b" (NodeExpr 0 "a") Nothing) (NodeExpr 3 "c") : Nil))
+      (Right (ArrowRExpr 2 (FaucetRExpr 1 "b" Nothing (NodeExpr 0 "a") Nothing) (NodeExpr 3 "c") : Nil))
       (parseAll "a=>b->c")
   , expectEq "with a target present the operator belongs to the target"
-      (Right (FaucetRExpr 1 "b" (NodeExpr 0 "a")
-                (Just (ArrowRExpr 3 (StockExpr 2 "x") (NodeExpr 4 "c"))) : Nil))
+      (Right (FaucetRExpr 1 "b" Nothing (NodeExpr 0 "a")
+                (Just (ArrowRExpr 3 (StockExpr 2 "x" Nothing) (NodeExpr 4 "c"))) : Nil))
       (parseAll "a=>b[x]->c")
   , expectEq "paren mints before its body"
-      (Right (ArrowRExpr 3 (ParenExpr 0 (FaucetRExpr 2 "f" (NodeExpr 1 "a") Nothing)) (NodeExpr 4 "b") : Nil))
+      (Right (ArrowRExpr 3 (ParenExpr 0 (FaucetRExpr 2 "f" Nothing (NodeExpr 1 "a") Nothing)) (NodeExpr 4 "b") : Nil))
       (parseAll "(a=>f)->b")
   , expectEq "loop AST: the annotation mints before its body"
       (Right (LoopExpr 0 Reinforcing (ArrowRExpr 2 (NodeExpr 1 "a") (NodeExpr 3 "b")) : Nil))
@@ -142,7 +164,36 @@ tests =
       (Right (NodeExpr 0 "a" : NodeExpr 1 "b" : Nil))
       (parseAll "\na\n\nb\n")
   , expectEq "stock term"
-      (Right (StockExpr 0 "s" : Nil)) (parseAll "[s]")
+      (Right (StockExpr 0 "s" Nothing : Nil)) (parseAll "[s]")
+  -- Parser: value annotations (stocks and faucets only)
+  , expectEq "stock with an initial value"
+      (Right (StockExpr 0 "a" (Just 50.0) : Nil))
+      (parseAll "[a: 50]")
+  , expectEq "faucet with a rate, no target"
+      (Right (FaucetRExpr 1 "f" (Just 5.0) (NodeExpr 0 "a") Nothing : Nil))
+      (parseAll "a=>f: 5")
+  , expectEq "leftward faucet with a rate"
+      (Right (FaucetLExpr 1 "f" (Just 5.0) (NodeExpr 0 "a") Nothing : Nil))
+      (parseAll "a<=f: 5")
+  , expectEq "an operator after a valued faucet still applies to the faucet"
+      (Right (ArrowRExpr 2 (FaucetRExpr 1 "f" (Just 5.0) (NodeExpr 0 "a") Nothing) (NodeExpr 3 "c") : Nil))
+      (parseAll "a=>f: 5->c")
+  , expectEq "the figure 5 statement parses with its values"
+      (Right (FaucetRExpr 1 "inflow" Nothing (CloudExpr 0)
+                (Just (FaucetRExpr 3 "outflow" (Just 5.0) (StockExpr 2 "water in tub" (Just 50.0))
+                  (Just (CloudExpr 4)))) : Nil))
+      (parseAll "|=>inflow[water in tub: 50]=>outflow: 5|")
+  -- Parser: values are positioned errors anywhere else
+  , expectErrorAt "a value on a bare dot is an error"
+      "line 1, column 2" (parseAll "a: 5")
+  , expectErrorAt "a colon needs a number"
+      "line 1, column 4" (parseAll "[a:]")
+  , expectErrorAt "a name is not a value"
+      "line 1, column 5" (parseAll "[a: b]")
+  , expectErrorAt "the value goes inside the stock brackets"
+      "line 1, column 4" (parseAll "[a]: 5")
+  , expectErrorAt "a bare number is not a term"
+      "line 1, column 1" (parseAll "5")
   , expectEq "bare cloud term"
       (Right (CloudExpr 0 : Nil)) (parseAll "|")
   , expectEq "empty input parses to no statements"
@@ -196,6 +247,22 @@ tests =
       (Right [ { type: "flow", source: "dot#0", target: "faucet#1" }
              , { type: "flow", source: "faucet#1", target: "faucet#2" } ])
       (linksOf "a=>f=>g")
+  -- Evaluator: value annotations
+  , expectEq "values land on the stock and the faucet"
+      (Right [ Tuple "a" (Just 50.0), Tuple "f" (Just 5.0), Tuple "|" Nothing ])
+      (labelValues "[a: 50]=>f: 5|")
+  , expectEq "unannotated nodes have no value"
+      (Right [ Tuple "a" Nothing, Tuple "f" Nothing ])
+      (labelValues "[a]=>f")
+  , expectEq "a later mention fills a blank value"
+      (Right [ Tuple "a" (Just 5.0) ])
+      (labelValues "[a]\n[a: 5]")
+  , expectEq "the first explicit value wins"
+      (Right [ Tuple "a" (Just 5.0) ])
+      (labelValues "[a: 5]\n[a: 9]")
+  , expectEq "via registry aliasing a value can land on a dot (inert)"
+      (Right [ Tuple "a" (Just 5.0), Tuple "b" Nothing ])
+      (labelValues "a->b\n[a: 5]")
   -- Evaluator: band groups
   , expectEq "a flow band with a reservoir gets a group"
       (Right [ Tuple "a" (Just 0), Tuple "fill" (Just 0) ])
