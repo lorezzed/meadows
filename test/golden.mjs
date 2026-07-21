@@ -85,6 +85,10 @@ const goldenInputs = [
   'a=>f: 5',
   '[a]\n[a: 5]',    // a later mention fills a blank value
   '[a: 5]\n[a: 9]', // the first explicit value wins
+  // Faucet rate schedules: `: initial (@time: rate)*` — piecewise-constant.
+  '|=>inflow: 0 @5: 5[water in tub: 50]=>outflow: 5|',   // figures 5 & 7
+  'a=>f: 0 @2.5: 1 @7: 4',
+  'a=>f: 9\na=>f: 0 @2: 1',   // first annotation wins as a unit
 ];
 
 // Errors: the "kind: line L, column C:" prefix is contractual; wording may be tuned.
@@ -118,6 +122,12 @@ const errorCases = [
   ['5',         /^Parsing error: line 1, column 1: /],  // a bare number is not a term
   ['-5',        /^Tokenization error: line 1, column 1: /],  // no negative literals
   ['[a: 5.]',   /^Tokenization error: line 1, column 6: /],  // no trailing bare dot
+  // Rate schedules commit at each '@'/':' — malformed segments are positioned
+  ['a=>f: 0 @',    /^Parsing error: line 1, column 9: /],   // step needs a time
+  ['a=>f: 0 @5 3', /^Parsing error: line 1, column 12: /],  // step time needs ':'
+  ['a=>f: 0 @5:',  /^Parsing error: line 1, column 11: /],  // step needs a rate
+  ['[a: 1 @2: 3]', /^Parsing error: line 1, column 7: /],   // stocks: single value only
+  ['a @ b',        /^Parsing error: line 1, column 3: /],   // '@' lives inside annotations
 ];
 
 if (process.argv.includes('--capture')) {
@@ -171,6 +181,12 @@ const v1 = JSON.parse(M.go('[a: 50]'));
 if (v1.nodes[0].value !== 50) fail('[a: 50]', `value 50 expected, got ${v1.nodes[0].value}`);
 const v2 = JSON.parse(M.go('[a]'));
 if ('value' in v2.nodes[0]) fail('[a]', 'unannotated node should have no `value` key');
+const v3 = JSON.parse(M.go('a=>f: 0 @5: 5'));
+const fct = v3.nodes.find(n => n.type === 'faucet');
+if (!(fct.value === 0 && JSON.stringify(fct.steps) === JSON.stringify([{ value: 5, at: 5 }])))
+  fail('a=>f: 0 @5: 5', `schedule expected value 0 + one step, got ${JSON.stringify(fct)}`);
+if ('steps' in JSON.parse(M.go('a=>f: 5')).nodes.find(n => n.type === 'faucet'))
+  fail('a=>f: 5', 'a step-less rate should have no `steps` key');
 
 console.log(failures ? `${failures} FAILURE(S)` : 'ALL CHECKS PASSED');
 process.exit(failures ? 1 : 0);

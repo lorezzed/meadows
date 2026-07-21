@@ -186,11 +186,15 @@ const cloudWidth = 52;
 const cloudHeight = 52;
 
 // What a node displays: its name, plus its value annotation when it carries
-// one ("water in tub: 50", "outflow: 5"). Display only — node ids and the
-// compiler's name registry stay keyed on the bare name, so `[water in tub]`
-// written elsewhere still resolves to the same node.
-const displayLabel = (d: Node): string =>
-  d.value != null ? `${d.label}: ${d.value}` : d.label;
+// one ("water in tub: 50", "outflow: 5", "inflow: 0 @5: 5" for a rate
+// schedule). Display only — node ids and the compiler's name registry stay
+// keyed on the bare name, so `[water in tub]` written elsewhere still
+// resolves to the same node.
+const displayLabel = (d: Node): string => {
+  if (d.value == null) return d.label;
+  const steps = (d.steps ?? []).map(s => ` @${s.at}: ${s.value}`).join("");
+  return `${d.label}: ${d.value}${steps}`;
+};
 
 // Distance from a node's center to where links should stop. Stock uses its
 // half-width (pipes enter horizontally); info arcs into a stock's top/bottom
@@ -281,10 +285,10 @@ function update(system: System) {
   const nodes = system.nodes.map(d => {
     const prev = old.get(d.id);
     // Clear the Maybe-omitted compiler fields before merging: a recycled node
-    // would otherwise keep a stale `group`/`loop`/`value` after losing it
-    // upstream (the JSON simply omits the key, so Object.assign wouldn't
-    // overwrite).
-    return prev ? Object.assign(prev, { group: null, loop: null, value: null }, d) : { ...d };
+    // would otherwise keep a stale `group`/`loop`/`value`/`steps` after
+    // losing it upstream (the JSON simply omits the key, so Object.assign
+    // wouldn't overwrite).
+    return prev ? Object.assign(prev, { group: null, loop: null, value: null, steps: null }, d) : { ...d };
   });
   const links = system.links.map(d => ({ ...d }));
 

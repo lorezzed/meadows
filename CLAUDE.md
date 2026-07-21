@@ -80,9 +80,10 @@ JSON error string):
    - `R(` / `B(` → loop-open (`TokLoop`, exact uppercase two-char lexeme, tried
      before identifiers with backtracking — a bare `R`, `R->b`, or `Rx(` still
      lex as identifiers); `)` (`TokRParen`) closes the annotation
-   - `:` → `TokColon` and digit-leading number literals → `TokNumber` (digits
-     with an optional `.digits` fraction; no sign, no exponent — together they
-     form value annotations like `[tub: 50]`). A digit *inside* a word stays
+   - `:` → `TokColon`, `@` → `TokAt`, and digit-leading number literals →
+     `TokNumber` (digits with an optional `.digits` fraction; no sign, no
+     exponent — together they form value annotations like `[tub: 50]` and
+     rate schedules like `=>inflow: 0 @5: 5`). A digit *inside* a word stays
      part of the identifier (`a2` is one name); `-5` and `5.` are tokenization
      errors
 
@@ -92,11 +93,15 @@ JSON error string):
    `expression`/`exprTail`/`term`. A statement is a loop annotation (`R(expr)` /
    `B(expr)` → `LoopExpr`, minting before its body like `ParenExpr`) or a bare
    expression; loops are whole statements only, never terms (`a->R(b)` and
-   `R(a)->b` are positioned errors). Stocks and faucet names accept an optional
-   `: N` value (`'[' NAME (':' NUMBER)? ']'`; `=>NAME (':' NUMBER)?` for both
-   faucet directions) carried as a `Maybe Number` on `StockExpr`/`Faucet*Expr`;
-   a value anywhere else (`a: 5`, `[a]: 5`, a bare `5`) is a positioned parse
-   error, and `valueTail` consumes nothing when no `:` follows, so id-minting
+   `R(a)->b` are positioned errors). Stocks accept an optional `: N` initial
+   value (`'[' NAME (':' NUMBER)? ']'`, `Maybe Number` on `StockExpr`); faucet
+   names accept an optional piecewise-constant **rate schedule**
+   (`NAME (':' NUMBER ('@' NUMBER ':' NUMBER)*)?` for both directions, e.g.
+   `inflow: 0 @5: 5` = closed until t=5 then 5), carried as
+   `Maybe Sched = Maybe { initial, steps :: Array { at, value } }` on
+   `Faucet*Expr`. A value anywhere else (`a: 5`, `[a]: 5`, a bare `5`, a
+   schedule inside stock brackets) is a positioned parse error, and
+   `valueTail`/`schedTail` consume nothing when no `:` follows, so id-minting
    order for value-less input is untouched. Its one custom primitive, `satisfyMap`, keeps the parser position
    on the *next unconsumed* token so `<?>` labels and `eof` report exact locations —
    the library's own `Parsing.Token` primitives leave the position on the consumed
@@ -124,13 +129,15 @@ JSON error string):
      plus one source-order counter (`"R0"`, `"B1"`, …, like group numbering).
    - `<-` links each hop from the *nearest* term of its right subtree
      (`leftmostId`, same as the faucets), so `a<-b->c` fans out from `b`.
-   - **Value annotations** land in `Node.value` via `setValue`: the *first
-     explicit* value for a name wins — value-less mentions never erase, later
-     values never overwrite (`[a] … [a: 5]` fills the blank; `[a: 5] … [a: 9]`
-     keeps 5). Semantically a stock's value is its initial level and a faucet's
-     its constant flow rate; the compiler just carries the number.
+   - **Value annotations** land in `Node.value`/`Node.steps` via `setValue`
+     (stocks) and `setSched` (faucets): the *first explicit* annotation for a
+     name wins — value-less mentions never erase, later annotations never
+     overwrite, and a faucet's schedule wins *as a unit* (value + steps
+     together). Semantically a stock's value is its initial level; a faucet's
+     value is its initial rate, overridden from each step's `at` time onward.
+     The compiler just carries the numbers.
 
-   Output types: `Node = { type, id, label, value :: Maybe Number, group :: Maybe Int, loop :: Maybe (Array String) }`
+   Output types: `Node = { type, id, label, value :: Maybe Number, steps :: Maybe (Array { at, value }), group :: Maybe Int, loop :: Maybe (Array String) }`
    (`Maybe` fields omit their JSON key on `Nothing` — goldens rely on that),
    `Link = { type, source, target }`, `Graph = { nodes, links }`. `NodeType`
    (`Dot`/`Stock`/`Faucet`/`Cloud`) has a `WriteForeign` instance so the whole
@@ -168,8 +175,10 @@ the diagram's figure 5):
 
 - **`ui/simulate.ts`** — pure, dependency-free (type-only imports, so node can
   run it headlessly; `test/simulate.mjs` does). Forward-Euler over `T_END`/`DT`
-  constants: stock `value` = initial level, faucet `value` = rate (both default
-  0), faucet source/sink stocks from flow-link direction, clouds/dots infinite.
+  constants: stock `value` = initial level; a faucet's rate is
+  piecewise-constant (`value` from t=0, overridden by each `steps` entry from
+  its `at` time on; both default 0), sampled at each step's start. Faucet
+  source/sink stocks come from flow-link direction, clouds/dots infinite.
   Each synchronous step rations a stock's outflows by what it holds
   (`min(1, level/demand)`), so levels never go negative and chained stocks
   conserve — an empty tub stops draining.
@@ -186,9 +195,10 @@ the diagram's figure 5):
   chart is hidden (and rect strokes stay black) whenever the model carries no
   `value`s — value-less inputs look exactly as they did before the feature.
 
-`update()` clears `group`/`loop`/`value` on recycled nodes before merging new
-data (the JSON omits absent `Maybe` keys, so stale values would otherwise
-survive edits).
+`update()` clears `group`/`loop`/`value`/`steps` on recycled nodes before
+merging new data (the JSON omits absent `Maybe` keys, so stale values would
+otherwise survive edits). `displayLabel` renders a schedule in full
+(`inflow: 0 @5: 5`).
 
 `ui/type.ts` defines the d3-flavored `Node`/`Link`/`System` types (extending
 `d3.SimulationNodeDatum` / `SimulationLinkDatum`). `ui/declarations.d.ts` lets `*.svg`

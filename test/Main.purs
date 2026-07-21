@@ -73,6 +73,11 @@ labelValues :: String -> Either String (Array (Tuple String (Maybe Number)))
 labelValues s =
   (Array.sortWith fst <<< map (\n -> Tuple n.label n.value) <<< _.nodes) <$> graphOf s
 
+-- | (label, steps) per node, sorted by label.
+labelSteps :: String -> Either String (Array (Tuple String (Maybe (Array { at :: Number, value :: Number }))))
+labelSteps s =
+  (Array.sortWith fst <<< map (\n -> Tuple n.label n.steps) <<< _.nodes) <$> graphOf s
+
 tests :: Array (Maybe String)
 tests =
   -- Lexer: token streams
@@ -126,6 +131,9 @@ tests =
   , expectEq "value tokens carry their start positions"
       (Right (Tuple 1 1 : Tuple 1 2 : Tuple 1 4 : Nil))
       (posOf "x: 5")
+  , expectEq "@ lexes as its own token"
+      (Right (TokIdent "f" : TokColon : TokNumber 0.0 : TokAt : TokNumber 5.0 : TokColon : TokNumber 5.0 : Nil))
+      (toksOf "f: 0 @5: 5")
   , expectErrorAt "negative numbers are not lexable"
       "line 1, column 1" (toksOf "-5")
   , expectErrorAt "a number's trailing bare dot fails at the dot"
@@ -170,19 +178,38 @@ tests =
       (Right (StockExpr 0 "a" (Just 50.0) : Nil))
       (parseAll "[a: 50]")
   , expectEq "faucet with a rate, no target"
-      (Right (FaucetRExpr 1 "f" (Just 5.0) (NodeExpr 0 "a") Nothing : Nil))
+      (Right (FaucetRExpr 1 "f" (Just { initial: 5.0, steps: [] }) (NodeExpr 0 "a") Nothing : Nil))
       (parseAll "a=>f: 5")
   , expectEq "leftward faucet with a rate"
-      (Right (FaucetLExpr 1 "f" (Just 5.0) (NodeExpr 0 "a") Nothing : Nil))
+      (Right (FaucetLExpr 1 "f" (Just { initial: 5.0, steps: [] }) (NodeExpr 0 "a") Nothing : Nil))
       (parseAll "a<=f: 5")
   , expectEq "an operator after a valued faucet still applies to the faucet"
-      (Right (ArrowRExpr 2 (FaucetRExpr 1 "f" (Just 5.0) (NodeExpr 0 "a") Nothing) (NodeExpr 3 "c") : Nil))
+      (Right (ArrowRExpr 2 (FaucetRExpr 1 "f" (Just { initial: 5.0, steps: [] }) (NodeExpr 0 "a") Nothing) (NodeExpr 3 "c") : Nil))
       (parseAll "a=>f: 5->c")
   , expectEq "the figure 5 statement parses with its values"
       (Right (FaucetRExpr 1 "inflow" Nothing (CloudExpr 0)
-                (Just (FaucetRExpr 3 "outflow" (Just 5.0) (StockExpr 2 "water in tub" (Just 50.0))
+                (Just (FaucetRExpr 3 "outflow" (Just { initial: 5.0, steps: [] }) (StockExpr 2 "water in tub" (Just 50.0))
                   (Just (CloudExpr 4)))) : Nil))
       (parseAll "|=>inflow[water in tub: 50]=>outflow: 5|")
+  -- Parser: faucet rate schedules (`@time: rate` steps)
+  , expectEq "a faucet schedule parses its steps in order"
+      (Right (FaucetRExpr 1 "f" (Just { initial: 0.0, steps: [ { at: 5.0, value: 5.0 } ] }) (NodeExpr 0 "a") Nothing : Nil))
+      (parseAll "a=>f: 0 @5: 5")
+  , expectEq "schedules chain and allow decimals"
+      (Right (FaucetRExpr 1 "f" (Just { initial: 0.0, steps: [ { at: 2.5, value: 1.0 }, { at: 7.0, value: 4.0 } ] }) (NodeExpr 0 "a") Nothing : Nil))
+      (parseAll "a=>f: 0 @2.5: 1 @7: 4")
+  , expectEq "a target may follow a schedule"
+      (Right (FaucetRExpr 1 "f" (Just { initial: 0.0, steps: [ { at: 5.0, value: 5.0 } ] }) (NodeExpr 0 "a")
+                (Just (StockExpr 2 "b" Nothing)) : Nil))
+      (parseAll "a=>f: 0 @5: 5[b]")
+  , expectErrorAt "a step needs a time"
+      "line 1, column 9" (parseAll "a=>f: 0 @")
+  , expectErrorAt "a step time needs a ':'"
+      "line 1, column 12" (parseAll "a=>f: 0 @5 3")
+  , expectErrorAt "a step needs a rate after its ':'"
+      "line 1, column 11" (parseAll "a=>f: 0 @5:")
+  , expectErrorAt "stocks take a single value, not a schedule"
+      "line 1, column 7" (parseAll "[a: 1 @2: 3]")
   -- Parser: values are positioned errors anywhere else
   , expectErrorAt "a value on a bare dot is an error"
       "line 1, column 2" (parseAll "a: 5")
@@ -263,6 +290,22 @@ tests =
   , expectEq "via registry aliasing a value can land on a dot (inert)"
       (Right [ Tuple "a" (Just 5.0), Tuple "b" Nothing ])
       (labelValues "a->b\n[a: 5]")
+  -- Evaluator: rate schedules
+  , expectEq "schedule steps land on the faucet; the initial rate is its value"
+      (Right [ Tuple "a" Nothing, Tuple "f" (Just [ { at: 5.0, value: 5.0 } ]) ])
+      (labelSteps "a=>f: 0 @5: 5")
+  , expectEq "a schedule's initial rate serializes as the plain value"
+      (Right [ Tuple "a" Nothing, Tuple "f" (Just 0.0) ])
+      (labelValues "a=>f: 0 @5: 5")
+  , expectEq "a step-less annotation has no steps key"
+      (Right [ Tuple "a" Nothing, Tuple "f" Nothing ])
+      (labelSteps "a=>f: 5")
+  , expectEq "the first annotation wins as a unit (value and steps together)"
+      (Right [ Tuple "a" Nothing, Tuple "f" (Just [ { at: 2.0, value: 1.0 } ]) ])
+      (labelSteps "a=>f: 0 @2: 1\na=>f: 9")
+  , expectEq "a later schedule never overwrites an earlier plain rate"
+      (Right [ Tuple "a" Nothing, Tuple "f" Nothing ])
+      (labelSteps "a=>f: 9\na=>f: 0 @2: 1")
   -- Evaluator: band groups
   , expectEq "a flow band with a reservoir gets a group"
       (Right [ Tuple "a" (Just 0), Tuple "fill" (Just 0) ])

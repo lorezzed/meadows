@@ -63,6 +63,7 @@ data Token
   | TokLBracket
   | TokRBracket
   | TokColon
+  | TokAt
   | TokNumber Number
   | TokSep
 
@@ -172,6 +173,7 @@ token
   <|> (TokRBracket <$ rightBracket)
   <|> (TokCloud <$ cloud)
   <|> (TokColon <$ char ':')
+  <|> (TokAt <$ char '@')
   <|> (TokNumber <$> numberLit)
   <|> (TokIdent <$> identifier)
 
@@ -221,6 +223,7 @@ describeToken TokRParen = "')'"
 describeToken TokLBracket = "'['"
 describeToken TokRBracket = "']'"
 describeToken TokColon = "':'"
+describeToken TokAt = "'@'"
 describeToken (TokNumber n) = "number " <> show n
 describeToken TokSep = "end of line"
 

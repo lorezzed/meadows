@@ -22,6 +22,10 @@ export const exampleList = [
         content: `|=>inflow[water in tub: 50]=>outflow: 5|`
     },
     {
+        label: 'Figure 5 & 7',
+        content: `|=>inflow: 0 @5: 5[water in tub: 50]=>outflow: 5|`
+    },
+    {
         label: 'Figure 42',
         content: `|=>investment[capital]=>depreciation|
 |=>regeneration[resource]=>harvest|

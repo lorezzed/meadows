@@ -47,6 +47,21 @@ const last = (s) => s.levels[s.levels.length - 1];
     fail('chained', `b ends at ${last(b)}, want ${25 + 2.5 * DT}`);
 }
 
+// Figures 5 & 7: drain from 50, then at t=5 the inflow steps up to match the
+// outflow — dynamic equilibrium at 25 for the rest of the run.
+{
+  const series = simulate(sys('|=>inflow: 0 @5: 5[water in tub: 50]=>outflow: 5|'));
+  const tub = series[0];
+  const at = (t) => tub.levels[Math.round(t / DT)];
+  if (tub.levels[0] !== 50) fail('figure 7', `starts at ${tub.levels[0]}, want 50`);
+  if (at(2.5) !== 37.5) fail('figure 7', `at t=2.5: ${at(2.5)}, want 37.5`);
+  if (at(5) !== 25) fail('figure 7', `at t=5: ${at(5)}, want exactly 25`);
+  if (at(7.5) !== 25 || last(tub) !== 25)
+    fail('figure 7', `equilibrium broken: t=7.5 ${at(7.5)}, end ${last(tub)}, want 25`);
+  if (!tub.levels.every((v, i) => i === 0 || v <= tub.levels[i - 1]))
+    fail('figure 7', 'levels must never rise in this scenario');
+}
+
 // An empty tub stops draining: the ration zeroes the outflow, never negative.
 {
   const series = simulate(sys('[a: 1]=>drain: 5|'));

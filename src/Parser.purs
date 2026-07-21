@@ -1,11 +1,14 @@
 module Parser
   ( Tree(..)
   , Id
+  , Step
+  , Sched
   , parse
   ) where
 import Prelude
 import Control.Lazy (defer)
 import Control.Monad.State (State, evalState, state)
+import Data.Array as Array
 import Data.Either (Either(..))
 import Data.Generic.Rep (class Generic)
 import Data.List (List(..), (:))
@@ -13,15 +16,21 @@ import Data.Maybe (Maybe(..))
 import Data.Tuple (Tuple(..), fst)
 import Lexer (LoopKind, Operator(..), PosToken, Token(..), describeToken, formatParseError, loopLetter)
 import Parsing (ParseState(..), ParserT, fail, failWithPosition, getParserT, initialPos, runParserT', stateParserT)
-import Parsing.Combinators (choice, optionMaybe, optional, sepEndBy, (<?>))
+import Parsing.Combinators (choice, many, optionMaybe, optional, sepEndBy, (<?>))
 import Parsing.Token (eof) as Token
 type Id = Int
+-- | One segment of a faucet's piecewise-constant rate schedule: from time
+-- | `at` onward the rate is `value` (until a later step takes over).
+type Step = { at :: Number, value :: Number }
+-- | A faucet's full annotation: the initial rate plus any `@time: rate`
+-- | steps, e.g. `inflow: 0 @5: 5` = closed until t=5, then 5.
+type Sched = { initial :: Number, steps :: Array Step }
 data Tree
   = NodeExpr Id String
   | CloudExpr Id
   | StockExpr Id String (Maybe Number)
-  | FaucetRExpr Id String (Maybe Number) Tree (Maybe Tree)
-  | FaucetLExpr Id String (Maybe Number) Tree (Maybe Tree)
+  | FaucetRExpr Id String (Maybe Sched) Tree (Maybe Tree)
+  | FaucetLExpr Id String (Maybe Sched) Tree (Maybe Tree)
   | ArrowRExpr Id Tree Tree
   | ArrowLExpr Id Tree Tree
   | ParenExpr Id Tree
@@ -32,8 +41,8 @@ instance showTree :: Show Tree where
   show (NodeExpr i s) = "Node#" <> show i <> "(" <> s <> ")"
   show (StockExpr i s v) = "Stock#" <> show i <> "(" <> show s <> showValue v <> ")"
   show (CloudExpr i) = "Cloud#" <> show i
-  show (FaucetRExpr i s v l r) = "FaucetR#" <> show i <> "[" <> show s <> showValue v <> "](" <> show l <> " -> " <> show r <> " )"
-  show (FaucetLExpr i s v l r) = "FaucetL#" <> show i <> "[" <> show s <> showValue v <> "](" <> show l <> " <- " <> show r <> " )"
+  show (FaucetRExpr i s v l r) = "FaucetR#" <> show i <> "[" <> show s <> showSched v <> "](" <> show l <> " -> " <> show r <> " )"
+  show (FaucetLExpr i s v l r) = "FaucetL#" <> show i <> "[" <> show s <> showSched v <> "](" <> show l <> " <- " <> show r <> " )"
   show (ArrowRExpr i l r) = "ArrowR#" <> show i <> "(" <> show l <> " -> " <> show r <> ")"
   show (ArrowLExpr i l r) = "ArrowL#" <> show i <> "(" <> show l <> " <- " <> show r <> ")"
   show (ParenExpr i expr) = "Paren#" <> show i <> "(" <> show expr <> ")"
@@ -42,6 +51,11 @@ instance showTree :: Show Tree where
 showValue :: Maybe Number -> String
 showValue Nothing = ""
 showValue (Just n) = ": " <> show n
+
+showSched :: Maybe Sched -> String
+showSched Nothing = ""
+showSched (Just s) = ": " <> show s.initial
+  <> Array.foldMap (\st -> " @" <> show st.at <> ": " <> show st.value) s.steps
 -- | The token parser: positioned tokens over a `State Id` base monad.
 -- | ParserT's MonadState instance routes `state` to the base monad, so
 -- | `fresh` mints AST ids directly inside parsing code.
@@ -97,13 +111,33 @@ numberTok :: P Number
 numberTok = satisfyMap case _ of
   TokNumber n -> Just n
   _ -> Nothing
--- | An optional `: N` value annotation (a stock's initial level, a faucet's
--- | rate). optionMaybe does not backtrack partial consumption, so once the
+-- | An optional `: N` value annotation (a stock's initial level).
+-- | optionMaybe does not backtrack partial consumption, so once the
 -- | ':' is consumed a missing or non-number value is a positioned error,
 -- | never a silent Nothing; with no ':' present nothing is consumed at all
 -- | (id-minting order for value-less input is untouched).
 valueTail :: P (Maybe Number)
 valueTail = optionMaybe (tk TokColon *> (numberTok <?> "a number after ':'"))
+
+-- | A faucet's optional annotation: an initial rate plus any number of
+-- | `@time: rate` steps (`inflow: 0 @5: 5` = closed until t=5, then 5).
+-- | Same non-backtracking discipline as valueTail: each consumed ':' or '@'
+-- | commits, so a malformed segment is a positioned error. `many stepSeg`
+-- | terminates because stepSeg fails without consuming when the next token
+-- | isn't '@' (satisfyMap), and always consumes on success.
+schedTail :: P (Maybe Sched)
+schedTail = optionMaybe do
+  tk TokColon
+  initial <- numberTok <?> "a number after ':'"
+  steps <- many stepSeg
+  pure { initial, steps: Array.fromFoldable steps }
+  where
+  stepSeg = do
+    tk TokAt
+    at <- numberTok <?> "a time after '@'"
+    tk TokColon <?> "a ':' after the '@' time"
+    value <- numberTok <?> "a rate after ':'"
+    pure { at, value }
 -- | program := sep? (statement sepEndBy sep) eof
 -- | The lexer collapses every newline run into a single TokSep, so one
 -- | optional leading separator plus sepEndBy covers blank leading, interior,
@@ -165,10 +199,10 @@ arrowTail mk opName left = do
 -- | the faucet itself (`a=>b->c` == `(a=>b)->c`); a present target has
 -- | already consumed any trailing operators, so exprTail then falls through
 -- | its bare-term alternative -- one path serves both shapes.
-faucetTail :: (Id -> String -> Maybe Number -> Tree -> Maybe Tree -> Tree) -> String -> Tree -> P Tree
+faucetTail :: (Id -> String -> Maybe Sched -> Tree -> Maybe Tree -> Tree) -> String -> Tree -> P Tree
 faucetTail mk opName left = do
   name <- identTok <?> ("a faucet name after '" <> opName <> "'")
-  mval <- valueTail
+  mval <- schedTail
   i <- fresh
   mtarget <- optionMaybe expression
   exprTail (mk i name mval left mtarget)

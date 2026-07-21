@@ -10,8 +10,11 @@ type NodeBase = {
   // appears in. Absent/null = in no loop.
   loop?: string[] | null;
   // Numeric annotation from the DSL (absent/null = none): a stock's initial
-  // level (`[name: N]`) or a faucet's constant rate (`=>name: N`).
+  // level (`[name: N]`) or a faucet's initial rate (`=>name: N`).
   value?: number | null;
+  // A faucet's piecewise-constant rate steps (`=>name: 0 @5: 5` = rate 0,
+  // then 5 from t=5). Absent/null = the rate is `value` throughout.
+  steps?: { at: number; value: number }[] | null;
   // Layout hints derived from `group` each update(): whether this node sits on a
   // flow band (a horizontal line) and, if so, that band's target y. Stocks also
   // get a target x slot (evenly spaced within their band) that anchors them;
