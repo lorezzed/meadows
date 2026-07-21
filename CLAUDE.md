@@ -173,7 +173,13 @@ kept out of `Main` so the browser bundle never pulls in node-process.
   only, also used by the slot-width and viewBox-pad estimates; ids, the name
   registry, the JSON `label`, and the chart's labels all stay the bare name.
 - `ticked()` positions everything each frame; links are drawn as curved SVG arc
-  paths, and each loop letter parks at the centroid of its member nodes.
+  paths. An info arc between two members of the SAME band (a stock arrowing
+  into its own faucet — the figure 12 / figure 42 feedback loops) draws as the
+  MAJOR arc (`arcLarge`; `trimArc`/`arcBulge` take the large flag), ballooning
+  away from the pipe instead of hugging it; the auto-fit viewBox unions those
+  bulge apexes so an outer band's balloon never clips. Each loop letter parks
+  at the centroid of its member nodes — except a two-member loop's, which
+  parks inside its feedback arc's balloon (midway chord → apex).
 - Clicking empty svg space adds a dot node linked from the previous node (a manual
   editing affordance separate from the DSL path).
 
