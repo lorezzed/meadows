@@ -36,7 +36,9 @@ make run-with "a->b"     # compile a DSL string, print its graph JSON
 make run-with in="a=>j"  # in= form REQUIRED when the input contains '='
                   #   (make parses a bare "a=>j" goal as a variable override)
 make test         # spago test (PureScript unit suite) + golden battery
-                  #   (test/golden.mjs: byte-exact graph JSON + positioned errors).
+                  #   (test/golden.mjs: byte-exact graph JSON + positioned errors)
+                  #   + headless simulator checks (test/simulate.mjs runs
+                  #   ui/simulate.ts directly via node's TS type stripping).
                   #   Refresh goldens after an INTENDED change: node test/golden.mjs --capture
 
 # Inside `nix develop` (or `make shell`) you also have the raw tools:
@@ -46,10 +48,11 @@ spago repl        # PureScript REPL
 npx tsc           # typecheck ui/ (tsconfig has noEmit; type-check only)
 ```
 
-Tests live in two layers, both run by `make test`: `test/Main.purs` unit-tests the
+Tests live in three layers, all run by `make test`: `test/Main.purs` unit-tests the
 compiler internals (token streams & positions, exact `Tree` shapes including minted
-ids, evaluator identity/link/group rules), and `test/golden.mjs` pins the end-to-end
-JSON seam byte-exactly.
+ids, evaluator identity/link/group/value rules), `test/golden.mjs` pins the
+end-to-end JSON seam byte-exactly, and `test/simulate.mjs` checks the frontend
+simulator against the real compiled backend.
 
 ### Build coupling (important)
 
@@ -77,6 +80,11 @@ JSON error string):
    - `R(` / `B(` → loop-open (`TokLoop`, exact uppercase two-char lexeme, tried
      before identifiers with backtracking — a bare `R`, `R->b`, or `Rx(` still
      lex as identifiers); `)` (`TokRParen`) closes the annotation
+   - `:` → `TokColon` and digit-leading number literals → `TokNumber` (digits
+     with an optional `.digits` fraction; no sign, no exponent — together they
+     form value annotations like `[tub: 50]`). A digit *inside* a word stays
+     part of the identifier (`a2` is one name); `-5` and `5.` are tokenization
+     errors
 
 2. **`Parser.purs`** — `parse :: List PosToken -> Either String (List Tree)`, one `Tree`
    per newline-separated statement. A combinator parser over the token stream:
@@ -84,7 +92,12 @@ JSON error string):
    `expression`/`exprTail`/`term`. A statement is a loop annotation (`R(expr)` /
    `B(expr)` → `LoopExpr`, minting before its body like `ParenExpr`) or a bare
    expression; loops are whole statements only, never terms (`a->R(b)` and
-   `R(a)->b` are positioned errors). Its one custom primitive, `satisfyMap`, keeps the parser position
+   `R(a)->b` are positioned errors). Stocks and faucet names accept an optional
+   `: N` value (`'[' NAME (':' NUMBER)? ']'`; `=>NAME (':' NUMBER)?` for both
+   faucet directions) carried as a `Maybe Number` on `StockExpr`/`Faucet*Expr`;
+   a value anywhere else (`a: 5`, `[a]: 5`, a bare `5`) is a positioned parse
+   error, and `valueTail` consumes nothing when no `:` follows, so id-minting
+   order for value-less input is untouched. Its one custom primitive, `satisfyMap`, keeps the parser position
    on the *next unconsumed* token so `<?>` labels and `eof` report exact locations —
    the library's own `Parsing.Token` primitives leave the position on the consumed
    token, so don't swap them back in. The grammar uses no `try`: alternatives dispatch
@@ -111,8 +124,13 @@ JSON error string):
      plus one source-order counter (`"R0"`, `"B1"`, …, like group numbering).
    - `<-` links each hop from the *nearest* term of its right subtree
      (`leftmostId`, same as the faucets), so `a<-b->c` fans out from `b`.
+   - **Value annotations** land in `Node.value` via `setValue`: the *first
+     explicit* value for a name wins — value-less mentions never erase, later
+     values never overwrite (`[a] … [a: 5]` fills the blank; `[a: 5] … [a: 9]`
+     keeps 5). Semantically a stock's value is its initial level and a faucet's
+     its constant flow rate; the compiler just carries the number.
 
-   Output types: `Node = { type, id, label, group :: Maybe Int, loop :: Maybe (Array String) }`
+   Output types: `Node = { type, id, label, value :: Maybe Number, group :: Maybe Int, loop :: Maybe (Array String) }`
    (`Maybe` fields omit their JSON key on `Nothing` — goldens rely on that),
    `Link = { type, source, target }`, `Graph = { nodes, links }`. `NodeType`
    (`Dot`/`Stock`/`Faucet`/`Cloud`) has a `WriteForeign` instance so the whole
@@ -136,11 +154,41 @@ kept out of `Main` so the browser bundle never pulls in node-process.
   faucets/clouds→`image` with inlined SVGs from `ui/shape/`), rebinds the link/charge/
   center forces, and restarts the simulation. It also groups nodes by their `loop`
   names into one floating letter (`<text>`) per annotation — a pure overlay that
-  never enters `simulation.nodes()`.
+  never enters `simulation.nodes()`. Node text renders via `displayLabel`: the
+  name plus `: value` when the node carries one (`water in tub: 50`) — display
+  only, also used by the slot-width and viewBox-pad estimates; ids, the name
+  registry, the JSON `label`, and the chart's labels all stay the bare name.
 - `ticked()` positions everything each frame; links are drawn as curved SVG arc
   paths, and each loop letter parks at the centroid of its member nodes.
 - Clicking empty svg space adds a dot node linked from the previous node (a manual
   editing affordance separate from the DSL path).
+
+Two sibling modules add the **behavior-over-time chart** (the book's figure 6 to
+the diagram's figure 5):
+
+- **`ui/simulate.ts`** — pure, dependency-free (type-only imports, so node can
+  run it headlessly; `test/simulate.mjs` does). Forward-Euler over `T_END`/`DT`
+  constants: stock `value` = initial level, faucet `value` = rate (both default
+  0), faucet source/sink stocks from flow-link direction, clouds/dots infinite.
+  Each synchronous step rations a stock's outflows by what it holds
+  (`min(1, level/demand)`), so levels never go negative and chained stocks
+  conserve — an empty tub stops draining.
+- **`ui/chart.ts`** — the panel below the diagram (equal flex `order` 1;
+  DOM-insertion order places it). One 2px line per stock with an ink label at
+  its end, recessive axes, rendered once per `update()` (never per tick). A
+  hover layer snaps a crosshair to the nearest sample and shows one tooltip
+  reading out every stock's level (keyboard parity: the svg is focusable,
+  ←/→ steps a sample, Shift ×10, Escape dismisses); it reads the last
+  render's scales/series from closure state, so the render-once rule holds.
+  `STOCK_PALETTE` is a fixed-order categorical palette assigned by stock
+  parser-id slot (never cycled); `update()` paints the same accent on each
+  stock's rect stroke, which is the visible link between the two views. The
+  chart is hidden (and rect strokes stay black) whenever the model carries no
+  `value`s — value-less inputs look exactly as they did before the feature.
+
+`update()` clears `group`/`loop`/`value` on recycled nodes before merging new
+data (the JSON omits absent `Maybe` keys, so stale values would otherwise
+survive edits).
 
 `ui/type.ts` defines the d3-flavored `Node`/`Link`/`System` types (extending
 `d3.SimulationNodeDatum` / `SimulationLinkDatum`). `ui/declarations.d.ts` lets `*.svg`
