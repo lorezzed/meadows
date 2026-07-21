@@ -23,6 +23,11 @@ type LinkBase = {
   // ticked(): the side whose bulge apex has more clearance from uninvolved
   // nodes wins, with hysteresis so near-ties don't flicker.
   sweep?: 0 | 1;
+  // Set on a branch-connector flow pipe (a stock exchanging with a faucet on a
+  // row below its band): drawn as an elbow instead of a straight line — down
+  // then right for an extra outflow, right then up into the stock's bottom for
+  // an extra inflow.
+  elbow?: boolean;
 }
 export type Node = d3.SimulationNodeDatum & NodeBase
 export type Link = d3.SimulationLinkDatum<Node> & LinkBase

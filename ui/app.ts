@@ -225,14 +225,15 @@ const simulation = d3.forceSimulation<Node, Link>(systemNodes)
   // default strength they reel a dragged dot back to rest-length, so e.g.
   // `growth goal` could never float above its band — every equilibrium sat
   // pinned on the band line. Soft arrows let hand placement win.
-  // A flow pipe's rest length is the horizontal gap between its endpoints' row
-  // slots, so the pipe pulls its faucet toward the slot it was laid out in
-  // rather than toward its reservoir — a long branch pipe then holds its faucet
-  // out along the wide row instead of collapsing it back onto the stock. Info
-  // arrows keep the fixed rest length (they aren't slotted).
+  // A flow pipe's rest length is the distance between its endpoints' layout
+  // slots (including a branch's vertical drop), so the pipe holds its faucet in
+  // the slot it was laid out in rather than reeling it back toward its
+  // reservoir. Info arrows keep the fixed rest length (they aren't slotted).
   .force("link", d3.forceLink<Node, Link>(systemLinks).id(d => d.id)
     .distance(l => l.type === "flow"
-      ? Math.max(40, Math.abs(((l.source as Node).gx ?? 0) - ((l.target as Node).gx ?? 0)))
+      ? Math.max(40, Math.hypot(
+          ((l.source as Node).gx ?? 0) - ((l.target as Node).gx ?? 0),
+          ((l.source as Node).gy ?? 0) - ((l.target as Node).gy ?? 0)))
       : 80)
     .strength(l => l.type === "flow" ? 0.5 : 0.2))
   // Stocks are the diagram's anchors: they repel harder than other nodes;
@@ -391,50 +392,173 @@ function update(system: System) {
       : svgHeight / 2 + (d.group - (groupCount - 1) / 2) * bandGap;
   }
 
-  // Lay every band member out along its horizontal line as one spaced,
-  // left-to-right sequence (ordered by source, i.e. parser id), so faucets and
-  // clouds get their own room instead of piling onto the stocks. A stock with a
-  // second outflow therefore reads as one wide row — the extra branch sits
-  // further along the line, reached by a longer pipe — with nothing
-  // overlapping. The whole row is centred on the canvas; when it runs wider than
-  // the canvas the auto-fit viewBox zooms out to keep it in view.
+  // Lay each band out as a direction-aware horizontal main row, dropping extra
+  // flows onto rows below. Within a row, nodes are ordered by walking the flow
+  // links (not by the order statements were written), so every pipe reads
+  // left-to-right: inflows approach a stock from its left, outflows leave to
+  // its right. A stock's FIRST inflow and FIRST outflow stay on its band; each
+  // further dead-end flow becomes a branch on a row `rowGap` lower — an extra
+  // outflow to the stock's lower right (pipe elbows down out of the stock,
+  // then runs right), an extra inflow from its lower left (pipe runs right,
+  // then elbows up into the stock's bottom). A two-in/two-out reservoir thus
+  // matches the Meadows reference: rain/evaporation on the band, river
+  // inflow/discharge on the row below. Every faucet still sits on a horizontal
+  // pipe and nothing overlaps: each slot is wide enough for the node's icon,
+  // label and collision radius; main rows are centred, branch rows hang off
+  // their parent stock, and the auto-fit viewBox zooms to fit.
   const parserId = (id: string) => {
     const n = parseInt(id.slice(id.indexOf("#") + 1), 10);
     return isNaN(n) ? 0 : n;
   };
+  // Link endpoints arrive from the compiler as id strings, but d3's link force
+  // rewrites them to node objects once it has seen them (the click-to-add path
+  // re-updates with such links) — normalize before using one as a key.
+  const endId = (e: Link["source"]): string =>
+    typeof e === "object" && e !== null ? (e as Node).id : String(e);
   const nodeById = new Map(nodes.map(n => [n.id, n]));
-  // Half the horizontal room a node claims on its row: the largest of its icon
-  // half-width, its label half-width (~3px/char, as the viewBox padding also
-  // assumes), and its collision radius (so the spacing force can't shove
-  // neighbours off their slots). Keeps adjacent nodes and labels from touching.
+  const rowGap = 120; // vertical drop from a band to a branch row below it
   const slotHalf = (d: Node) => {
     const icon = d.type === "stock" ? stockWidth / 2 : d.type === "cloud" ? cloudWidth / 2 : d.type === "dot" ? dotRadius : faucetWidth / 2;
     const collide = d.type === "stock" ? 62 : d.type === "cloud" ? 30 : d.type === "dot" ? 26 : 24;
     return Math.max(icon, d.label.length * 3, collide);
   };
   const slotPad = 10; // extra breathing room between adjacent slots
-  const membersByBand = new Map<number, Node[]>();
-  for (const d of nodes) {
-    d.gx = undefined; // clear stale slots on recycled nodes
-    if (d.group != null && d.type !== "dot") {
-      const arr = membersByBand.get(d.group) ?? [];
-      arr.push(d);
-      membersByBand.set(d.group, arr);
-    }
+
+  // Flow adjacency in both directions, for walking chains and spotting branches.
+  const outL = new Map<string, Link[]>();
+  const inL = new Map<string, Link[]>();
+  for (const l of links) {
+    if (l.type !== "flow") continue;
+    const o = outL.get(endId(l.source)) ?? [];
+    o.push(l);
+    outL.set(endId(l.source), o);
+    const i = inL.get(endId(l.target)) ?? [];
+    i.push(l);
+    inL.set(endId(l.target), i);
   }
-  for (const arr of membersByBand.values()) {
-    arr.sort((a, b) => parserId(a.id) - parserId(b.id));
-    // Walk left to right: each node's centre sits its own half-width past the
-    // previous node's far edge (plus padding), so no two slots overlap.
-    let cursor = 0;
-    for (const d of arr) {
+  // A dead-end branch hanging off a stock: from a faucet, follow the flow
+  // downstream (an extra outflow draining away) or upstream (an extra inflow
+  // fed from outside), bailing out (null) if it reaches a stock — such a chain
+  // rejoins the main graph rather than dead-ending. Returns the member ids.
+  const collectBranch = (rootId: string, dir: "up" | "down"): string[] | null => {
+    const members: string[] = [];
+    const seen = new Set<string>();
+    const stack = [rootId];
+    while (stack.length) {
+      const x = stack.pop()!;
+      if (seen.has(x)) continue;
+      seen.add(x);
+      const node = nodeById.get(x);
+      if (!node) continue;
+      if (node.type === "stock") return null;
+      members.push(x);
+      if (dir === "down") for (const l of outL.get(x) ?? []) stack.push(endId(l.target));
+      else for (const l of inL.get(x) ?? []) stack.push(endId(l.source));
+    }
+    return members;
+  };
+
+  // Pull each stock's extra dead-end flows out into branch rows. The first
+  // flow of each direction (source order) stays inline on the band; further
+  // ones drop below, outflows branching to the right and inflows arriving from
+  // the left, with in/out branch levels counted separately so an extra inflow
+  // and an extra outflow share one row (as in the reference reservoir figure).
+  const branchNodes = new Set<string>();
+  const branches: { parent: Node, members: Node[], level: number, side: "in" | "out" }[] = [];
+  const extractBranches = (d: Node, ls: Link[], dir: "up" | "down") => {
+    const far = (l: Link) => dir === "down" ? endId(l.target) : endId(l.source);
+    const sorted = ls.slice().sort((a, b) => parserId(far(a)) - parserId(far(b)));
+    let level = 0;
+    for (let i = 1; i < sorted.length; i++) {
+      const l = sorted[i];
+      if (!l) continue;
+      const ids = collectBranch(far(l), dir);
+      if (!ids) continue; // not a clean dead end — leave it inline on the row
+      const members = ids.map(id => nodeById.get(id)).filter((n): n is Node => !!n);
+      members.forEach(m => branchNodes.add(m.id));
+      branches.push({ parent: d, members, level: ++level, side: dir === "down" ? "out" : "in" });
+      l.elbow = true; // the stock<->faucet pipe draws as an elbow (see ticked)
+    }
+  };
+  for (const d of nodes) {
+    if (d.type !== "stock" || d.group == null) continue;
+    extractBranches(d, outL.get(d.id) ?? [], "down");
+    extractBranches(d, inL.get(d.id) ?? [], "up");
+  }
+
+  // Order a row's nodes by walking its flow links (Kahn's algorithm), so each
+  // row reads left-to-right along the flow direction regardless of statement
+  // order or writing direction (`<=` chains). Parser id breaks ties — and flow
+  // cycles, where the walk restarts at the lowest remaining id.
+  const flowOrder = (arr: Node[]): Node[] => {
+    const ids = new Set(arr.map(d => d.id));
+    const indeg = new Map(arr.map(d => [d.id, 0] as [string, number]));
+    const succ = new Map<string, string[]>();
+    for (const l of links) {
+      if (l.type !== "flow") continue;
+      const s = endId(l.source), t = endId(l.target);
+      if (!ids.has(s) || !ids.has(t)) continue;
+      indeg.set(t, (indeg.get(t) ?? 0) + 1);
+      const a = succ.get(s) ?? [];
+      a.push(t);
+      succ.set(s, a);
+    }
+    const byId = arr.slice().sort((a, b) => parserId(a.id) - parserId(b.id));
+    const order: Node[] = [];
+    const placed = new Set<string>();
+    while (order.length < arr.length) {
+      const next = byId.find(d => !placed.has(d.id) && (indeg.get(d.id) ?? 0) <= 0)
+        ?? byId.find(d => !placed.has(d.id));
+      if (!next) break;
+      placed.add(next.id);
+      order.push(next);
+      for (const t of succ.get(next.id) ?? []) indeg.set(t, (indeg.get(t) ?? 0) - 1);
+    }
+    return order;
+  };
+
+  // Slot a set of nodes onto a row from startX, left-to-right in flow order;
+  // returns the row's right edge.
+  const slotRow = (arr: Node[], startX: number) => {
+    let cursor = startX;
+    for (const d of flowOrder(arr)) {
       cursor += slotHalf(d);
       d.gx = cursor;
       cursor += slotHalf(d) + slotPad;
     }
-    const span = cursor - slotPad;          // left edge of first .. right edge of last
-    const shift = svgWidth / 2 - span / 2;   // centre the row on the canvas
+    return cursor - slotPad;
+  };
+  // Total width a row of nodes will occupy, for right-aligning inflow branches.
+  const rowWidth = (arr: Node[]) =>
+    arr.reduce((w, d) => w + 2 * slotHalf(d), 0) + Math.max(0, arr.length - 1) * slotPad;
+
+  // Main rows: every band member that isn't a branch node (or a dot), centred.
+  const mainByBand = new Map<number, Node[]>();
+  for (const d of nodes) {
+    d.gx = undefined; // clear stale slots on recycled nodes
+    if (d.group != null && d.type !== "dot" && !branchNodes.has(d.id)) {
+      const arr = mainByBand.get(d.group) ?? [];
+      arr.push(d);
+      mainByBand.set(d.group, arr);
+    }
+  }
+  for (const arr of mainByBand.values()) {
+    const right = slotRow(arr, 0);
+    const shift = svgWidth / 2 - right / 2; // centre the row on the canvas
     for (const d of arr) d.gx = (d.gx ?? 0) + shift;
+  }
+  // Branch rows: drop `level * rowGap` below the parent's band. An outflow
+  // branch runs rightward from under the stock (elbow: down, then right); an
+  // inflow branch ends just left of it, reading toward the stock (elbow:
+  // right, then up into the stock's bottom). The elbow verticals sit a quarter
+  // stock-width either side of centre, so an inflow and an outflow branch
+  // sharing a row never share a pipe line.
+  for (const b of branches) {
+    const y = (b.parent.gy ?? svgHeight / 2) + b.level * rowGap;
+    for (const d of b.members) d.gy = y;
+    const px = b.parent.gx ?? svgWidth / 2;
+    if (b.side === "out") slotRow(b.members, px + stockWidth / 4);
+    else slotRow(b.members, px - stockWidth / 4 - rowWidth(b.members));
   }
 
   // Flow links render as thick gray straight pipes (Meadows notation); the
@@ -453,6 +577,27 @@ function update(system: System) {
     });
   styleLink(flowLink);
   styleLink(infoLink);
+
+  // A brand-new node starts life at (or near) where the layout wants it; d3
+  // would otherwise spawn it on a small spiral at the ORIGIN — the top-left
+  // corner. From there, same-row neighbours have to thread through each
+  // other's collision discs to reach their slots and jam on the wrong side,
+  // and the initial charge burst flings clumped floaters far off-canvas,
+  // stranding the auto-fit viewBox zoomed out when alpha dies before the
+  // easing catches up. Slotted nodes seed exactly at their slot; floaters
+  // (dots) seed on the same phyllotaxis spiral d3 uses, but centred on the
+  // canvas. Recycled nodes keep their position (drags and edits stay smooth).
+  nodes.forEach((d, i) => {
+    if (d.x != null || d.y != null) return;
+    if (d.gx != null && d.gy != null) {
+      d.x = d.gx;
+      d.y = d.gy;
+    } else {
+      const r = 10 * Math.sqrt(0.5 + i), a = i * 2.399963229728653; // d3's spiral
+      d.x = svgWidth / 2 + r * Math.cos(a);
+      d.y = (d.gy ?? svgHeight / 2) + r * Math.sin(a);
+    }
+  });
 
   simulation.nodes(nodes);
 
@@ -565,6 +710,23 @@ function ticked() {
       const dr = Math.hypot(dx, dy);
       if (dr === 0) return `M${sx},${sy}L${tx},${ty}`;
       if (d.type === "flow") {
+        // Branch connectors keep every faucet on a horizontal pipe (not a
+        // slope). An extra OUTflow — stock on the band feeding a faucet on the
+        // row below — drops out of the stock's bottom, then turns right
+        // through its faucet (faucet target, so no head to trim). An extra
+        // INflow — faucet on the row below feeding the stock — runs right from
+        // its faucet, then turns up into the stock's bottom, stopping an
+        // arrowhead short of the edge so the head's tip lands exactly on it.
+        // The verticals are offset a quarter stock-width right/left of centre
+        // respectively, so opposite branches never overlap their pipes.
+        if (d.elbow && source.type === "stock" && target.type === "faucet") {
+          const ex = sx + stockWidth / 4;
+          return `M${ex},${sy + stockHeight / 2}L${ex},${ty}L${tx},${ty}`;
+        }
+        if (d.elbow && source.type === "faucet" && target.type === "stock") {
+          const ex = tx - stockWidth / 4;
+          return `M${sx},${sy}L${ex},${sy}L${ex},${ty + stockHeight / 2 + flowArrowLength}`;
+        }
         // Straight pipe. The line stops at the arrowhead's BASE (marker refX
         // 0), so reservoir targets are trimmed by node edge + head length and
         // the tip lands on the node's edge. Faucet ends stay untrimmed — the
@@ -621,6 +783,11 @@ function click(event: MouseEvent) {
 }
 
 function loadExample(text: string) {
+  // A button load replaces the whole diagram, so don't recycle the previous
+  // example's positions (ids like "stock#2" recur across examples, and nodes
+  // migrating across the canvas jam on each other's collision discs) — start
+  // every node fresh at its layout slot. Typing edits still recycle.
+  simulation.nodes([]);
   textInput.property('value', text);
   textInput.node()?.dispatchEvent(new Event('input'));
 }
