@@ -180,6 +180,45 @@ fertility: 0.21 ~2.5: 0.09 ~4.5: 0.09 ~7: 0.27 ~10: 0.36 -> births
 mortality: 0.09 -> deaths`
     },
     {
+        label: 'Figure 27',
+        content: `|=>investment[capital stock]=>depreciation|
+R(capital stock -> annual output -> investment)
+B(capital stock -> depreciation)
+investment fraction -> investment
+output per unit capital -> annual output
+capital lifetime -> depreciation`
+    },
+    {
+        label: 'Figure 27 & 28',
+        content: `|=>investment at twenty[capital at twenty: 100]=>depreciation at twenty|
+R(capital at twenty -> annual output at twenty -> investment at twenty)
+B(capital at twenty -> depreciation at twenty)
+annual output at twenty: (capital at twenty * output per unit capital at twenty)
+investment at twenty: (annual output at twenty * investment fraction at twenty)
+depreciation at twenty: (capital at twenty / capital lifetime at twenty)
+investment fraction at twenty: 0.2
+output per unit capital at twenty: (5 / 3)
+capital lifetime at twenty: 4
+|=>investment at fifteen[capital at fifteen: 100]=>depreciation at fifteen|
+R(capital at fifteen -> annual output at fifteen -> investment at fifteen)
+B(capital at fifteen -> depreciation at fifteen)
+annual output at fifteen: (capital at fifteen * output per unit capital at fifteen)
+investment at fifteen: (annual output at fifteen * investment fraction at fifteen)
+depreciation at fifteen: (capital at fifteen / capital lifetime at fifteen)
+investment fraction at fifteen: 0.2
+output per unit capital at fifteen: (5 / 3)
+capital lifetime at fifteen: 3
+|=>investment at ten[capital at ten: 100]=>depreciation at ten|
+R(capital at ten -> annual output at ten -> investment at ten)
+B(capital at ten -> depreciation at ten)
+annual output at ten: (capital at ten * output per unit capital at ten)
+investment at ten: (annual output at ten * investment fraction at ten)
+depreciation at ten: (capital at ten / capital lifetime at ten)
+investment fraction at ten: 0.2
+output per unit capital at ten: (5 / 3)
+capital lifetime at ten: 2`
+    },
+    {
         label: 'Figure 42',
         content: `|=>investment[capital]=>depreciation|
 |=>regeneration[resource]=>harvest|

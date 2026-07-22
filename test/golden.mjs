@@ -133,6 +133,32 @@ B(deaths c <- stabilization)
 fertility c: 0.21 ~2: 0.09 -> births c
 mortality c: 0.09 -> deaths c`;
 
+// Figure 27: the capital archetype as pure structure — the population
+// system's R+B pair on an industrial stock: investment reinforces through
+// annual output, depreciation balances through capital lifetime.
+const EX_CAP27 = `|=>investment[capital stock]=>depreciation|
+R(capital stock -> annual output -> investment)
+B(capital stock -> depreciation)
+investment fraction -> investment
+output per unit capital -> annual output
+capital lifetime -> depreciation`;
+
+// Figures 27 & 28: the same structure three times over with the book's real
+// equations, three futures decided by the capital lifetime alone. One time
+// unit = 5 years (the book's 50-year axis on T_END = 10), so output per
+// unit capital reads 5/3 per unit (1/3 per year) and the 10/15/20-year
+// lifetimes read 2, 3, and 4.
+const cap28 = (suffix, lifetime) => `|=>investment at ${suffix}[capital at ${suffix}: 100]=>depreciation at ${suffix}|
+R(capital at ${suffix} -> annual output at ${suffix} -> investment at ${suffix})
+B(capital at ${suffix} -> depreciation at ${suffix})
+annual output at ${suffix}: (capital at ${suffix} * output per unit capital at ${suffix})
+investment at ${suffix}: (annual output at ${suffix} * investment fraction at ${suffix})
+depreciation at ${suffix}: (capital at ${suffix} / capital lifetime at ${suffix})
+investment fraction at ${suffix}: 0.2
+output per unit capital at ${suffix}: (5 / 3)
+capital lifetime at ${suffix}: ${lifetime}`;
+const EX_CAP28 = [cap28('twenty', 4), cap28('fifteen', 3), cap28('ten', 2)].join('\n');
+
 const EX_LOOPS = `|=>investment[capital]=>depreciation|
 |=>regeneration[resource]=>harvest|
 capital->growth goal->investment
@@ -240,6 +266,8 @@ const goldenInputs = [
   EX_POP24,       // figures 21 & 24
   EX_POP25,       // figure 25
   EX_POP26,       // figures 21 & 26
+  EX_CAP27,       // figure 27
+  EX_CAP28,       // figures 27 & 28
 ];
 
 // Errors: the "kind: line L, column C:" prefix is contractual; wording may be tuned.
@@ -407,6 +435,35 @@ const p25Of = label => pop25.nodes.find(n => n.label === label);
 for (const [stock, loops25] of [['growth', ['R0', 'B1']], ['decline', ['R2', 'B3']], ['stabilization', ['R4', 'B5']]])
   if (JSON.stringify(p25Of(stock)?.loop) !== JSON.stringify(loops25))
     fail('population 25', `${stock} should be in ${loops25}, got ${JSON.stringify(p25Of(stock)?.loop)}`);
+const cap27 = JSON.parse(M.go(EX_CAP27));
+const c27Of = label => cap27.nodes.find(n => n.label === label);
+if (cap27.nodes.length !== 9)   // 2 clouds, 2 faucets, 1 stock, 4 constants
+  fail('capital 27', `9 nodes expected, got ${cap27.nodes.length}`);
+if (cap27.links.filter(l => l.type === 'flow').length !== 4 || cap27.links.length !== 10)
+  fail('capital 27', '4 flows + 6 arrows expected');
+if (JSON.stringify(c27Of('capital stock')?.loop) !== JSON.stringify(['R0', 'B1']))
+  fail('capital 27', `capital stock should be in R0 and B1, got ${JSON.stringify(c27Of('capital stock')?.loop)}`);
+if (JSON.stringify(c27Of('annual output')?.loop) !== JSON.stringify(['R0'])
+    || JSON.stringify(c27Of('depreciation')?.loop) !== JSON.stringify(['B1']))
+  fail('capital 27', 'annual output rides the R loop, depreciation the B loop');
+if (c27Of('capital lifetime')?.loop !== undefined || c27Of('investment fraction')?.loop !== undefined)
+  fail('capital 27', 'the constants feed the loops without joining them');
+if (cap27.nodes.some(n => n.value !== undefined || n.expr !== undefined))
+  fail('capital 27', 'the structure figure carries no numbers');
+const cap28g = JSON.parse(M.go(EX_CAP28));
+const c28Of = label => cap28g.nodes.find(n => n.label === label);
+if (cap28g.nodes.length !== 27) fail('capital 28', `27 nodes expected, got ${cap28g.nodes.length}`);
+if (new Set(cap28g.nodes.map(n => n.group).filter(g => g != null)).size !== 3)
+  fail('capital 28', '3 bands expected, one per lifetime');
+if (cap28g.links.filter(l => l.type === 'flow').length !== 12 || cap28g.links.length !== 30)
+  fail('capital 28', '12 flows + 18 arrows expected (formula arrows dedup against the R/B ones)');
+for (const [stock, loops28] of [['capital at twenty', ['R0', 'B1']], ['capital at fifteen', ['R2', 'B3']], ['capital at ten', ['R4', 'B5']]])
+  if (JSON.stringify(c28Of(stock)?.loop) !== JSON.stringify(loops28))
+    fail('capital 28', `${stock} should be in ${loops28}, got ${JSON.stringify(c28Of(stock)?.loop)}`);
+if (!(c28Of('investment at twenty')?.expr?.kind === '*' && c28Of('investment at twenty')?.value === undefined))
+  fail('capital 28', 'the faucets carry rate-law formulas, not plain rates');
+if (!(c28Of('output per unit capital at ten')?.expr?.kind === '/' && c28Of('capital lifetime at ten')?.value === 2))
+  fail('capital 28', 'output per unit capital is the 5/3 formula, the lifetime a scaled constant');
 
 console.log(failures ? `${failures} FAILURE(S)` : 'ALL CHECKS PASSED');
 process.exit(failures ? 1 : 0);

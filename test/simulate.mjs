@@ -487,5 +487,67 @@ fraction of output invested: 0.2`;
     fail('formula hasNumbers', 'a formula counts as numbers for the chart gate');
 }
 
+// Figures 27 & 28: the capital archetype — the population system's R+B pair
+// with the book's real equations as formulas: annual output = capital ×
+// output per unit capital, investment = annual output × investment fraction
+// (the reinforcing inflow), depreciation = capital / capital lifetime (the
+// balancing outflow). One time unit = 5 years (the 50-year axis on
+// T_END = 10): output per unit capital reads 5/3 per unit, lifetimes 10/15/
+// 20 years read 2/3/4 — three futures from one number. At 15 years the
+// inflow (100 × 5/3 × 0.2) and outflow (100 / 3) are the same double, so
+// the equilibrium holds to the bit. Mirrored in the simulator's float-op
+// order: formulas clamp at 0, and the ration multiplies by exactly 1.
+{
+  const cap = (suffix, lifetime) => `|=>investment at ${suffix}[capital at ${suffix}: 100]=>depreciation at ${suffix}|
+R(capital at ${suffix} -> annual output at ${suffix} -> investment at ${suffix})
+B(capital at ${suffix} -> depreciation at ${suffix})
+annual output at ${suffix}: (capital at ${suffix} * output per unit capital at ${suffix})
+investment at ${suffix}: (annual output at ${suffix} * investment fraction at ${suffix})
+depreciation at ${suffix}: (capital at ${suffix} / capital lifetime at ${suffix})
+investment fraction at ${suffix}: 0.2
+output per unit capital at ${suffix}: (5 / 3)
+capital lifetime at ${suffix}: ${lifetime}`;
+  const F28 = [cap('twenty', 4), cap('fifteen', 3), cap('ten', 2)].join('\n');
+  const system = sys(F28);
+  const series = simulate(system);
+  if (series.map(s => s.label).join() !== 'capital at twenty,capital at fifteen,capital at ten')
+    fail('figure 28', `three lifetime stocks expected, got ${series.map(s => s.label)}`);
+  const mirror = (lifetime) => {
+    let K = 100;
+    const levels = [K];
+    for (let n = 0; n < Math.round(T_END / DT); n++) {
+      const inv = Math.max(0, (K * (5 / 3)) * 0.2);
+      const dep = Math.max(0, K / lifetime);
+      K = Math.max(0, K + ((inv * DT * 1) - (dep * DT * 1)));
+      levels.push(K);
+    }
+    return levels;
+  };
+  for (const [label, lifetime] of [['capital at twenty', 4], ['capital at fifteen', 3], ['capital at ten', 2]]) {
+    const s = series.find(x => x.label === label);
+    const want = mirror(lifetime);
+    if (!s.levels.every((v, i) => v === want[i]))
+      fail('figure 28', `${label} must match the mirrored recurrence sample-for-sample`);
+  }
+  const twenty = series.find(s => s.label === 'capital at twenty');
+  if (!twenty.levels.every((v, i) => i === 0 || v > twenty.levels[i - 1]))
+    fail('figure 28', 'a 20-year lifetime out-invests depreciation: capital must grow strictly');
+  if (!(last(twenty) > 228 && last(twenty) < 231.5))
+    fail('figure 28', `20-year lifetime should end near the book's ≈230, got ${last(twenty)}`);
+  const fifteen = series.find(s => s.label === 'capital at fifteen');
+  if (!fifteen.levels.every(v => v === 100))
+    fail('figure 28', 'a 15-year lifetime balances investment exactly: the level holds to the bit');
+  const ten = series.find(s => s.label === 'capital at ten');
+  if (!ten.levels.every((v, i) => v > 0 && (i === 0 || v < ten.levels[i - 1])))
+    fail('figure 28', 'a 10-year lifetime out-depreciates investment: capital must fall strictly, staying positive');
+  if (!(last(ten) > 18.3 && last(ten) < 19.2))
+    fail('figure 28', `10-year lifetime should end near the book's ≈19, got ${last(ten)}`);
+  if (goalRefs(system).length !== 0)
+    fail('figure 28', 'formula faucets register no goal rules — figure 28 draws no dashed lines');
+  const arrows = system.links.filter(l => l.type === 'arrow');
+  if (arrows.length !== 18)
+    fail('figure 28', `6 info arrows per copy expected (formulas dedup against R/B), got ${arrows.length}`);
+}
+
 console.log(failures ? `${failures} FAILURE(S)` : 'SIMULATE CHECKS PASSED');
 process.exit(failures ? 1 : 0);
