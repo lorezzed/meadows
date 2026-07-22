@@ -120,25 +120,9 @@ defs.append("marker")
   .append("path")
   .attr("d", "M0,0L10,5L0,10Z")
   .attr("fill", "#000");
-// Small open circle at an info arc's tail (Meadows notation): centered on the
-// path's start point, so the trimmed arc must begin at the source's edge.
-const infoTailRadius = 4;
-defs.append("marker")
-  .attr("id", "info-tail")
-  .attr("viewBox", "0 0 10 10")
-  .attr("refX", 5)
-  .attr("refY", 5)
-  .attr("markerWidth", infoTailRadius * 2)
-  .attr("markerHeight", infoTailRadius * 2)
-  .attr("markerUnits", "userSpaceOnUse")
-  .attr("orient", "auto")
-  .append("circle")
-  .attr("cx", 5)
-  .attr("cy", 5)
-  .attr("r", 4)
-  .attr("fill", "#fff")
-  .attr("stroke", "#000")
-  .attr("stroke-width", 1.5);
+// There is deliberately no tail marker on info arcs: every arrow tail meets
+// a drawn node whose own glyph is the Meadows open circle (a dot's circle, a
+// port's) — a marker would just double it.
 
 // Flow pipes render BELOW the nodes (a faucet must sit on top of its pipe).
 let flowLink = svg.append("g")
@@ -154,6 +138,10 @@ const faucetWidth = 40;
 const faucetHeight = 40
 const cloudWidth = 52;
 const cloudHeight = 52;
+// A port (the boundary dot the compiler mints where an info arrow meets a
+// stock) draws as the Meadows open tail circle promoted to a node, pinned
+// inside the stock's rect.
+const portRadius = 4;
 
 // What a node displays: its name, plus its value annotation when it carries
 // one ("water in tub: 50", "outflow: 5", "inflow: 0 @5: 5" for a rate
@@ -191,6 +179,7 @@ function edgeOf(d: Node): number {
     case "stock": return stockWidth / 2;
     case "cloud": return cloudWidth / 2;
     case "dot": return dotRadius + 4;
+    case "port": return portRadius;
     default: return faucetWidth / 2;
   }
 }
@@ -205,10 +194,14 @@ let nodeFaucet = svg.append<SVGGElement>("g")
   .selectAll<SVGGElement, Node>("g");
 let nodeCloud = svg.append<SVGGElement>("g")
   .selectAll<SVGGElement, Node>("g");
+// Ports render above the other nodes (each must sit on top of its stock's
+// rect) and below the info links whose ends they anchor.
+let nodePort = svg.append<SVGGElement>("g")
+  .selectAll<SVGGElement, Node>("g");
 
-// Info links render ABOVE the nodes so their open tail circles (and heads) stay
-// visible where they meet a stock/cloud, and the arcs read as continuous rather
-// than vanishing behind shapes.
+// Info links render ABOVE the nodes so their heads stay visible where they
+// meet a stock/cloud, and the arcs read as continuous rather than vanishing
+// behind shapes.
 let infoLink = svg.append("g")
   .attr("fill", "none")
   .selectAll<SVGPathElement, Link>("path");
@@ -246,12 +239,15 @@ const simulation = d3.forceSimulation<Node, Link>(systemNodes)
   // Stocks are the diagram's anchors: they repel harder than other nodes;
   // dots repel a bit more than faucets/clouds so the aux web spreads through
   // the inter-band region instead of clumping at the midline.
+  // Ports are force-inert satellites: fx/fy-pinned inside their stock every
+  // tick, and with zero charge/collision so they neither shove neighbors
+  // away from the stock's edge nor phantom-repel the aux web.
   .force("charge", d3.forceManyBody<Node>().strength(d =>
-    d.type === "stock" ? -300 : d.type === "dot" ? -250 : -200))
+    d.type === "stock" ? -300 : d.type === "dot" ? -250 : d.type === "port" ? 0 : -200))
   // Collision radii track the size hierarchy so big shapes push neighbors out
   // of their space; dots are tiny but their label above needs clearance.
   .force("collide", d3.forceCollide<Node>().radius(d =>
-    d.type === "stock" ? 62 : d.type === "cloud" ? 30 : d.type === "dot" ? 26 : 24
+    d.type === "stock" ? 62 : d.type === "cloud" ? 30 : d.type === "dot" ? 26 : d.type === "port" ? 0 : 24
   ).strength(0.85))
   // No forceCenter: it rigidly translates ALL nodes every tick (unscaled by
   // alpha) until their MEAN sits at the canvas center. With bands pinned to
@@ -284,12 +280,37 @@ function update(system: System) {
     // would otherwise keep a stale `group`/`loop`/`value`/`steps` after
     // losing it upstream (the JSON simply omits the key, so Object.assign
     // wouldn't overwrite).
-    return prev ? Object.assign(prev, { group: null, loop: null, value: null, steps: null, smooth: null, expr: null }, d) : { ...d };
+    return prev ? Object.assign(prev, { group: null, loop: null, value: null, steps: null, smooth: null, expr: null, parent: null }, d) : { ...d };
   });
   const links = system.links.map(d => ({ ...d }));
   // Formula labels resolve refs by id; refresh before any displayLabel call
   // (the node joins below render labels).
   labelById = new Map(nodes.map(n => [n.id, n.label]));
+  // Link endpoints arrive from the compiler as id strings, but d3's link force
+  // rewrites them to node objects once it has seen them (the click-to-add path
+  // re-updates with such links) — normalize before using one as a key.
+  const endId = (e: Link["source"]): string =>
+    typeof e === "object" && e !== null ? (e as Node).id : String(e);
+  const nodeById = new Map(nodes.map(n => [n.id, n] as [string, Node]));
+  // Stamp each port's per-update hints: its parent stock's node object (the
+  // port pins just inside that rect every tick) and its one arrow's far
+  // endpoint (which side of the stock to face) — resolved onward to the far
+  // parent when both ends are ports, so neither position depends on the
+  // other port's yet-unplaced coordinates.
+  const throughPort = (n: Node | undefined): Node | undefined =>
+    n?.type === "port" && n.parent != null ? nodeById.get(n.parent) : n;
+  for (const l of links) {
+    if (l.type === "flow") continue;
+    const s = nodeById.get(endId(l.source)), t = nodeById.get(endId(l.target));
+    if (s?.type === "port" && s.parent != null) {
+      s.portParent = nodeById.get(s.parent);
+      s.portFar = throughPort(t);
+    }
+    if (t?.type === "port" && t.parent != null) {
+      t.portParent = nodeById.get(t.parent);
+      t.portFar = throughPort(s);
+    }
+  }
 
   flowLink = flowLink
     .data(links.filter(l => l.type === "flow"))
@@ -362,6 +383,26 @@ function update(system: System) {
       return g;
     })
     .call(drag(), undefined);
+  // Ports: label-less open circles (the Meadows tail glyph as a node), pinned
+  // by ticked(). Draggable — but only along the stock's boundary (portDrag
+  // records a bearing, never a free position); an invisible larger disc makes
+  // the tiny circle grabbable while the rest of the stock's surface keeps
+  // driving the stock's own drag.
+  nodePort = nodePort
+    .data(nodes.filter(x => x.type === 'port'), d => d.id)
+    .join(enter => {
+      const g = enter.append("g");
+      g.append("circle")
+        .attr("r", portRadius)
+        .attr("fill", "#fff")
+        .attr("stroke", "#000")
+        .attr("stroke-width", 1.5);
+      g.append("circle")
+        .attr("r", portRadius + 6)
+        .attr("fill", "transparent");
+      return g;
+    })
+    .call(portDrag(), undefined);
 
   // One floating letter per loop annotation: group the nodes by loop name
   // (a node can be in several loops) and derive each letter from its name
@@ -376,12 +417,17 @@ function update(system: System) {
   }
   // Link endpoints are still id strings here (the force rewrites them to
   // node objects later), so match member-to-member links by id either way.
-  const endIdOf = (e: Link["source"]) =>
-    typeof e === "object" && e !== null ? (e as Node).id : String(e);
+  // A port endpoint counts as its parent stock: loop tags never land on
+  // ports, but the stock→faucet arc closing a loop hangs off one — its
+  // bulge apex must keep feeding the letter's parking spot.
+  const memberEnd = (e: Link["source"]): string => {
+    const n = nodeById.get(endId(e));
+    return n?.type === "port" && n.parent != null ? n.parent : endId(e);
+  };
   const loopInstances: LoopInstance[] = [...loopMembers.entries()]
     .map(([name, members]) => {
       const ids = new Set(members.map(m => m.id));
-      const edges = links.filter(l => ids.has(endIdOf(l.source)) && ids.has(endIdOf(l.target)));
+      const edges = links.filter(l => ids.has(memberEnd(l.source)) && ids.has(memberEnd(l.target)));
       return { name, letter: name.charAt(0), members, edges };
     });
   loopLabel = loopLabel
@@ -443,12 +489,6 @@ function update(system: System) {
     const n = parseInt(id.slice(id.indexOf("#") + 1), 10);
     return isNaN(n) ? 0 : n;
   };
-  // Link endpoints arrive from the compiler as id strings, but d3's link force
-  // rewrites them to node objects once it has seen them (the click-to-add path
-  // re-updates with such links) — normalize before using one as a key.
-  const endId = (e: Link["source"]): string =>
-    typeof e === "object" && e !== null ? (e as Node).id : String(e);
-  const nodeById = new Map(nodes.map(n => [n.id, n]));
   const slotHalf = (d: Node) => {
     const icon = d.type === "stock" ? stockWidth / 2 : d.type === "cloud" ? cloudWidth / 2 : d.type === "dot" ? dotRadius : faucetWidth / 2;
     const collide = d.type === "stock" ? 62 : d.type === "cloud" ? 30 : d.type === "dot" ? 26 : 24;
@@ -596,12 +636,14 @@ function update(system: System) {
   // Flow links render as thick gray straight pipes (Meadows notation); the
   // segment entering a stock/cloud carries the big triangular arrowhead — none
   // into a faucet, where the pipe visually passes through. Info links are thin
-  // black curved arcs with a small head and an open circle at the tail.
+  // black curved arcs with a small head; their tails are bare — the source
+  // node's own circle (dot, port) is the Meadows tail glyph.
   const styleLink = (sel: d3.Selection<SVGPathElement, Link, any, any>) => sel
     .attr("stroke", d => d.type === "flow" ? "#999" : "#000")
     .attr("stroke-width", d => d.type === "flow" ? 8 : 1.5)
     .attr("stroke-opacity", 1)
-    .attr("marker-start", d => d.type === "flow" ? null : "url(#info-tail)")
+    // Explicit null sheds the old tail marker from recycled paths.
+    .attr("marker-start", null)
     .attr("marker-end", d => {
       if (d.type !== "flow") return "url(#info-arrow)";
       const t = nodeById.get(d.target as string);
@@ -635,6 +677,19 @@ function update(system: System) {
       const acc = floatSeed.get(fl.id) ?? { x: 0, y: 0, n: 0 };
       floatSeed.set(fl.id, { x: acc.x + banded.gx, y: acc.y + banded.gy, n: acc.n + 1 });
     }
+  }
+  // Ports spawn already pinned at their stock (ticked() re-pins them just
+  // inside its border every frame); the fx/fy fix also keeps the link force
+  // from reeling their arrow's far end toward an unplaced origin.
+  for (const d of nodes) {
+    if (d.type !== "port") continue;
+    const p = d.portParent;
+    if (d.x == null || d.y == null) {
+      d.x = p?.x ?? p?.gx ?? svgWidth / 2;
+      d.y = p?.y ?? p?.gy ?? svgHeight / 2;
+    }
+    d.fx = d.x;
+    d.fy = d.y;
   }
   nodes.forEach((d, i) => {
     if (d.x != null || d.y != null) return;
@@ -691,9 +746,15 @@ const infoArcRadius = (chord: number) => chord * infoArcCurvature;
 // read as a loop when drawn as a minor arc: it hugs the pipe connecting the
 // two. Draw it as the major arc instead (the reference figures' balloon),
 // leaving room for the R/B letter inside. Cross-band and floater arcs keep
-// the minor bow.
-const arcLarge = (s: Node, t: Node): 0 | 1 =>
-  s.group != null && s.group === t.group ? 1 : 0;
+// the minor bow. A port has no band group of its own — it sits inside its
+// parent stock, so the same-band test reads the parent's group (otherwise
+// every stock-anchored feedback balloon would collapse to a hugging arc).
+const bandOf = (n: Node): number | null | undefined =>
+  n.type === "port" ? n.portParent?.group : n.group;
+const arcLarge = (s: Node, t: Node): 0 | 1 => {
+  const sg = bandOf(s), tg = bandOf(t);
+  return sg != null && sg === tg ? 1 : 0;
+};
 
 // The info-link arc is an arc of the circle of radius `infoArcRadius(chord)`
 // through both endpoints, drawn with the given sweep and large-arc flags.
@@ -748,10 +809,70 @@ function arcBulge(sx: number, sy: number, tx: number, ty: number, sweep: 0 | 1, 
 }
 
 function ticked() {
+  // Pin each port just inside its stock's border, facing its arrow's far
+  // endpoint; a stock's several ports spread apart along that inset boundary
+  // so their arcs stay individually anchored (figure 42's capital carries
+  // three). Ports are fx/fy-fixed satellites, so the forces never fight this
+  // placement — the pin simply follows the stock as it settles or drags.
+  const portsByStock = new Map<string, Node[]>();
+  for (const d of simulation.nodes()) {
+    if (d.type !== "port" || !d.portParent) continue;
+    const arr = portsByStock.get(d.portParent.id) ?? [];
+    arr.push(d);
+    portsByStock.set(d.portParent.id, arr);
+  }
+  const portInsetX = stockWidth / 2 - 10, portInsetY = stockHeight / 2 - 10;
+  const portMinSep = 0.5; // radians between neighboring ports of one stock
+  const labelClear = 12;  // half-height of the label band across the rect's middle
+  for (const ports of portsByStock.values()) {
+    const p = ports[0]!.portParent!;
+    const px = p.x ?? 0, py = p.y ?? 0;
+    // A hand-dragged port keeps its recorded bearing; the rest face their
+    // arrow's far endpoint.
+    const placed = ports
+      .map(d => ({
+        d,
+        pinned: d.portAngle != null,
+        a: d.portAngle ?? Math.atan2((d.portFar?.y ?? py) - py, (d.portFar?.x ?? px + 1) - px),
+      }))
+      .sort((u, v) => u.a - v.a || u.d.id.localeCompare(v.d.id));
+    // Spread near-coincident bearings apart (cyclic; a few passes suffice
+    // for the handful of ports a stock carries). Hand-placed ports stay put:
+    // their automatic neighbors do the yielding.
+    for (let pass = 0; pass < 4; pass++) {
+      for (let i = 0; i < placed.length; i++) {
+        const u = placed[i]!, v = placed[(i + 1) % placed.length]!;
+        if (u === v) continue;
+        const gap = v.a - u.a + (i === placed.length - 1 ? 2 * Math.PI : 0);
+        if (gap >= portMinSep) continue;
+        const push = portMinSep - gap;
+        if (u.pinned && !v.pinned) v.a += push;
+        else if (v.pinned && !u.pinned) u.a -= push;
+        else {
+          u.a -= push / 2;
+          v.a += push / 2;
+        }
+      }
+    }
+    for (const { d, a } of placed) {
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const onSide = Math.abs(ca) / portInsetX >= Math.abs(sa) / portInsetY;
+      const scale = 1 / Math.max(Math.abs(ca) / portInsetX, Math.abs(sa) / portInsetY);
+      let ox = ca * scale, oy = sa * scale;
+      // The stock's label runs across the rect's vertical middle (and can
+      // overflow it horizontally), so a port landing on a left/right edge
+      // dodges that band — sliding along the edge, away from the text.
+      if (onSide && Math.abs(oy) < labelClear) oy = oy > 0 ? labelClear : -labelClear;
+      d.x = d.fx = px + ox;
+      d.y = d.fy = py + oy;
+    }
+  }
+
   nodeDot.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
   nodeStock.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
   nodeFaucet.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
   nodeCloud.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
+  nodePort.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
   // A loop letter parks at the mean of its loop's drawn boundary — each
   // member-to-member pipe contributes its midpoint, each info arc its bulge
   // apex (current bow side, balloons included) — which sits inside the
@@ -841,12 +962,12 @@ function ticked() {
         return `M${sx + ux * st * f},${sy + uy * st * f}L${tx - ux * tt * f},${ty - uy * tt * f}`;
       }
       // Info arc: move both endpoints along the arc's own circle so the tail
-      // circle sits on the source's edge and the small head at the target's,
+      // starts at the source's edge and the small head lands at the target's,
       // instead of buried under the shapes. The radius must match trimArc's.
       const sweep = d.sweep ?? 1;
       const large = arcLarge(source, target);
       const r = infoArcRadius(dr);
-      const a = trimArc(sx, sy, tx, ty, edgeOf(source) + infoTailRadius, edgeOf(target) + infoArrowLength, sweep, large);
+      const a = trimArc(sx, sy, tx, ty, edgeOf(source), edgeOf(target) + infoArrowLength, sweep, large);
       return `M${a.start.x},${a.start.y}A${r},${r} 0 ${large},${sweep} ${a.end.x},${a.end.y}`;
   };
   flowLink.attr("d", pathFor);
@@ -920,6 +1041,31 @@ function appendLabel(g: d3.Selection<SVGGElement, Node, SVGGElement, unknown>, y
     .attr("font-family", "sans-serif")
     .attr("fill", "#000")
     .attr("pointer-events", "none");
+}
+
+// Dragging a port slides it along its stock's inset boundary: the pointer's
+// bearing from the stock's center becomes the port's angle, recorded as
+// `portAngle` so hand placement sticks (ticked() prefers it over the
+// automatic face-the-far-endpoint bearing, and auto ports yield to it in the
+// spread). The port never leaves the boundary — there is nothing else to
+// drag it to.
+function portDrag() {
+  return d3.drag<any, Node>()
+    .on("start", (event) => {
+      if (!event.active) {
+        simulation.alphaTarget(0.3).restart();
+      }
+    })
+    .on("drag", (event, d) => {
+      const p = d.portParent;
+      if (!p) return;
+      d.portAngle = Math.atan2(event.y - (p.y ?? 0), event.x - (p.x ?? 0));
+    })
+    .on("end", (event) => {
+      if (!event.active) {
+        simulation.alphaTarget(0);
+      }
+    });
 }
 
 function drag() {

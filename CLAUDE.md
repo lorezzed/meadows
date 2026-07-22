@@ -146,6 +146,17 @@ JSON error string):
      occurrences reuse it. This is why writing a name twice references the same node.
    - **Clouds** go through `freshAnon` — always a fresh id, never registered, so they
      never coalesce.
+   - **Ports**: an info arrow never touches a stock directly. Every arrow
+     emission goes through `drawArrow`, which first dedups on *logical*
+     endpoints (`logicalEnd` resolves a port to its `parent` stock — so a
+     formula's re-implied arrow reuses the hand-drawn one and a repeated
+     statement redraws nothing; the dedup runs before minting, so a duplicate
+     never mints a second port), then routes each stock endpoint through
+     `portFor`: a fresh anonymous `port#N` node (evaluator-side `portCount`,
+     numbered in draw order the way `loopCount` numbers loops — the one id
+     family NOT minted from a parser `Id`) with `parent` = the stock's id and
+     an empty label. `[a]->[b]` gets a port at each end; dot→dot arrows mint
+     none. Ports join no band group and never carry loop tags.
    - Ids are opaque (`"dot#3"`, `"stock#5"`, …) built from the node type prefix + parser
      `Id`, never from source text. Links reference these ids, i.e. identity not spelling.
    - **Loop annotations** are transparent to evaluation: `LoopExpr`'s inner
@@ -177,11 +188,12 @@ JSON error string):
      value is its initial rate, overridden from each step's `at` time onward.
      The compiler just carries the numbers.
 
-   Output types: `Node = { type, id, label, value :: Maybe Number, steps :: Maybe (Array { at, value }), smooth :: Maybe Boolean, expr :: Maybe RFormula, group :: Maybe Int, loop :: Maybe (Array String) }`
-   (`Maybe` fields omit their JSON key on `Nothing` — goldens rely on that),
-   `Link = { type, source, target }`, `Graph = { nodes, links }`. `NodeType`
-   (`Dot`/`Stock`/`Faucet`/`Cloud`) has a `WriteForeign` instance so the whole
-   graph serializes to the JSON the UI expects.
+   Output types: `Node = { type, id, label, value :: Maybe Number, steps :: Maybe (Array { at, value }), smooth :: Maybe Boolean, expr :: Maybe RFormula, parent :: Maybe String, group :: Maybe Int, loop :: Maybe (Array String) }`
+   (`Maybe` fields omit their JSON key on `Nothing` — goldens rely on that;
+   `parent` appears only on ports), `Link = { type, source, target }`,
+   `Graph = { nodes, links }`. `NodeType`
+   (`Dot`/`Stock`/`Faucet`/`Cloud`/`Port`) has a `WriteForeign` instance so the
+   whole graph serializes to the JSON the UI expects.
 
 `Main` exports only `go`. The terminal runner is `src/CLI.purs` (argv → `go` → stdout),
 kept out of `Main` so the browser bundle never pulls in node-process.
@@ -198,8 +210,8 @@ kept out of `Main` so the browser bundle never pulls in node-process.
   skipped (the last good graph stays). Otherwise the `System` is pretty-printed into
   the `<pre>` and passed to `update(system)`.
 - `update()` does the d3 data-join per node type (dots→`circle`, stocks→`rect`,
-  faucets/clouds→`image` with inlined SVGs from `ui/shape/`), rebinds the link
-  force, and restarts the simulation. (There is deliberately no `forceCenter`:
+  faucets/clouds→`image` with inlined SVGs from `ui/shape/`, ports→small open
+  circles), rebinds the link force, and restarts the simulation. (There is deliberately no `forceCenter`:
   it would translate the whole graph to keep the node MEAN centered, fighting
   the band pins and forbidding the aux web from hanging below a lone band —
   floaters instead rest at `floatY`, one row below a single band.) It also groups nodes by their `loop`
@@ -218,6 +230,24 @@ kept out of `Main` so the browser bundle never pulls in node-process.
   plus info-arc bulge apexes — which sits inside the enclosed region even
   when a wide stock rect would pull the plain member centroid onto its own
   body; a loop with no member-to-member links falls back to the centroid.
+- Ports render as the Meadows open tail circle promoted to a node. Info arcs
+  carry NO tail marker at all — every arrow tail already meets a drawn circle
+  (a dot's, a port's), so the old `info-tail` marker was removed and the arc
+  trims to `edgeOf(source)` bare. Ports are force-inert satellites — zero
+  charge/collision, `fx`/`fy`-pinned every tick just inside the parent
+  stock's rect (10px inset) on the side facing the arrow's far endpoint,
+  near-coincident bearings spread apart cyclically so a stock's several arcs
+  stay individually anchored, and side-edge ports dodge the label band
+  (±12px) across the rect's middle. A port is draggable — but only ALONG the
+  boundary: `portDrag` records the pointer's bearing from the stock's center
+  as `portAngle`, which sticks (auto ports yield to hand-placed ones in the
+  spread) — while an invisible r+6 disc makes the tiny circle grabbable
+  without stealing the rest of the stock's surface from the stock's own drag.
+  `update()` stamps `portParent`/`portFar` object refs on each port datum (a
+  far-side port resolves onward to ITS parent, breaking the mutual dependence
+  of `[a]->[b]`); `arcLarge` reads a port's band group from `portParent` and
+  the loop-letter edge matching resolves port endpoints to the parent stock —
+  the figure-12 balloons and letter parking survive the indirection.
 - Clicking empty svg space adds a dot node linked from the previous node (a manual
   editing affordance separate from the DSL path).
 
@@ -236,6 +266,10 @@ the diagram's figure 5):
   0), `~` steps interpolate a monotone cubic (Fritsch–Carlson, exact at the
   points, no overshoot, flat outside them) — sampled at each step's start. Faucet
   source/sink stocks come from flow-link direction, clouds/dots infinite.
+  Info-arrow endpoints resolve through ports to their parent stock before any
+  walk (`faucetWiring`), so the compiler's port indirection is invisible to
+  the semantics — the level→faucet arrow closing an R loop still reaches the
+  stock.
   Each synchronous step rations a stock's outflows by what it holds
   (`min(1, level/demand)`), so levels never go negative and chained stocks
   conserve — an empty tub stops draining. A faucet turns **goal-seeking**

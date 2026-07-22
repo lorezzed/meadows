@@ -16,7 +16,7 @@ import Data.Tuple (Tuple(..), fst)
 import Effect (Effect)
 import Effect.Console (log)
 import Effect.Exception (throw)
-import Evaluator (Graph, Link, RFormula(..), evaluate)
+import Evaluator (Graph, Link, NodeType(..), RFormula(..), evaluate)
 import Lexer (LoopKind(..), Operator(..), Token(..), tokenize)
 import Parser (Annot(..), Formula(..), FormOp(..), Tree(..), parse)
 import Parsing (Position(..))
@@ -87,6 +87,11 @@ labelSmooth s =
 labelExprs :: String -> Either String (Array (Tuple String (Maybe RFormula)))
 labelExprs s =
   (Array.sortWith fst <<< map (\n -> Tuple n.label n.expr) <<< _.nodes) <$> graphOf s
+
+-- | (id, parent) for every port node, in node order.
+portsOf :: String -> Either String (Array (Tuple String (Maybe String)))
+portsOf s =
+  (map (\n -> Tuple n.id n.parent) <<< Array.filter (\n -> n.type == Port) <<< _.nodes) <$> graphOf s
 
 tests :: Array (Maybe String)
 tests =
@@ -341,10 +346,30 @@ tests =
   , expectEq "the name registry spans statements"
       (Right 3) (nodeCount "a->b\nb->c")
   , expectEq "a dot mention resolves to the stock of the same name"
-      (Right [ { type: "arrow", source: "stock#0", target: "dot#3" } ])
+      (Right [ { type: "arrow", source: "port#0", target: "dot#3" } ])
       (linksOf "[r]\nr->x")
   , expectEq "clouds never coalesce"
       (Right 2) (nodeCount "|->|")
+  -- Evaluator: ports (an info arrow never touches a stock directly -- each
+  -- arrow end landing on one gets an anonymous boundary dot carrying the
+  -- stock's id as `parent`)
+  , expectEq "an arrow out of a stock attaches through a port"
+      (Right [ Tuple "port#0" (Just "stock#0") ])
+      (portsOf "[r]\nr->x")
+  , expectEq "an arrow into a stock gets a target-side port"
+      (Right [ { type: "arrow", source: "dot#0", target: "port#0" } ])
+      (linksOf "c->[a]")
+  , expectEq "a stock-to-stock arrow gets a port at each end"
+      (Right [ { type: "arrow", source: "port#0", target: "port#1" } ])
+      (linksOf "[a]->[b]")
+  , expectEq "dot-to-dot arrows mint no ports"
+      (Right []) (portsOf "a->b")
+  , expectEq "a repeated arrow statement draws one link (and one port)"
+      (Right [ { type: "arrow", source: "port#0", target: "dot#3" } ])
+      (linksOf "[s]\ns->x\ns->x")
+  , expectEq "a formula's stock arrow shares its port with the R() one"
+      (Right [ { type: "arrow", source: "port#0", target: "dot#2" } ])
+      (linksOf "[capital]\noutput: (capital / 3)\nR(capital -> output)")
   -- Evaluator: flow links
   , expectEq "rightward flow runs source -> faucet -> target"
       (Right [ { type: "flow", source: "stock#0", target: "faucet#1" }
@@ -417,8 +442,8 @@ tests =
   , expectEq "a formula's implied arrow dedups against a hand-drawn one"
       (Right [ { type: "arrow", source: "dot#0", target: "dot#2" } ])
       (linksOf "a -> b\nb: (a)")
-  , expectEq "a formula may reference a stock"
-      (Right [ Tuple "f" (Just (RBin "*" (RRef "stock#0") (RNum 2.0))), Tuple "s" Nothing ])
+  , expectEq "a formula may reference a stock (arrow attached through a port)"
+      (Right [ Tuple "" Nothing, Tuple "f" (Just (RBin "*" (RRef "stock#0") (RNum 2.0))), Tuple "s" Nothing ])
       (labelExprs "[s: 4]\nf: (s * 2)")
   , expectEq "the first annotation wins: a value blocks a later formula"
       (Right [ Tuple "a" Nothing, Tuple "b" Nothing ])
@@ -453,21 +478,22 @@ tests =
   , expectEq "overlapping loops stack names in statement order"
       (Right [ Tuple "a" (Just [ "R0" ]), Tuple "b" (Just [ "R0", "B1" ]), Tuple "c" (Just [ "B1" ]) ])
       (labelLoops "R(a->b)\nB(b->c)")
-  , expectEq "loop members resolve through the registry (a stock, a faucet)"
-      (Right [ Tuple "a" (Just [ "B0" ]), Tuple "f" (Just [ "B0" ]) ])
+  , expectEq "loop members resolve through the registry (a stock, a faucet); the port stays untagged"
+      (Right [ Tuple "" Nothing, Tuple "a" (Just [ "B0" ]), Tuple "f" (Just [ "B0" ]) ])
       (labelLoops "[a]=>f\nB(f<-a)")
-  , expectEq "a loop adds no nodes, even across statements"
-      (Right 2) (nodeCount "[a]=>f\nB(f<-a)")
+  , expectEq "a loop adds no nodes of its own (the third is the arrow's port)"
+      (Right 3) (nodeCount "[a]=>f\nB(f<-a)")
   -- Combined graphs: multiple statements mixing arrows, flows, stocks,
   -- clouds, and parens
   , expectEq "arrow edges hanging off a flow band"
       (Right [ { type: "flow", source: "stock#0", target: "faucet#1" }
              , { type: "flow", source: "faucet#1", target: "stock#2" }
-             , { type: "arrow", source: "stock#2", target: "dot#5" }
-             , { type: "arrow", source: "dot#5", target: "stock#0" } ])
+             , { type: "arrow", source: "port#0", target: "dot#5" }
+             , { type: "arrow", source: "dot#5", target: "port#1" } ])
       (linksOf "[a]=>f[b]\nb->c\nc->[a]")
-  , expectEq "arrows do not extend a band: the dot floats"
-      (Right [ Tuple "a" (Just 0), Tuple "b" (Just 0), Tuple "c" Nothing, Tuple "f" (Just 0) ])
+  , expectEq "arrows do not extend a band: the dot floats, ports carry no group"
+      (Right [ Tuple "" Nothing, Tuple "" Nothing
+             , Tuple "a" (Just 0), Tuple "b" (Just 0), Tuple "c" Nothing, Tuple "f" (Just 0) ])
       (labelGroups "[a]=>f[b]\nb->c\nc->[a]")
   , expectEq "two flows sharing a stock merge into one band"
       (Right [ Tuple "a" (Just 0), Tuple "b" (Just 0), Tuple "c" (Just 0)
@@ -494,13 +520,13 @@ tests =
              , { type: "flow", source: "dot#3", target: "dot#0" } ])
       (linksOf "f->x\na=>f")
   -- Parenthesized flows composed with arrows
-  , expectEq "an arrow between two parenthesized flows links their faucets"
+  , expectEq "an arrow between two parenthesized flows links faucet to the far stock's port"
       (Right [ { type: "flow", source: "stock#1", target: "faucet#2" }
-             , { type: "arrow", source: "faucet#2", target: "stock#5" }
+             , { type: "arrow", source: "faucet#2", target: "port#0" }
              , { type: "flow", source: "stock#5", target: "faucet#6" } ])
       (linksOf "([s]=>f)->([t]=>g)")
   , expectEq "arrow-linked bands stay distinct groups"
-      (Right [ Tuple "f" (Just 0), Tuple "g" (Just 1), Tuple "s" (Just 0), Tuple "t" (Just 1) ])
+      (Right [ Tuple "" Nothing, Tuple "f" (Just 0), Tuple "g" (Just 1), Tuple "s" (Just 0), Tuple "t" (Just 1) ])
       (labelGroups "([s]=>f)->([t]=>g)")
   -- A feedback loop over a cloud-to-cloud pipeline
   , expectEq "feedback loop links: pipeline flows then loop arrows"
@@ -508,11 +534,11 @@ tests =
              , { type: "flow", source: "faucet#1", target: "stock#2" }
              , { type: "flow", source: "stock#2", target: "faucet#3" }
              , { type: "flow", source: "faucet#3", target: "cloud#4" }
-             , { type: "arrow", source: "stock#2", target: "dot#7" }
+             , { type: "arrow", source: "port#0", target: "dot#7" }
              , { type: "arrow", source: "dot#7", target: "faucet#1" } ])
       (linksOf "|=>inflow[pop]=>outflow|\npop->growth->inflow")
-  , expectEq "the pipeline is one band; the loop dot floats"
-      (Right [ Tuple "growth" Nothing, Tuple "inflow" (Just 0), Tuple "outflow" (Just 0)
+  , expectEq "the pipeline is one band; the loop dot and the port float"
+      (Right [ Tuple "" Nothing, Tuple "growth" Nothing, Tuple "inflow" (Just 0), Tuple "outflow" (Just 0)
              , Tuple "pop" (Just 0), Tuple "|" (Just 0), Tuple "|" (Just 0) ])
       (labelGroups "|=>inflow[pop]=>outflow|\npop->growth->inflow")
   -- Mixed link directions

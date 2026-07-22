@@ -355,12 +355,12 @@ if (!(j2.links.length === 1 && j2.links[0].source.startsWith('faucet#') && j2.li
 const j3 = JSON.parse(M.go('[a]=>fill'));
 if (!j3.nodes.every(n => n.group === 0)) fail('[a]=>fill', 'stock+faucet should share group 0');
 const big = JSON.parse(M.go(EX_BIG));
-if (big.nodes.length !== 11) fail('big model', `11 nodes expected, got ${big.nodes.length}`);
+if (big.nodes.length !== 14) fail('big model', `14 nodes expected (11 + 3 stock-arrow ports), got ${big.nodes.length}`);
 if (new Set(big.nodes.map(n => n.group).filter(g => g != null)).size !== 2)
   fail('big model', '2 groups expected');
 const loops = JSON.parse(M.go(EX_LOOPS));
 const loopOf = label => loops.nodes.find(n => n.label === label)?.loop;
-if (loops.nodes.length !== 16) fail('loops model', `16 nodes expected, got ${loops.nodes.length}`);
+if (loops.nodes.length !== 23) fail('loops model', `23 nodes expected (16 + 7 stock-arrow ports), got ${loops.nodes.length}`);
 if (JSON.stringify(loopOf('capital')) !== JSON.stringify(['R0', 'B1', 'B2']))
   fail('loops model', `capital should be in R0/B1/B2, got ${JSON.stringify(loopOf('capital'))}`);
 if (JSON.stringify(loopOf('harvest')) !== JSON.stringify(['B2']))
@@ -384,8 +384,8 @@ if (!(room?.type === 'dot' && room.value === 18))
 if (coffee.nodes.filter(n => n.label === 'room temperature').length !== 1)
   fail('coffee model', 'the shared constant should be one node');
 const interest = JSON.parse(M.go(EX_INTEREST));
-if (interest.nodes.length !== 20)   // 5 × (cloud, faucet, stock, rate dot)
-  fail('interest model', `20 nodes expected, got ${interest.nodes.length}`);
+if (interest.nodes.length !== 25)   // 5 × (cloud, faucet, stock, rate dot, port)
+  fail('interest model', `25 nodes expected, got ${interest.nodes.length}`);
 if (new Set(interest.nodes.map(n => n.group).filter(g => g != null)).size !== 5)
   fail('interest model', '5 bands expected, one per account');
 const iOf = label => interest.nodes.find(n => n.label === label);
@@ -397,8 +397,8 @@ if (iOf('interest at ten')?.value !== undefined)
   fail('interest model', 'the interest faucets carry no rate of their own');
 const thermo = JSON.parse(M.go(EX_THERMOSTAT));
 const tOf = label => thermo.nodes.find(n => n.label === label);
-if (thermo.nodes.length !== 9)   // 2 clouds, 2 faucets, 1 stock, 2 discrepancies, 2 constants
-  fail('thermostat model', `9 nodes expected, got ${thermo.nodes.length}`);
+if (thermo.nodes.length !== 11)   // 2 clouds, 2 faucets, 1 stock, 2 discrepancies, 2 constants, 2 ports
+  fail('thermostat model', `11 nodes expected, got ${thermo.nodes.length}`);
 if (thermo.links.filter(l => l.type === 'flow').length !== 4 || thermo.links.length !== 10)
   fail('thermostat model', '4 flows + 6 arrows expected');
 if (JSON.stringify(tOf('room temperature')?.loop) !== JSON.stringify(['B0', 'B1']))
@@ -407,8 +407,8 @@ if (tOf('thermostat setting')?.loop !== undefined || tOf('outside temperature')?
   fail('thermostat model', 'the constants feed the loops without joining them');
 const pop = JSON.parse(M.go(EX_POP22));
 const pOf = label => pop.nodes.find(n => n.label === label);
-if (pop.nodes.length !== 7)   // 2 clouds, 2 faucets, 1 stock, 2 factor dots
-  fail('population model', `7 nodes expected, got ${pop.nodes.length}`);
+if (pop.nodes.length !== 9)   // 2 clouds, 2 faucets, 1 stock, 2 factor dots, 2 ports
+  fail('population model', `9 nodes expected, got ${pop.nodes.length}`);
 if (pop.links.filter(l => l.type === 'flow').length !== 4 || pop.links.length !== 8)
   fail('population model', '4 flows + 4 arrows expected');
 if (JSON.stringify(pOf('population')?.loop) !== JSON.stringify(['R0', 'B1']))
@@ -428,7 +428,7 @@ if (!(fert26?.value === 0.21 && fert26?.smooth === true
         [{ value: 0.09, at: 2.5 }, { value: 0.09, at: 4.5 }, { value: 0.27, at: 7 }, { value: 0.36, at: 10 }])))
   fail('population 26', `fertility should carry the four-step smooth schedule, got ${JSON.stringify(fert26)}`);
 const pop25 = JSON.parse(M.go(EX_POP25));
-if (pop25.nodes.length !== 21) fail('population 25', `21 nodes expected, got ${pop25.nodes.length}`);
+if (pop25.nodes.length !== 27) fail('population 25', `27 nodes expected (21 + 6 ports), got ${pop25.nodes.length}`);
 if (new Set(pop25.nodes.map(n => n.group).filter(g => g != null)).size !== 3)
   fail('population 25', '3 bands expected, one per scenario');
 const p25Of = label => pop25.nodes.find(n => n.label === label);
@@ -437,8 +437,8 @@ for (const [stock, loops25] of [['growth', ['R0', 'B1']], ['decline', ['R2', 'B3
     fail('population 25', `${stock} should be in ${loops25}, got ${JSON.stringify(p25Of(stock)?.loop)}`);
 const cap27 = JSON.parse(M.go(EX_CAP27));
 const c27Of = label => cap27.nodes.find(n => n.label === label);
-if (cap27.nodes.length !== 9)   // 2 clouds, 2 faucets, 1 stock, 4 constants
-  fail('capital 27', `9 nodes expected, got ${cap27.nodes.length}`);
+if (cap27.nodes.length !== 11)   // 2 clouds, 2 faucets, 1 stock, 4 constants, 2 ports
+  fail('capital 27', `11 nodes expected, got ${cap27.nodes.length}`);
 if (cap27.links.filter(l => l.type === 'flow').length !== 4 || cap27.links.length !== 10)
   fail('capital 27', '4 flows + 6 arrows expected');
 if (JSON.stringify(c27Of('capital stock')?.loop) !== JSON.stringify(['R0', 'B1']))
@@ -452,7 +452,7 @@ if (cap27.nodes.some(n => n.value !== undefined || n.expr !== undefined))
   fail('capital 27', 'the structure figure carries no numbers');
 const cap28g = JSON.parse(M.go(EX_CAP28));
 const c28Of = label => cap28g.nodes.find(n => n.label === label);
-if (cap28g.nodes.length !== 27) fail('capital 28', `27 nodes expected, got ${cap28g.nodes.length}`);
+if (cap28g.nodes.length !== 33) fail('capital 28', `33 nodes expected (27 + 6 ports), got ${cap28g.nodes.length}`);
 if (new Set(cap28g.nodes.map(n => n.group).filter(g => g != null)).size !== 3)
   fail('capital 28', '3 bands expected, one per lifetime');
 if (cap28g.links.filter(l => l.type === 'flow').length !== 12 || cap28g.links.length !== 30)

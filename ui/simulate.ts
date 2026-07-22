@@ -81,11 +81,19 @@ function faucetWiring(system: System): Wiring[] {
   const stockIds = new Set(system.nodes.filter(n => n.type === "stock").map(n => n.id));
   const nodeById = new Map(system.nodes.map(n => [n.id, n] as [string, Node]));
   const flows = system.links.filter(l => l.type === "flow");
+  // Ports are the boundary dots the compiler mints where an info arrow meets
+  // a stock; for wiring, an arrow touching a port is an arrow touching its
+  // parent stock, so resolve them away before walking the web (otherwise the
+  // level→faucet arrow closing an R loop would never reach the stock).
+  const parentOf = new Map(system.nodes
+    .filter(n => n.type === "port" && n.parent != null)
+    .map(n => [n.id, n.parent as string] as [string, string]));
+  const resolve = (id: string): string => parentOf.get(id) ?? id;
   const arrowsInto = new Map<string, string[]>();
   for (const l of system.links) {
     if (l.type === "flow") continue;
-    const t = endId(l.target);
-    arrowsInto.set(t, [...(arrowsInto.get(t) ?? []), endId(l.source)]);
+    const t = resolve(endId(l.target));
+    arrowsInto.set(t, [...(arrowsInto.get(t) ?? []), resolve(endId(l.source))]);
   }
   const infoWeb = (fid: string, attached: string): { dot: Node | null; loops: boolean } => {
     const dots = new Set<Node>();

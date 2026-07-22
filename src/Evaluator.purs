@@ -26,13 +26,14 @@ import Lexer (loopLetter)
 import Parser (Annot(..), Formula(..), Tree(..), Id, Sched, Step, opString)
 import Simple.JSON (class WriteForeign, writeImpl)
 
-data NodeType = Dot | Stock | Faucet | Cloud
+data NodeType = Dot | Stock | Faucet | Cloud | Port
 derive instance eqNodeType :: Eq NodeType
 instance showNodeType :: Show NodeType where
   show Dot = "dot"
   show Stock = "stock"
   show Faucet = "faucet"
   show Cloud = "cloud"
+  show Port = "port"
 instance writeForeignNodeType :: WriteForeign NodeType where
   writeImpl = writeImpl <<< show
 
@@ -57,9 +58,9 @@ refIds (RNum _) = []
 refIds (RRef id) = [ id ]
 refIds (RBin _ l r) = Array.nub (refIds l <> refIds r)
 
-type NodeRec = { ty :: NodeType, label :: String, value :: Maybe Number, steps :: Maybe (Array Step), smooth :: Maybe Boolean, expr :: Maybe RFormula }
+type NodeRec = { ty :: NodeType, label :: String, value :: Maybe Number, steps :: Maybe (Array Step), smooth :: Maybe Boolean, expr :: Maybe RFormula, parent :: Maybe String }
 
-type Node = { type :: NodeType, id :: String, label :: String, value :: Maybe Number, steps :: Maybe (Array Step), smooth :: Maybe Boolean, expr :: Maybe RFormula, group :: Maybe Int, loop :: Maybe (Array String) }
+type Node = { type :: NodeType, id :: String, label :: String, value :: Maybe Number, steps :: Maybe (Array Step), smooth :: Maybe Boolean, expr :: Maybe RFormula, parent :: Maybe String, group :: Maybe Int, loop :: Maybe (Array String) }
 type Link = { type :: String, source :: String, target :: String }
 type Graph = { nodes :: Array Node, links :: Array Link }
 
@@ -78,6 +79,9 @@ type EvalState =
   , links :: Array Link
   , loopTags :: Map.Map String (Array String)
   , loopCount :: Int
+  -- numbers the ports (boundary dots on stocks) in draw order, the way
+  -- loopCount numbers the loop annotations
+  , portCount :: Int
   -- first model-level error (bad formula reference); checked at the end
   , err :: Maybe String
   }
@@ -89,6 +93,7 @@ prefixFor Dot = "dot#"
 prefixFor Stock = "stock#"
 prefixFor Faucet = "faucet#"
 prefixFor Cloud = "cloud#"
+prefixFor Port = "port#"
 
 addLink :: String -> String -> String -> Evaluator Unit
 addLink source target linkType = modify_ \s ->
@@ -105,7 +110,7 @@ resolveNamed ty i name = do
       let newId = prefixFor ty <> show i
       modify_ \s -> s
         { registry = Map.insert name newId s.registry
-        , nodes = Map.insert newId { ty, label: name, value: Nothing, steps: Nothing, smooth: Nothing, expr: Nothing } s.nodes
+        , nodes = Map.insert newId { ty, label: name, value: Nothing, steps: Nothing, smooth: Nothing, expr: Nothing, parent: Nothing } s.nodes
         }
       pure newId
 
@@ -118,7 +123,7 @@ cloudLabel = "|"
 freshAnon :: NodeType -> Id -> String -> Evaluator String
 freshAnon ty i label = do
   let newId = prefixFor ty <> show i
-  modify_ \s -> s { nodes = Map.insert newId { ty, label, value: Nothing, steps: Nothing, smooth: Nothing, expr: Nothing } s.nodes }
+  modify_ \s -> s { nodes = Map.insert newId { ty, label, value: Nothing, steps: Nothing, smooth: Nothing, expr: Nothing, parent: Nothing } s.nodes }
   pure newId
 
 -- | Attach a value annotation (a stock's initial level, a faucet's rate, a
@@ -157,14 +162,46 @@ annotated rec = isJust rec.value || isJust rec.expr
 setErr :: String -> Evaluator Unit
 setErr msg = modify_ \s -> s { err = s.err <|> Just msg }
 
--- | An info arrow, unless an identical one is already drawn -- formulas
--- | re-imply arrows a hand-written statement (or an earlier formula) may
--- | already have drawn.
-addArrowUnlessDup :: String -> String -> Evaluator Unit
-addArrowUnlessDup source target = modify_ \s ->
-  if Array.any (\l -> l.type == "arrow" && l.source == source && l.target == target) s.links
-  then s
-  else s { links = Array.snoc s.links { source, target, type: "arrow" } }
+-- | The identity a link endpoint stands for: a port stands for its parent
+-- | stock, everything else for itself. Arrow deduplication compares these,
+-- | so port-attached arrows still count as stock-to-X arrows.
+logicalEnd :: EvalState -> String -> String
+logicalEnd s id = fromMaybe id (Map.lookup id s.nodes >>= _.parent)
+
+-- | Info arrows never touch a stock directly: each arrow end landing on one
+-- | gets its own PORT -- an anonymous boundary dot carrying `parent` (the
+-- | stock's id), numbered in draw order like the loop annotations. Non-stock
+-- | endpoints pass through unchanged.
+portFor :: String -> Evaluator String
+portFor id = do
+  tyM <- gets \s -> map _.ty (Map.lookup id s.nodes)
+  case tyM of
+    Just Stock -> do
+      n <- gets _.portCount
+      let pid = prefixFor Port <> show n
+      modify_ \s -> s
+        { portCount = n + 1
+        , nodes = Map.insert pid { ty: Port, label: "", value: Nothing, steps: Nothing, smooth: Nothing, expr: Nothing, parent: Just id } s.nodes
+        }
+      pure pid
+    _ -> pure id
+
+-- | An info arrow between two resolved endpoints, unless one between the
+-- | same logical endpoints is already drawn -- formulas re-imply arrows a
+-- | hand-written statement (or an earlier formula) may already have drawn,
+-- | and a repeated statement redraws its own. Stock ends attach through a
+-- | freshly minted port each (so the dedup check runs first: a duplicate
+-- | must not mint a second port).
+drawArrow :: String -> String -> Evaluator Unit
+drawArrow source target = do
+  dup <- gets \s -> Array.any
+    (\l -> l.type == "arrow" && logicalEnd s l.source == source && logicalEnd s l.target == target)
+    s.links
+  if dup then pure unit
+  else do
+    src <- portFor source
+    tgt <- portFor target
+    addLink src tgt "arrow"
 
 -- | Resolve a formula's references through the registry (minting dots for
 -- | unseen names, exactly like a bare mention). A reference must land on a
@@ -192,7 +229,7 @@ setFormula id f = do
   else do
     rf <- resolveFormula f
     modify_ \s -> s { nodes = Map.update (\rec -> Just rec { expr = Just rf }) id s.nodes }
-    traverse_ (\src -> addArrowUnlessDup src id) (refIds rf)
+    traverse_ (\src -> drawArrow src id) (refIds rf)
 
 -- | Dispatch an annotation to its setter.
 setAnnot :: String -> Maybe Annot -> Evaluator Unit
@@ -252,7 +289,7 @@ evaluateNode (FaucetLExpr i name v left right) = do
 evaluateNode (ArrowRExpr _ left right) = do
   l <- evaluateNode left
   rid <- leftmostId right
-  addLink l rid "arrow"
+  drawArrow l rid
   evaluateNode right
 -- | `<-` mirrors ArrowR: the link comes from the *nearest* term of the right
 -- | subtree (its leftmost leaf), not the chain's far end, so `a<-b->c` fans
@@ -260,7 +297,7 @@ evaluateNode (ArrowRExpr _ left right) = do
 evaluateNode (ArrowLExpr _ left right) = do
   l <- evaluateNode left
   rid <- leftmostId right
-  addLink rid l "arrow"
+  drawArrow rid l
   _ <- evaluateNode right
   pure l
 evaluateNode (ParenExpr _ expr) = evaluateNode expr
@@ -392,11 +429,11 @@ formulaCycleError nodes =
 -- | are prefixed by Main.go.
 evaluate :: List Tree -> Either String Graph
 evaluate trees =
-  let initialState = { registry: Map.empty, nodes: Map.empty, links: [], loopTags: Map.empty, loopCount: 0, err: Nothing }
+  let initialState = { registry: Map.empty, nodes: Map.empty, links: [], loopTags: Map.empty, loopCount: 0, portCount: 0, err: Nothing }
       Tuple _ finalState = runState (traverse_ evaluateNode trees) initialState
       nodeArray = (Map.toUnfoldable finalState.nodes :: Array (Tuple String NodeRec))
       groupOf = computeGroups finalState
-      nodes = map (\(Tuple id v) -> { type: v.ty, id, label: v.label, value: v.value, steps: v.steps, smooth: v.smooth, expr: v.expr, group: Map.lookup id groupOf, loop: Map.lookup id finalState.loopTags }) nodeArray
+      nodes = map (\(Tuple id v) -> { type: v.ty, id, label: v.label, value: v.value, steps: v.steps, smooth: v.smooth, expr: v.expr, parent: v.parent, group: Map.lookup id groupOf, loop: Map.lookup id finalState.loopTags }) nodeArray
   in case finalState.err <|> formulaCycleError finalState.nodes of
        Just msg -> Left msg
        Nothing -> Right { nodes, links: finalState.links }

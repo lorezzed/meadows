@@ -30,6 +30,9 @@ type NodeBase = {
   // A `: (expr)` formula: a computed auxiliary (dots) or a rate law
   // (faucets). Mutually exclusive with value/steps (first annotation wins).
   expr?: Expr | null;
+  // A port's owning stock id (type "port" only): the boundary dot the
+  // compiler mints where an info arrow meets a stock. Absent elsewhere.
+  parent?: string | null;
   // Layout hints derived from `group` each update(): whether this node sits on a
   // flow band (a horizontal line) and, if so, that band's target y. Stocks also
   // get a target x slot (evenly spaced within their band) that anchors them;
@@ -37,6 +40,16 @@ type NodeBase = {
   inFlow?: boolean;
   gy?: number;
   gx?: number;
+  // Port hints stamped each update() (type "port" only): the parent stock's
+  // node object (the port pins just inside its rect each tick) and the far
+  // endpoint of the port's one arrow (which side of the stock to face) —
+  // itself resolved to a parent stock when the far end is another port.
+  portParent?: Node;
+  portFar?: Node;
+  // A hand-dragged port's bearing on its stock's boundary (radians from the
+  // stock's center), recorded by the port drag. Sticks across ticks and
+  // updates, overriding the automatic face-the-far-endpoint bearing.
+  portAngle?: number;
 }
 type LinkBase = {
   type: string // "arrow"
