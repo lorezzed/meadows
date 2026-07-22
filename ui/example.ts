@@ -130,6 +130,48 @@ B(heat to outside <- discrepancy between inside and outside temperatures <- room
 outside temperature: 10 ~1: 7 ~2: 4 ~3: 0 ~4: -3 ~4.5: -5 ~5.5: -3 ~6: 0 ~7: 4 ~8: 7 ~9: 10 -> discrepancy between inside and outside temperatures`
     },
     {
+        label: 'Figure 21 & 22',
+        content: `|=>births[population: 6.6]=>deaths|
+R(births <- population)
+B(deaths <- population)
+fertility: 0.21 -> births
+mortality: 0.09 -> deaths`
+    },
+    {
+        label: 'Figure 21 & 23',
+        content: `|=>births[population: 6.6]=>deaths|
+R(births <- population)
+B(deaths <- population)
+fertility: 0.21 -> births
+mortality: 0.3 -> deaths`
+    },
+    {
+        label: 'Figure 21 & 24',
+        content: `|=>births[population: 6.6]=>deaths|
+R(births <- population)
+B(deaths <- population)
+fertility: 0.21 ~2: 0.09 -> births
+mortality: 0.09 -> deaths`
+    },
+    {
+        label: 'Figure 25',
+        content: `|=>births a[growth: 6.6]=>deaths a|
+R(births a <- growth)
+B(deaths a <- growth)
+fertility a: 0.21 -> births a
+mortality a: 0.09 -> deaths a
+|=>births b[decline: 6.6]=>deaths b|
+R(births b <- decline)
+B(deaths b <- decline)
+fertility b: 0.21 -> births b
+mortality b: 0.3 -> deaths b
+|=>births c[stabilization: 6.6]=>deaths c|
+R(births c <- stabilization)
+B(deaths c <- stabilization)
+fertility c: 0.21 ~2: 0.09 -> births c
+mortality c: 0.09 -> deaths c`
+    },
+    {
         label: 'Figure 42',
         content: `|=>investment[capital]=>depreciation|
 |=>regeneration[resource]=>harvest|

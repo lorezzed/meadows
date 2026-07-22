@@ -80,6 +80,50 @@ thermostat setting: 18 -> discrepancy between desired and actual room temperatur
 B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
 outside temperature: 10 ~1: 7 ~2: 4 ~3: 0 ~4: -3 ~4.5: -5 ~5.5: -3 ~6: 0 ~7: 4 ~8: 7 ~9: 10 -> discrepancy between inside and outside temperatures`;
 
+// Figures 21 & 22: the population system — one stock, a reinforcing births
+// loop and a balancing deaths loop, fertility and mortality as the valued
+// factor dots (one time unit = a decade, so 2007's crude rates 21 and 9 per
+// 1000 per year read 0.21 and 0.09).
+const EX_POP22 = `|=>births[population: 6.6]=>deaths|
+R(births <- population)
+B(deaths <- population)
+fertility: 0.21 -> births
+mortality: 0.09 -> deaths`;
+
+// Figures 21 & 23: the same structure, mortality now dominant — decline.
+const EX_POP23 = `|=>births[population: 6.6]=>deaths|
+R(births <- population)
+B(deaths <- population)
+fertility: 0.21 -> births
+mortality: 0.3 -> deaths`;
+
+// Figures 21 & 24: fertility falls smoothly to meet mortality by t=2 — the
+// scheduled FACTOR dot (goal dots had schedules already; this pins one on a
+// reinforcing loop's constant).
+const EX_POP24 = `|=>births[population: 6.6]=>deaths|
+R(births <- population)
+B(deaths <- population)
+fertility: 0.21 ~2: 0.09 -> births
+mortality: 0.09 -> deaths`;
+
+// Figure 25: the three scenarios side by side — the same two-loop structure
+// three times over, three futures decided purely by the numbers.
+const EX_POP25 = `|=>births a[growth: 6.6]=>deaths a|
+R(births a <- growth)
+B(deaths a <- growth)
+fertility a: 0.21 -> births a
+mortality a: 0.09 -> deaths a
+|=>births b[decline: 6.6]=>deaths b|
+R(births b <- decline)
+B(deaths b <- decline)
+fertility b: 0.21 -> births b
+mortality b: 0.3 -> deaths b
+|=>births c[stabilization: 6.6]=>deaths c|
+R(births c <- stabilization)
+B(deaths c <- stabilization)
+fertility c: 0.21 ~2: 0.09 -> births c
+mortality c: 0.09 -> deaths c`;
+
 const EX_LOOPS = `|=>investment[capital]=>depreciation|
 |=>regeneration[resource]=>harvest|
 capital->growth goal->investment
@@ -182,6 +226,10 @@ const goldenInputs = [
   EX_THERMOSTAT,  // figure 15
   EX_THERMO16,    // figures 15 & 16
   EX_THERMO19,    // figures 15 & 19
+  EX_POP22,       // figures 21 & 22
+  EX_POP23,       // figures 21 & 23
+  EX_POP24,       // figures 21 & 24
+  EX_POP25,       // figure 25
 ];
 
 // Errors: the "kind: line L, column C:" prefix is contractual; wording may be tuned.
@@ -319,6 +367,31 @@ if (JSON.stringify(tOf('room temperature')?.loop) !== JSON.stringify(['B0', 'B1'
   fail('thermostat model', `room temperature should be in B0 and B1, got ${JSON.stringify(tOf('room temperature')?.loop)}`);
 if (tOf('thermostat setting')?.loop !== undefined || tOf('outside temperature')?.loop !== undefined)
   fail('thermostat model', 'the constants feed the loops without joining them');
+const pop = JSON.parse(M.go(EX_POP22));
+const pOf = label => pop.nodes.find(n => n.label === label);
+if (pop.nodes.length !== 7)   // 2 clouds, 2 faucets, 1 stock, 2 factor dots
+  fail('population model', `7 nodes expected, got ${pop.nodes.length}`);
+if (pop.links.filter(l => l.type === 'flow').length !== 4 || pop.links.length !== 8)
+  fail('population model', '4 flows + 4 arrows expected');
+if (JSON.stringify(pOf('population')?.loop) !== JSON.stringify(['R0', 'B1']))
+  fail('population model', `population should be in R0 and B1, got ${JSON.stringify(pOf('population')?.loop)}`);
+if (pOf('births')?.value !== undefined || pOf('deaths')?.value !== undefined)
+  fail('population model', 'births and deaths are bare faucets — the rates live on the dots');
+if (!(pOf('fertility')?.type === 'dot' && pOf('fertility')?.value === 0.21 && pOf('fertility')?.loop === undefined))
+  fail('population model', 'fertility should be an un-tagged dot valued 0.21');
+const pop24 = JSON.parse(M.go(EX_POP24));
+const fert24 = pop24.nodes.find(n => n.label === 'fertility');
+if (!(fert24?.value === 0.21 && fert24?.smooth === true
+      && JSON.stringify(fert24?.steps) === JSON.stringify([{ value: 0.09, at: 2 }])))
+  fail('population 24', `fertility should carry the smooth schedule, got ${JSON.stringify(fert24)}`);
+const pop25 = JSON.parse(M.go(EX_POP25));
+if (pop25.nodes.length !== 21) fail('population 25', `21 nodes expected, got ${pop25.nodes.length}`);
+if (new Set(pop25.nodes.map(n => n.group).filter(g => g != null)).size !== 3)
+  fail('population 25', '3 bands expected, one per scenario');
+const p25Of = label => pop25.nodes.find(n => n.label === label);
+for (const [stock, loops25] of [['growth', ['R0', 'B1']], ['decline', ['R2', 'B3']], ['stabilization', ['R4', 'B5']]])
+  if (JSON.stringify(p25Of(stock)?.loop) !== JSON.stringify(loops25))
+    fail('population 25', `${stock} should be in ${loops25}, got ${JSON.stringify(p25Of(stock)?.loop)}`);
 
 console.log(failures ? `${failures} FAILURE(S)` : 'ALL CHECKS PASSED');
 process.exit(failures ? 1 : 0);

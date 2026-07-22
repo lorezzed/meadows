@@ -325,6 +325,95 @@ outside temperature: ${wave} -> discrepancy between inside and outside temperatu
     fail('relayed loop', 'feedback through a relay dot must still compound');
 }
 
+// Figures 21–25: the population system — a reinforcing births loop and a
+// balancing deaths loop on one stock, both read through the factor rule
+// (bare faucets, drawn level→faucet arrows, valued fertility and mortality
+// dots). One time unit is a decade, so 2007's crude rates (21 births, 9
+// deaths per 1000 per year) read 0.21 and 0.09 — and the same structure
+// grows (22), declines (23), or stabilizes (24, fertility falling smoothly
+// onto mortality) purely by the numbers. Mirrored step-for-step in the
+// simulator's float-op order, factor schedules through scheduleFn itself.
+{
+  const pop = (fertility, mortality) => `|=>births[population: 6.6]=>deaths|
+R(births <- population)
+B(deaths <- population)
+fertility: ${fertility} -> births
+mortality: ${mortality} -> deaths`;
+  const mirror = (fertFn, mortFn) => {
+    let P = 6.6;
+    const levels = [P];
+    for (let n = 0; n < Math.round(T_END / DT); n++) {
+      const qb = (fertFn(n * DT) * P) * DT * 1;
+      const qd = (mortFn(n * DT) * P) * DT * 1;
+      P = Math.max(0, P + (qb - qd));
+      levels.push(P);
+    }
+    return levels;
+  };
+  const constant = (v) => () => v;
+  const fertFall = scheduleFn({ value: 0.21, steps: [{ at: 2, value: 0.09 }], smooth: true });
+  const runs = [
+    ['figure 22', pop('0.21', '0.09'), mirror(constant(0.21), constant(0.09)), 21.5, 22.2],
+    ['figure 23', pop('0.21', '0.3'), mirror(constant(0.21), constant(0.3)), 2.5, 2.9],
+    ['figure 24', pop('0.21 ~2: 0.09', '0.09'), mirror(fertFall, constant(0.09)), 7.3, 7.6],
+  ];
+  const lasts = new Map();
+  for (const [fig, input, wantLevels, lo, hi] of runs) {
+    const system = sys(input);
+    const popn = simulate(system).find(s => s.label === 'population');
+    if (!popn.levels.every((v, i) => Math.abs(v - wantLevels[i]) < 1e-12))
+      fail(fig, 'series must match the mirrored recurrence sample-for-sample');
+    if (!(last(popn) > lo && last(popn) < hi))
+      fail(fig, `should end near the book's curve in (${lo}, ${hi}), got ${last(popn)}`);
+    if (goalRefs(system).length !== 0)
+      fail(fig, 'fertility and mortality are factors, not goals — no dashed rules');
+    lasts.set(fig, last(popn));
+  }
+  const growth = simulate(sys(pop('0.21', '0.09')))[0];
+  if (!growth.levels.every((v, i) => i === 0 || v > growth.levels[i - 1]))
+    fail('figure 22', 'births dominant: population must grow strictly');
+  const decline = simulate(sys(pop('0.21', '0.3')))[0];
+  if (!decline.levels.every((v, i) => v > 0 && (i === 0 || v < decline.levels[i - 1])))
+    fail('figure 23', 'deaths dominant: population must fall strictly, staying positive');
+  // Stabilization: growth until fertility meets mortality at t=2, then the
+  // two rates cancel exactly — the level holds to the bit from there on.
+  const stab = simulate(sys(pop('0.21 ~2: 0.09', '0.09')))[0];
+  const flatFrom = Math.round(2 / DT);
+  if (!stab.levels.every((v, i) => i === 0 || v >= stab.levels[i - 1]))
+    fail('figure 24', 'population must never fall in the stabilization run');
+  if (!stab.levels.every((v, i) => i < flatFrom || v === stab.levels[flatFrom]))
+    fail('figure 24', 'level must hold exactly once fertility equals mortality');
+
+  // Figure 25: the three scenarios side by side — three copies of the same
+  // structure in one model, each reproducing its standalone run exactly.
+  const F25 = `|=>births a[growth: 6.6]=>deaths a|
+R(births a <- growth)
+B(deaths a <- growth)
+fertility a: 0.21 -> births a
+mortality a: 0.09 -> deaths a
+|=>births b[decline: 6.6]=>deaths b|
+R(births b <- decline)
+B(deaths b <- decline)
+fertility b: 0.21 -> births b
+mortality b: 0.3 -> deaths b
+|=>births c[stabilization: 6.6]=>deaths c|
+R(births c <- stabilization)
+B(deaths c <- stabilization)
+fertility c: 0.21 ~2: 0.09 -> births c
+mortality c: 0.09 -> deaths c`;
+  const system25 = sys(F25);
+  const series25 = simulate(system25);
+  if (series25.map(s => s.label).join() !== 'growth,decline,stabilization')
+    fail('figure 25', `three scenario stocks expected, got ${series25.map(s => s.label)}`);
+  for (const [label, fig] of [['growth', 'figure 22'], ['decline', 'figure 23'], ['stabilization', 'figure 24']]) {
+    const got = last(series25.find(s => s.label === label));
+    if (Math.abs(got - lasts.get(fig)) > 1e-12)
+      fail('figure 25', `${label} must match its standalone run, got ${got} vs ${lasts.get(fig)}`);
+  }
+  if (goalRefs(system25).length !== 0)
+    fail('figure 25', 'no goal rules in the composite either');
+}
+
 // Formulas: `: (expr)` is a rate law (faucets) or a computed auxiliary
 // (dots). Figure 14's book equations — output = capital / 3, investment =
 // output × fraction invested — give capital compound growth at

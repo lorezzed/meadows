@@ -647,9 +647,25 @@ function update(system: System) {
   // and the initial charge burst flings clumped floaters far off-canvas,
   // stranding the auto-fit viewBox zoomed out when alpha dies before the
   // easing catches up. Slotted nodes seed exactly at their slot; floaters
-  // (dots) seed on the same phyllotaxis spiral d3 uses, centred on their
-  // float rest point (canvas mid-x, floatY). Recycled nodes keep their
-  // position (drags and edits stay smooth).
+  // (dots) seed on the same phyllotaxis spiral d3 uses, centred one row below
+  // the mean slot of the banded nodes they link to — the aux web hangs under
+  // its own band, so a three-band model's floaters don't all pile onto the
+  // canvas-centred float line beside the MIDDLE band and have to thread the
+  // whole stack's collision discs to reach a band two gaps away (figure 25's
+  // per-scenario fertility/mortality dots). With one band the fallthrough
+  // (canvas mid-x, floatY) and the linked seed coincide. Only the spawn moves:
+  // the force targets are untouched, so settled layouts, drags, and typing
+  // edits (which recycle positions) behave exactly as before.
+  const floatSeed = new Map<string, { x: number; y: number; n: number }>();
+  for (const l of links) {
+    const s = nodeById.get(endId(l.source)), t = nodeById.get(endId(l.target));
+    if (!s || !t) continue;
+    for (const [fl, banded] of [[s, t], [t, s]] as const) {
+      if (fl.group != null || banded.gx == null || banded.gy == null) continue;
+      const acc = floatSeed.get(fl.id) ?? { x: 0, y: 0, n: 0 };
+      floatSeed.set(fl.id, { x: acc.x + banded.gx, y: acc.y + banded.gy, n: acc.n + 1 });
+    }
+  }
   nodes.forEach((d, i) => {
     if (d.x != null || d.y != null) return;
     if (d.gx != null && d.gy != null) {
@@ -657,8 +673,9 @@ function update(system: System) {
       d.y = d.gy;
     } else {
       const r = 10 * Math.sqrt(0.5 + i), a = i * 2.399963229728653; // d3's spiral
-      d.x = svgWidth / 2 + r * Math.cos(a);
-      d.y = (d.gy ?? svgHeight / 2) + r * Math.sin(a);
+      const seed = floatSeed.get(d.id);
+      d.x = (seed ? seed.x / seed.n : svgWidth / 2) + r * Math.cos(a);
+      d.y = (seed ? seed.y / seed.n + rowGap : d.gy ?? svgHeight / 2) + r * Math.sin(a);
     }
   });
 
