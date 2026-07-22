@@ -24,36 +24,6 @@ const pre = container
 const examples = container
   .append('div')
   .style('order', 2)
-examples.append('button')
-  .text('a->b')
-  .on('click', function () {
-    loadExample(this.textContent);
-  });
-examples.append('button')
-  .text('a->b=>c d')
-  .on('click', function () {
-    loadExample(this.textContent);
-  });
-examples.append('button')
-  .text('[a]')
-  .on('click', function () {
-    loadExample(this.textContent);
-  });
-examples.append('button')
-  .text('a->b->[c]')
-  .on('click', function () {
-    loadExample(this.textContent);
-  });
-examples.append('button')
-  .text('a->b=>c [d]')
-  .on('click', function () {
-    loadExample(this.textContent);
-  });
-examples.append('button')
-  .text('|->a->b=>c [d]=>e|')
-  .on('click', function () {
-    loadExample(this.textContent);
-  });
 exampleList.map(x => {
   const { label, content } = x
   examples.append('button')
