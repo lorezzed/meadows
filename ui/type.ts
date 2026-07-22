@@ -1,3 +1,11 @@
+// A compiled formula from the JSON seam: numbers, node references (by id),
+// and binary arithmetic — the evaluator resolved names to ids and drew the
+// implied info arrows; the simulator evaluates the tree each step.
+export type Expr =
+  | { kind: "num"; value: number }
+  | { kind: "ref"; id: string }
+  | { kind: "+" | "-" | "*" | "/"; left: Expr; right: Expr };
+
 type NodeBase = {
   type: string;
   id: string;
@@ -12,9 +20,16 @@ type NodeBase = {
   // Numeric annotation from the DSL (absent/null = none): a stock's initial
   // level (`[name: N]`) or a faucet's initial rate (`=>name: N`).
   value?: number | null;
-  // A faucet's piecewise-constant rate steps (`=>name: 0 @5: 5` = rate 0,
-  // then 5 from t=5). Absent/null = the rate is `value` throughout.
+  // A schedule's steps (`=>name: 0 @5: 5` = rate 0, then 5 from t=5; dots
+  // take them too as driving variables). Absent/null = `value` throughout.
   steps?: { at: number; value: number }[] | null;
+  // True when the steps were written with `~`: the schedule interpolates a
+  // smooth monotone curve through its points instead of holding
+  // piecewise-constant. Absent/null = stepped.
+  smooth?: boolean | null;
+  // A `: (expr)` formula: a computed auxiliary (dots) or a rate law
+  // (faucets). Mutually exclusive with value/steps (first annotation wins).
+  expr?: Expr | null;
   // Layout hints derived from `group` each update(): whether this node sits on a
   // flow band (a horizontal line) and, if so, that band's target y. Stocks also
   // get a target x slot (evenly spaced within their band) that anchors them;

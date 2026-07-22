@@ -75,9 +75,11 @@ rate at ten: 0.1 -> interest at ten`
     },
     {
         label: 'Figure 14',
-        content: `|=>investment[capital]
-fraction of output invested -> investment
-R(capital -> output -> investment)`
+        content: `|=>investment[capital: 100]
+R(capital -> output -> investment)
+output: (capital / 3)
+investment: (output * fraction of output invested)
+fraction of output invested: 0.2`
     },
     {
         label: 'Figure 15',
@@ -86,6 +88,46 @@ B(heat from furnace <- discrepancy between desired and actual room temperatures 
 thermostat setting -> discrepancy between desired and actual room temperatures
 B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
 outside temperature -> discrepancy between inside and outside temperatures`
+    },
+    {
+        label: 'Figure 15 & 16',
+        content: `|=>heat from furnace: 1.2[room temperature: 10]=>heat to outside|
+B(heat from furnace <- discrepancy between desired and actual room temperatures <- room temperature)
+thermostat setting: 18 -> discrepancy between desired and actual room temperatures
+B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
+outside temperature -> discrepancy between inside and outside temperatures`
+    },
+    {
+        label: 'Figure 15 & 17',
+        content: `|=>heat from furnace[room temperature: 18]=>heat to outside: 0.13|
+B(heat from furnace <- discrepancy between desired and actual room temperatures <- room temperature)
+thermostat setting -> discrepancy between desired and actual room temperatures
+B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
+outside temperature: 10 -> discrepancy between inside and outside temperatures`
+    },
+    {
+        label: 'Figure 15 & 18',
+        content: `|=>heat from furnace: 1.2[room temperature: 10]=>heat to outside: 0.13|
+B(heat from furnace <- discrepancy between desired and actual room temperatures <- room temperature)
+thermostat setting: 18 -> discrepancy between desired and actual room temperatures
+B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
+outside temperature: 10 -> discrepancy between inside and outside temperatures`
+    },
+    {
+        label: 'Figure 15 & 19',
+        content: `|=>heat from furnace: 1.2[room temperature: 10]=>heat to outside: 0.13|
+B(heat from furnace <- discrepancy between desired and actual room temperatures <- room temperature)
+thermostat setting: 18 -> discrepancy between desired and actual room temperatures
+B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
+outside temperature: 10 ~1: 7 ~2: 4 ~3: 0 ~4: -3 ~4.5: -5 ~5.5: -3 ~6: 0 ~7: 4 ~8: 7 ~9: 10 -> discrepancy between inside and outside temperatures`
+    },
+    {
+        label: 'Figure 15 & 20',
+        content: `|=>heat from furnace: 1.2[room temperature: 10]=>heat to outside: 0.4|
+B(heat from furnace <- discrepancy between desired and actual room temperatures <- room temperature)
+thermostat setting: 18 -> discrepancy between desired and actual room temperatures
+B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
+outside temperature: 10 ~1: 7 ~2: 4 ~3: 0 ~4: -3 ~4.5: -5 ~5.5: -3 ~6: 0 ~7: 4 ~8: 7 ~9: 10 -> discrepancy between inside and outside temperatures`
     },
     {
         label: 'Figure 42',

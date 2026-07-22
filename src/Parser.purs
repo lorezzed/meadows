@@ -1,5 +1,9 @@
 module Parser
-  ( Tree(..)
+  ( Annot(..)
+  , Formula(..)
+  , FormOp(..)
+  , opString
+  , Tree(..)
   , Id
   , Step
   , Sched
@@ -19,18 +23,52 @@ import Parsing (ParseState(..), ParserT, fail, failWithPosition, getParserT, ini
 import Parsing.Combinators (choice, many, optionMaybe, optional, sepEndBy, (<?>))
 import Parsing.Token (eof) as Token
 type Id = Int
--- | One segment of a faucet's piecewise-constant rate schedule: from time
--- | `at` onward the rate is `value` (until a later step takes over).
+-- | One segment of a schedule: from time `at` onward the value is `value`
+-- | (until a later step takes over), or -- in a smooth schedule -- the
+-- | curve passes through (at, value).
 type Step = { at :: Number, value :: Number }
--- | A faucet's full annotation: the initial rate plus any `@time: rate`
--- | steps, e.g. `inflow: 0 @5: 5` = closed until t=5, then 5.
-type Sched = { initial :: Number, steps :: Array Step }
+-- | A full annotation: the initial value plus any steps. Steps written with
+-- | `@` hold piecewise-constant (`inflow: 0 @5: 5` = closed until t=5, then
+-- | 5 -- a tap being turned); steps written with `~` mark the schedule
+-- | `smooth` and the simulator interpolates a curve through the points
+-- | (figure 19's continuously varying outside temperature). One schedule
+-- | uses one marker: the first step decides, and a later step with the
+-- | other marker is a positioned error.
+type Sched = { initial :: Number, steps :: Array Step, smooth :: Boolean }
+-- | Formula operators, usual precedence (`*`/`/` bind tighter than `+`/`-`).
+data FormOp = FAdd | FSub | FMul | FDiv
+derive instance eqFormOp :: Eq FormOp
+opString :: FormOp -> String
+opString FAdd = "+"
+opString FSub = "-"
+opString FMul = "*"
+opString FDiv = "/"
+-- | A value formula (`investment: (output * fraction of output invested)`):
+-- | arithmetic over numbers and named nodes. Each reference mints a parser
+-- | id like any other name mention, so the evaluator resolves it through
+-- | the registry -- identity, not spelling.
+data Formula
+  = FNum Number
+  | FRef Id String
+  | FBin FormOp Formula Formula
+derive instance eqFormula :: Eq Formula
+instance showFormula :: Show Formula where
+  show (FNum n) = show n
+  show (FRef i s) = s <> "#" <> show i
+  show (FBin op l r) = "(" <> show l <> " " <> opString op <> " " <> show r <> ")"
+-- | A node's annotation: a schedule (a constant, `@` steps, or a `~` curve)
+-- | or a parenthesized formula.
+data Annot = SchedAnnot Sched | FormulaAnnot Formula
+derive instance eqAnnot :: Eq Annot
+instance showAnnot :: Show Annot where
+  show (SchedAnnot sch) = "Sched" <> showSched (Just sch)
+  show (FormulaAnnot f) = "Formula: " <> show f
 data Tree
-  = NodeExpr Id String (Maybe Number)
+  = NodeExpr Id String (Maybe Annot)
   | CloudExpr Id
   | StockExpr Id String (Maybe Number)
-  | FaucetRExpr Id String (Maybe Sched) Tree (Maybe Tree)
-  | FaucetLExpr Id String (Maybe Sched) Tree (Maybe Tree)
+  | FaucetRExpr Id String (Maybe Annot) Tree (Maybe Tree)
+  | FaucetLExpr Id String (Maybe Annot) Tree (Maybe Tree)
   | ArrowRExpr Id Tree Tree
   | ArrowLExpr Id Tree Tree
   | ParenExpr Id Tree
@@ -38,11 +76,11 @@ data Tree
 derive instance eqTree :: Eq Tree
 derive instance genericTree :: Generic Tree _
 instance showTree :: Show Tree where
-  show (NodeExpr i s v) = "Node#" <> show i <> "(" <> s <> showValue v <> ")"
+  show (NodeExpr i s v) = "Node#" <> show i <> "(" <> s <> showAnnotM v <> ")"
   show (StockExpr i s v) = "Stock#" <> show i <> "(" <> show s <> showValue v <> ")"
   show (CloudExpr i) = "Cloud#" <> show i
-  show (FaucetRExpr i s v l r) = "FaucetR#" <> show i <> "[" <> show s <> showSched v <> "](" <> show l <> " -> " <> show r <> " )"
-  show (FaucetLExpr i s v l r) = "FaucetL#" <> show i <> "[" <> show s <> showSched v <> "](" <> show l <> " <- " <> show r <> " )"
+  show (FaucetRExpr i s v l r) = "FaucetR#" <> show i <> "[" <> show s <> showAnnotM v <> "](" <> show l <> " -> " <> show r <> " )"
+  show (FaucetLExpr i s v l r) = "FaucetL#" <> show i <> "[" <> show s <> showAnnotM v <> "](" <> show l <> " <- " <> show r <> " )"
   show (ArrowRExpr i l r) = "ArrowR#" <> show i <> "(" <> show l <> " -> " <> show r <> ")"
   show (ArrowLExpr i l r) = "ArrowL#" <> show i <> "(" <> show l <> " <- " <> show r <> ")"
   show (ParenExpr i expr) = "Paren#" <> show i <> "(" <> show expr <> ")"
@@ -52,10 +90,17 @@ showValue :: Maybe Number -> String
 showValue Nothing = ""
 showValue (Just n) = ": " <> show n
 
+showAnnotM :: Maybe Annot -> String
+showAnnotM Nothing = ""
+showAnnotM (Just (SchedAnnot sch)) = showSched (Just sch)
+showAnnotM (Just (FormulaAnnot f)) = ": " <> show f
+
 showSched :: Maybe Sched -> String
 showSched Nothing = ""
 showSched (Just s) = ": " <> show s.initial
-  <> Array.foldMap (\st -> " @" <> show st.at <> ": " <> show st.value) s.steps
+  <> Array.foldMap (\st -> " " <> marker <> show st.at <> ": " <> show st.value) s.steps
+  where
+  marker = if s.smooth then "~" else "@"
 -- | The token parser: positioned tokens over a `State Id` base monad.
 -- | ParserT's MonadState instance routes `state` to the base monad, so
 -- | `fresh` mints AST ids directly inside parsing code.
@@ -120,25 +165,128 @@ numberTok = satisfyMap case _ of
 valueTail :: P (Maybe Number)
 valueTail = optionMaybe (tk TokColon *> (numberTok <?> "a number after ':'"))
 
--- | A faucet's optional annotation: an initial rate plus any number of
--- | `@time: rate` steps (`inflow: 0 @5: 5` = closed until t=5, then 5).
--- | Same non-backtracking discipline as valueTail: each consumed ':' or '@'
--- | commits, so a malformed segment is a positioned error. `many stepSeg`
--- | terminates because stepSeg fails without consuming when the next token
--- | isn't '@' (satisfyMap), and always consumes on success.
-schedTail :: P (Maybe Sched)
-schedTail = optionMaybe do
+-- | An optional annotation after a name: `: N` (with optional `@`/`~`
+-- | steps) is a schedule, `: ( ... )` a formula. Same non-backtracking
+-- | discipline as valueTail: each consumed ':', '(', '@', or '~' commits,
+-- | so a malformed segment is a positioned error.
+annotTail :: P (Maybe Annot)
+annotTail = optionMaybe do
   tk TokColon
-  initial <- numberTok <?> "a number after ':'"
-  steps <- many stepSeg
-  pure { initial, steps: Array.fromFoldable steps }
+  choice
+    [ FormulaAnnot <$> formulaGroup
+    , SchedAnnot <$> schedBody
+    ] <?> "a number or a '(' formula after ':'"
+
+-- | A schedule (the ':' already consumed): an initial value plus any number
+-- | of steps. The first step's marker fixes the schedule's kind -- `@`
+-- | holds piecewise-constant, `~` interpolates smoothly -- and every later
+-- | step must repeat the same marker (the other one fails without
+-- | consuming, so `many` stops and the stray marker surfaces as a
+-- | positioned "unexpected" error).
+schedBody :: P Sched
+schedBody = do
+  initial <- numberTok
+  mfirst <- optionMaybe anyMarker
+  case mfirst of
+    Nothing -> pure { initial, steps: [], smooth: false }
+    Just smooth -> do
+      first <- stepBody (markerName smooth)
+      rest <- many (stepSeg smooth)
+      pure { initial, steps: Array.fromFoldable (first : rest), smooth }
   where
-  stepSeg = do
-    tk TokAt
-    at <- numberTok <?> "a time after '@'"
-    tk TokColon <?> "a ':' after the '@' time"
-    value <- numberTok <?> "a rate after ':'"
+  -- true = `~` (smooth), false = `@` (stepped)
+  anyMarker = satisfyMap case _ of
+    TokAt -> Just false
+    TokTilde -> Just true
+    _ -> Nothing
+  markerOf smooth = if smooth then TokTilde else TokAt
+  markerName smooth = if smooth then "'~'" else "'@'"
+  stepSeg smooth = tk (markerOf smooth) *> stepBody (markerName smooth)
+  stepBody name = do
+    at <- numberTok <?> ("a time after " <> name)
+    tk TokColon <?> ("a ':' after the " <> name <> " time")
+    value <- numberTok <?> "a value after ':'"
     pure { at, value }
+
+-- | formula group := '(' formula ')'   (the annotation form `: (expr)`).
+-- | The parens delimit where the formula ends, keeping the surrounding
+-- | statement grammar (arrows, faucets, multi-word names) unambiguous.
+formulaGroup :: P Formula
+formulaGroup = do
+  tk TokLParen
+  f <- formula
+  tk TokRParen <?> "a closing ')' after the formula"
+  pure f
+
+-- | formula := multiplicative (('+' | '-' | juxtaposed negative number)
+-- | multiplicative)*. A juxtaposed negative literal folds as addition of
+-- | the negative -- `x -5` lexes the `-5` as one signed number, and
+-- | x + (-5) is the same arithmetic as x - 5, so spacing never changes the
+-- | math.
+formula :: P Formula
+formula = defer \_ -> do
+  first <- fMult
+  fAddTail first
+
+fAddTail :: Formula -> P Formula
+fAddTail left = defer \_ -> choice
+  [ tk TokPlus *> (fMult >>= \r -> fAddTail (FBin FAdd left r))
+  , tk TokMinus *> (fMult >>= \r -> fAddTail (FBin FSub left r))
+  , negJuxt
+  , pure left
+  ]
+  where
+  negJuxt = do
+    n <- satisfyMap case _ of
+      TokNumber x | x < 0.0 -> Just x
+      _ -> Nothing
+    r <- fMultTail (FNum n)
+    fAddTail (FBin FAdd left r)
+
+-- | multiplicative := factor (('*' | '/') factor | juxtaposed factor)*.
+-- | Juxtaposition is implicit multiplication and only a name or a '('
+-- | group may juxtapose (`2x`, `2(a + b)`); a juxtaposed positive number
+-- | stays an error, and negative ones belong to the additive level. Note
+-- | the lexer joins space-separated words into ONE multi-word name, so
+-- | `output fraction` is a single reference -- write `output * fraction`
+-- | to multiply two names.
+fMult :: P Formula
+fMult = defer \_ -> do
+  first <- fFactor
+  fMultTail first
+
+fMultTail :: Formula -> P Formula
+fMultTail left = defer \_ -> choice
+  [ tk TokStar *> (fFactor >>= \r -> fMultTail (FBin FMul left r))
+  , tk TokSlash *> (fFactor >>= \r -> fMultTail (FBin FDiv left r))
+  , juxt
+  , pure left
+  ]
+  where
+  juxt = do
+    r <- choice [ fRef, fParen ]
+    fMultTail (FBin FMul left r)
+
+-- | factor := NUMBER | NAME | '(' formula ')'
+fFactor :: P Formula
+fFactor = defer \_ -> choice
+  [ FNum <$> numberTok
+  , fRef
+  , fParen
+  ] <?> "a number, a name, or '(' in the formula"
+
+fRef :: P Formula
+fRef = do
+  name <- identTok
+  i <- fresh
+  pure (FRef i name)
+
+fParen :: P Formula
+fParen = defer \_ -> do
+  tk TokLParen
+  f <- formula
+  tk TokRParen <?> "a closing ')' in the formula"
+  pure f
 -- | program := sep? (statement sepEndBy sep) eof
 -- | The lexer collapses every newline run into a single TokSep, so one
 -- | optional leading separator plus sepEndBy covers blank leading, interior,
@@ -205,10 +353,10 @@ arrowTail mk opName left = do
 -- | the faucet itself (`a=>b->c` == `(a=>b)->c`); a present target has
 -- | already consumed any trailing operators, so exprTail then falls through
 -- | its bare-term alternative -- one path serves both shapes.
-faucetTail :: (Id -> String -> Maybe Sched -> Tree -> Maybe Tree -> Tree) -> String -> Tree -> P Tree
+faucetTail :: (Id -> String -> Maybe Annot -> Tree -> Maybe Tree -> Tree) -> String -> Tree -> P Tree
 faucetTail mk opName left = do
   name <- identTok <?> ("a faucet name after '" <> opName <> "'")
-  mval <- schedTail
+  mval <- annotTail
   i <- fresh
   mtarget <- optionMaybe expression
   exprTail (mk i name mval left mtarget)
@@ -237,14 +385,16 @@ cloudTerm = do
   tk TokCloud
   i <- fresh
   pure (CloudExpr i)
--- | A bare name takes a single `: N` constant (`room temperature: 18`) but
--- | never a schedule -- an `@` after it is a positioned error at the `@`.
--- | valueTail consumes nothing when no ':' follows, and the id still mints
--- | after the whole term, so value-less minting order is untouched.
+-- | A bare name takes a full annotation, exactly like a faucet: `: N` is
+-- | an auxiliary constant (`room temperature: 18`), `@`/`~` steps make it a
+-- | driving variable (figure 19's cold day), and `: (expr)` a computed
+-- | auxiliary (`output: (capital / 3)`). annotTail consumes nothing when no
+-- | ':' follows, and the id still mints after the whole term, so value-less
+-- | minting order is untouched.
 identTerm :: P Tree
 identTerm = do
   name <- identTok
-  mval <- valueTail
+  mval <- annotTail
   i <- fresh
   pure (NodeExpr i name mval)
 -- | ParenExpr mints BEFORE its inner expression (id-stability point).

@@ -1,7 +1,7 @@
 import * as d3 from "d3";
 
 import * as interpreter from '../output/Main/index'
-import type { Node, Link, System } from "./type";
+import type { Expr, Node, Link, System } from "./type";
 import faucetSvg from './shape/faucet.svg'
 import cloudSvg from './shape/cloud.svg'
 import { exampleList } from "./example";
@@ -190,9 +190,26 @@ const cloudHeight = 52;
 // schedule). Display only — node ids and the compiler's name registry stay
 // keyed on the bare name, so `[water in tub]` written elsewhere still
 // resolves to the same node.
+// Labels for formula references, refreshed by update() (refs are ids).
+let labelById = new Map<string, string>();
+const renderExpr = (e: Expr): string => {
+  switch (e.kind) {
+    case "num": return `${e.value}`;
+    case "ref": return labelById.get(e.id) ?? e.id;
+    default: {
+      const wrap = (c: Expr) =>
+        (c.kind === "+" || c.kind === "-") && (e.kind === "*" || e.kind === "/")
+          ? `(${renderExpr(c)})`
+          : renderExpr(c);
+      return `${wrap(e.left)} ${e.kind} ${wrap(e.right)}`;
+    }
+  }
+};
 const displayLabel = (d: Node): string => {
+  if (d.expr != null) return `${d.label}: (${renderExpr(d.expr)})`;
   if (d.value == null) return d.label;
-  const steps = (d.steps ?? []).map(s => ` @${s.at}: ${s.value}`).join("");
+  const marker = d.smooth ? "~" : "@";
+  const steps = (d.steps ?? []).map(s => ` ${marker}${s.at}: ${s.value}`).join("");
   return `${d.label}: ${d.value}${steps}`;
 };
 
@@ -297,9 +314,12 @@ function update(system: System) {
     // would otherwise keep a stale `group`/`loop`/`value`/`steps` after
     // losing it upstream (the JSON simply omits the key, so Object.assign
     // wouldn't overwrite).
-    return prev ? Object.assign(prev, { group: null, loop: null, value: null, steps: null }, d) : { ...d };
+    return prev ? Object.assign(prev, { group: null, loop: null, value: null, steps: null, smooth: null, expr: null }, d) : { ...d };
   });
   const links = system.links.map(d => ({ ...d }));
+  // Formula labels resolve refs by id; refresh before any displayLabel call
+  // (the node joins below render labels).
+  labelById = new Map(nodes.map(n => [n.id, n.label]));
 
   flowLink = flowLink
     .data(links.filter(l => l.type === "flow"))

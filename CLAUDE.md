@@ -25,6 +25,12 @@ and `esbuild`. Nearly every command is meant to run inside `nix develop`, which 
 Note: `package.json` mentions `parcel` and the ambient `ui/declarations.d.ts` comment
 references Parcel, but the actual bundler in use is **esbuild** (via `make dev`).
 
+Careful: `make dev`'s esbuild flags (`--outdir=./ui` + `--servedir`) are safe only
+because serve mode builds in memory and writes nothing. Never run the same command
+as a one-shot **without** `--servedir` — it writes the bundle to `ui/index.js`,
+clobbering the checked-in one-line entrypoint. For a throwaway bundle, point
+`--outdir` somewhere disposable (e.g. a tmp dir).
+
 ## Common commands
 
 ```bash
@@ -80,12 +86,17 @@ JSON error string):
    - `R(` / `B(` → loop-open (`TokLoop`, exact uppercase two-char lexeme, tried
      before identifiers with backtracking — a bare `R`, `R->b`, or `Rx(` still
      lex as identifiers); `)` (`TokRParen`) closes the annotation
-   - `:` → `TokColon`, `@` → `TokAt`, and digit-leading number literals →
-     `TokNumber` (digits with an optional `.digits` fraction; no sign, no
-     exponent — together they form value annotations like `[tub: 50]` and
-     rate schedules like `=>inflow: 0 @5: 5`). A digit *inside* a word stays
-     part of the identifier (`a2` is one name); `-5` and `5.` are tokenization
-     errors
+   - `:` → `TokColon`, `@` → `TokAt`, `~` → `TokTilde`, `+` `-` `*` `/` →
+     formula operators (`TokPlus`/`TokMinus`/`TokStar`/`TokSlash`; a `-`
+     directly followed by digits is a signed literal instead), and number
+     literals → `TokNumber`
+     (digits with an optional `.digits` fraction and an optional leading `-`
+     sign; no exponent — together they form value annotations like
+     `[tub: 50]` and schedules like `=>inflow: 0 @5: 5` or figure 19's
+     `outside temperature: 10 @4.5: -5 ...`). Operators lex before numbers,
+     so `->` is never mistaken for a sign; a digit *inside* a word stays
+     part of the identifier (`a2` is one name); `5.` is a tokenization
+     error
 
 2. **`Parser.purs`** — `parse :: List PosToken -> Either String (List Tree)`, one `Tree`
    per newline-separated statement. A combinator parser over the token stream:
@@ -97,15 +108,25 @@ JSON error string):
    loop's inner expression resolves to, and the tail's nodes are not loop
    members), but is never an *interior* term (`a->R(b)` is a positioned
    error). Stocks accept an optional `: N` initial
-   value (`'[' NAME (':' NUMBER)? ']'`, `Maybe Number` on `StockExpr`); faucet
-   names accept an optional piecewise-constant **rate schedule**
-   (`NAME (':' NUMBER ('@' NUMBER ':' NUMBER)*)?` for both directions, e.g.
-   `inflow: 0 @5: 5` = closed until t=5 then 5), carried as
-   `Maybe Sched = Maybe { initial, steps :: Array { at, value } }` on
-   `Faucet*Expr`; bare names accept a single `: N` **dot constant**
-   (`room temperature: 18`, `Maybe Number` on `NodeExpr`) but never a
-   schedule. A value anywhere else (`[a]: 5`, a bare `5`, a schedule on a
-   stock or dot) is a positioned parse error, and
+   value (`'[' NAME (':' NUMBER)? ']'`, `Maybe Number` on `StockExpr`);
+   faucet and bare (dot) names accept an optional **schedule**
+   (`NAME (':' NUMBER (MARKER NUMBER ':' NUMBER)*)?` where MARKER is `@` or
+   `~`; e.g. `inflow: 0 @5: 5` = closed until t=5 then 5, or a single `: N`
+   constant like `room temperature: 18`) **or a parenthesized formula**
+   (`: (expr)` — `+ - * /` with the usual precedence, implicit
+   multiplication by juxtaposition with a name or group (`2x`, `2(a + b)`;
+   note multi-word joining makes `output fraction` ONE name — write
+   `output * fraction` to multiply), references to other nodes by name, a
+   `Formula` AST with per-reference minted ids), carried as
+   `Maybe Annot = Maybe (SchedAnnot Sched | FormulaAnnot Formula)` with
+   `Sched = { initial, steps :: Array { at, value }, smooth :: Boolean }`
+   on `Faucet*Expr` and `NodeExpr` — a scheduled dot is a *driving variable*
+   (figure 19's cold-day `outside temperature`). `@` steps hold
+   piecewise-constant; `~` steps mark the schedule smooth (interpolated).
+   One schedule uses one marker — the first step decides, and a step with
+   the other marker is a positioned error. A value anywhere else
+   (`[a]: 5`, a bare `5`, a schedule on a stock) is a positioned parse
+   error, and
    `valueTail`/`schedTail` consume nothing when no `:` follows, so id-minting
    order for value-less input is untouched. Its one custom primitive, `satisfyMap`, keeps the parser position
    on the *next unconsumed* token so `<?>` labels and `eof` report exact locations —
@@ -135,16 +156,28 @@ JSON error string):
    - `<-` links each hop from the *nearest* term of its right subtree
      (`leftmostId`, same as the faucets), so `a<-b->c` fans out from `b`.
    - **Value annotations** land in `Node.value`/`Node.steps` via `setValue`
-     (stocks and dot constants) and `setSched` (faucets): the *first explicit*
+     (stocks) and `setAnnot` (faucets and dots — schedules through
+     `setSched`, formulas through `setFormula`): the *first explicit*
      annotation for a
      name wins — value-less mentions never erase, later annotations never
-     overwrite, and a faucet's schedule wins *as a unit* (value + steps
-     together). Semantically a stock's value is its initial level; a dot's is
-     an auxiliary constant (e.g. a goal-seeking faucet's goal); a faucet's
+     overwrite, and a schedule wins *as a unit* (value + steps + smooth flag
+     together; `smooth: true` serializes only for `~` schedules; a formula
+     counts as the annotation too — value vs formula, whichever came first).
+     **Formulas** resolve their references through the registry (minting
+     dots for unseen names), must land on stocks or dots (a faucet
+     reference is a model error), serialize as a resolved `expr` tree
+     (`{kind: "num"|"ref"|"+"|"-"|"*"|"/"}` with ids, `RFormula`), and
+     auto-draw the info arrow each reference implies (deduplicated against
+     identical arrows already drawn — so `R(...)` annotations and formulas
+     compose without doubled arcs). Formula-through-formula cycles
+     (`a: (b)` + `b: (a)`) are rejected after evaluation; `evaluate` is now
+     `Either String Graph` and `Main.go` prefixes those as "Model error:". Semantically a stock's value is its initial level; a dot's is
+     an auxiliary constant or, with steps, a piecewise driving variable
+     (a goal-seeking faucet's goal, fixed or moving); a faucet's
      value is its initial rate, overridden from each step's `at` time onward.
      The compiler just carries the numbers.
 
-   Output types: `Node = { type, id, label, value :: Maybe Number, steps :: Maybe (Array { at, value }), group :: Maybe Int, loop :: Maybe (Array String) }`
+   Output types: `Node = { type, id, label, value :: Maybe Number, steps :: Maybe (Array { at, value }), smooth :: Maybe Boolean, expr :: Maybe RFormula, group :: Maybe Int, loop :: Maybe (Array String) }`
    (`Maybe` fields omit their JSON key on `Nothing` — goldens rely on that),
    `Link = { type, source, target }`, `Graph = { nodes, links }`. `NodeType`
    (`Dot`/`Stock`/`Faucet`/`Cloud`) has a `WriteForeign` instance so the whole
@@ -193,16 +226,24 @@ the diagram's figure 5):
 
 - **`ui/simulate.ts`** — pure, dependency-free (type-only imports, so node can
   run it headlessly; `test/simulate.mjs` does). Forward-Euler over `T_END`/`DT`
-  constants: stock `value` = initial level; a faucet's rate is
-  piecewise-constant (`value` from t=0, overridden by each `steps` entry from
-  its `at` time on; both default 0), sampled at each step's start. Faucet
+  constants: stock `value` = initial level; a `: (expr)` formula is a rate
+  law (faucets — clamped at 0, a tap never runs backward) or a computed
+  auxiliary (dots), evaluated per step over current levels and dot values
+  (memoized per step; non-finite arithmetic like division by zero reads as
+  0); a formula faucet overrides the goal/factor heuristics. Every schedule
+  is read through the exported `scheduleFn` — `@` steps hold piecewise-constant (`value`
+  from t=0, overridden by each entry from its `at` time on; both default
+  0), `~` steps interpolate a monotone cubic (Fritsch–Carlson, exact at the
+  points, no overshoot, flat outside them) — sampled at each step's start. Faucet
   source/sink stocks come from flow-link direction, clouds/dots infinite.
   Each synchronous step rations a stock's outflows by what it holds
   (`min(1, level/demand)`), so levels never go negative and chained stocks
   conserve — an empty tub stops draining. A faucet turns **goal-seeking**
   (figures 10 & 11) when the info arrows into it, walked back through
   value-less relay dots (`discrepancy`), reach exactly one valued dot: that
-  constant is its goal and the schedule value becomes a *gain* —
+  constant is its goal — itself possibly scheduled (figure 19's cold-day
+  `outside temperature`), sampled piecewise at each step's start like every
+  rate — and the schedule value becomes a *gain* —
   `rate = gain × (level − goal)` draining / `× (goal − level)` filling,
   clamped at 0 and capped at `1/DT` so a hot gain lands on the goal instead
   of oscillating; exponential approach from either side. A *bare* faucet (no
@@ -219,7 +260,12 @@ the diagram's figure 5):
   DOM-insertion order places it). One 2px line per stock with an ink label at
   its end, recessive axes, rendered once per `update()` (never per tick).
   Goal constants draw as dashed horizontal rules under the series lines
-  (the book's "room temperature = 18°C"), labeled in the right margin; all
+  (the book's "room temperature = 18°C"), labeled in the right margin — a
+  SCHEDULED goal draws as a dashed path instead (figure 19's cold day):
+  stepped for `@`, and for `~` a per-DT sampling of the simulator's own
+  `scheduleFn` interpolant, so the chart shows exactly the curve the run
+  integrated; its label anchors at its final value, and the y-domain follows
+  goal values below zero (stock levels themselves never go negative); all
   right-margin labels dodge vertically to a 12px rhythm so figure 11's
   curves converging on one goal stay individually named. A
   hover layer snaps a crosshair to the nearest sample and shows one tooltip

@@ -4,7 +4,7 @@
 // can run it directly (erasable-syntax type stripping, node >= 22.18).
 // Run with:   node test/simulate.mjs
 import * as M from '../output/Main/index.js';
-import { simulate, hasNumbers, goalRefs, T_END, DT } from '../ui/simulate.ts';
+import { simulate, hasNumbers, goalRefs, scheduleFn, T_END, DT } from '../ui/simulate.ts';
 
 let failures = 0;
 const fail = (label, msg) => { failures++; console.log(`FAIL ${label}: ${msg}`); };
@@ -166,6 +166,154 @@ interest rate: 0.1 -> interest added`;
     fail('decay', 'levels must decay strictly and stay nonnegative');
 }
 
+// Figures 15 & 16: the thermostat. The furnace goal-seeks the thermostat
+// setting through its discrepancy relay (room warms 10 → 18, Euler closed
+// form), while the heat-to-outside loop stays closed — its faucet is bare
+// and `outside temperature` carries no value, so there is neither a goal
+// nor a factor to arm it. Only the setting registers as a dashed rule.
+{
+  const F16 = `|=>heat from furnace: 1.2[room temperature: 10]=>heat to outside|
+B(heat from furnace <- discrepancy between desired and actual room temperatures <- room temperature)
+thermostat setting: 18 -> discrepancy between desired and actual room temperatures
+B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
+outside temperature -> discrepancy between inside and outside temperatures`;
+  const system = sys(F16);
+  const room = simulate(system).find(s => s.label === 'room temperature');
+  const decay = Math.pow(1 - 1.2 * DT, Math.round(T_END / DT));
+  const want = 18 + (10 - 18) * decay;
+  if (Math.abs(last(room) - want) > 1e-9)
+    fail('figure 16', `room ends at ${last(room)}, want ${want}`);
+  if (!room.levels.every((v, i) => i === 0 || (v >= room.levels[i - 1] && v <= 18)))
+    fail('figure 16', 'room must warm monotonically toward the setting, never past it');
+  const goals = goalRefs(system);
+  if (!(goals.length === 1 && goals[0].label === 'thermostat setting' && goals[0].value === 18))
+    fail('figure 16', `goalRefs should be the setting alone, got ${JSON.stringify(goals)}`);
+}
+
+// Figures 15 & 17: furnace off (bare faucet, valueless setting) — the leak
+// goal-seeks the outside temperature, so the warm room decays toward 10 and
+// only the outside temperature registers as a reference rule.
+{
+  const F17 = `|=>heat from furnace[room temperature: 18]=>heat to outside: 0.13|
+B(heat from furnace <- discrepancy between desired and actual room temperatures <- room temperature)
+thermostat setting -> discrepancy between desired and actual room temperatures
+B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
+outside temperature: 10 -> discrepancy between inside and outside temperatures`;
+  const system = sys(F17);
+  const room = simulate(system).find(s => s.label === 'room temperature');
+  const want = 10 + (18 - 10) * Math.pow(1 - 0.13 * DT, Math.round(T_END / DT));
+  if (Math.abs(last(room) - want) > 1e-9)
+    fail('figure 17', `room ends at ${last(room)}, want ${want}`);
+  if (!room.levels.every((v, i) => v >= 10 && (i === 0 || v <= room.levels[i - 1])))
+    fail('figure 17', 'room must cool monotonically toward the outside, never below it');
+  const goals = goalRefs(system);
+  if (!(goals.length === 1 && goals[0].label === 'outside temperature' && goals[0].value === 10))
+    fail('figure 17', `goalRefs should be the outside temperature alone, got ${JSON.stringify(goals)}`);
+}
+
+// Figures 15 & 18: both loops live. The room warms from 10 but settles just
+// BELOW the setting — the leak steals heat, so equilibrium sits where
+// furnace gain × (18 − T) = leak gain × (T − 10), ≈ 17.2. Mirror the
+// simulator's per-step float ops exactly.
+{
+  const F18 = `|=>heat from furnace: 1.2[room temperature: 10]=>heat to outside: 0.13|
+B(heat from furnace <- discrepancy between desired and actual room temperatures <- room temperature)
+thermostat setting: 18 -> discrepancy between desired and actual room temperatures
+B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
+outside temperature: 10 -> discrepancy between inside and outside temperatures`;
+  const system = sys(F18);
+  const room = simulate(system).find(s => s.label === 'room temperature');
+  let want = 10;
+  for (let n = 0; n < Math.round(T_END / DT); n++) {
+    const qf = (Math.min(1.2, 1 / DT) * Math.max(0, 18 - want)) * DT * 1;
+    const ql = (Math.min(0.13, 1 / DT) * Math.max(0, want - 10)) * DT * 1;
+    want = Math.max(0, want + (qf - ql));
+  }
+  if (Math.abs(last(room) - want) > 1e-9)
+    fail('figure 18', `room ends at ${last(room)}, want ${want}`);
+  if (!(last(room) > 17 && last(room) < 18))
+    fail('figure 18', `equilibrium should sit just below the setting, got ${last(room)}`);
+  if (!room.levels.every((v, i) => i === 0 || v >= room.levels[i - 1]))
+    fail('figure 18', 'room must warm monotonically to the two-loop equilibrium');
+  const goals = goalRefs(system);
+  if (!(goals.length === 2 && goals[0].label === 'thermostat setting' && goals[1].label === 'outside temperature'))
+    fail('figure 18', `both constants should register, setting first: ${JSON.stringify(goals)}`);
+}
+
+// A smooth (`~`) schedule interpolates a monotone curve through its points:
+// exact at every point, flat outside the first/last, monotone between
+// consecutive points, and never overshooting the point range.
+{
+  const WAVE = [[1, 7], [2, 4], [3, 0], [4, -3], [4.5, -5], [5.5, -3], [6, 0], [7, 4], [8, 7], [9, 10]]
+    .map(([at, value]) => ({ at, value }));
+  const fn = scheduleFn({ value: 10, steps: WAVE, smooth: true });
+  for (const p of [{ at: 0, value: 10 }, ...WAVE])
+    if (Math.abs(fn(p.at) - p.value) > 1e-12)
+      fail('smooth schedule', `must pass through (${p.at}, ${p.value}), got ${fn(p.at)}`);
+  if (fn(9.7) !== 10 || fn(1000) !== 10) fail('smooth schedule', 'flat after the last point');
+  if (fn(-3) !== 10) fail('smooth schedule', 'flat before the first point');
+  let prev = fn(4.5);
+  for (let t = 4.5; t <= 5.5 + 1e-9; t += DT / 4) {
+    const v = fn(t);
+    if (v < prev - 1e-12) fail('smooth schedule', `must rise monotonically on 4.5..5.5, fell at t=${t}`);
+    prev = v;
+  }
+  for (let t = 0; t <= T_END; t += DT)
+    if (fn(t) < -5 - 1e-12 || fn(t) > 10 + 1e-12)
+      fail('smooth schedule', `must never overshoot the point range, got ${fn(t)} at t=${t}`);
+  // The stepped reading of the same points is unchanged: holds, then jumps.
+  const stepped = scheduleFn({ value: 10, steps: WAVE, smooth: false });
+  if (stepped(0.99) !== 10 || stepped(1) !== 7 || stepped(4.6) !== -5)
+    fail('stepped schedule', 'must hold each value until the next step');
+}
+
+// Figures 15 & 19 (well insulated, leak 0.13) & 20 (poorly insulated, 0.4):
+// the outside temperature is a smooth `~` schedule — a cold day dipping to
+// -5 — so the leak chases a moving target. The room sags mid-run and
+// recovers; the deeper the leak gain, the deeper the sag. Mirrored
+// step-for-step through the same scheduleFn the simulator uses.
+{
+  const wave = '10 ~1: 7 ~2: 4 ~3: 0 ~4: -3 ~4.5: -5 ~5.5: -3 ~6: 0 ~7: 4 ~8: 7 ~9: 10';
+  const thermo = (leak) => `|=>heat from furnace: 1.2[room temperature: 10]=>heat to outside: ${leak}|
+B(heat from furnace <- discrepancy between desired and actual room temperatures <- room temperature)
+thermostat setting: 18 -> discrepancy between desired and actual room temperatures
+B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
+outside temperature: ${wave} -> discrepancy between inside and outside temperatures`;
+  const outsideFn = scheduleFn({
+    value: 10,
+    steps: [[1, 7], [2, 4], [3, 0], [4, -3], [4.5, -5], [5.5, -3], [6, 0], [7, 4], [8, 7], [9, 10]]
+      .map(([at, value]) => ({ at, value })),
+    smooth: true,
+  });
+  const mirror = (leak) => {
+    let L = 10;
+    const levels = [L];
+    for (let n = 0; n < Math.round(T_END / DT); n++) {
+      const qf = (Math.min(1.2, 1 / DT) * Math.max(0, 18 - L)) * DT * 1;
+      const ql = (Math.min(leak, 1 / DT) * Math.max(0, L - outsideFn(n * DT))) * DT * 1;
+      L = Math.max(0, L + (qf - ql));
+      levels.push(L);
+    }
+    return levels;
+  };
+  for (const [fig, leak, dipLo, dipHi] of [['figure 19', 0.13, 15.5, 16.2], ['figure 20', 0.4, 12.0, 13.2]]) {
+    const system = sys(thermo(leak));
+    const room = simulate(system).find(s => s.label === 'room temperature');
+    const wantLevels = mirror(leak);
+    if (!room.levels.every((v, i) => Math.abs(v - wantLevels[i]) < 1e-9))
+      fail(fig, 'series must match the mirrored recurrence sample-for-sample');
+    // The sag is measured after the initial warm-up (the run starts at 10).
+    const dip = Math.min(...room.levels.slice(Math.round(3 / DT)));
+    if (!(dip >= dipLo && dip <= dipHi))
+      fail(fig, `mid-run sag should bottom out in [${dipLo}, ${dipHi}], got ${dip}`);
+    if (!(last(room) > dip + 0.5))
+      fail(fig, 'room must recover as the cold day ends');
+    const outside = goalRefs(system).find(g => g.label === 'outside temperature');
+    if (!(outside && outside.value === 10 && outside.steps?.length === 10 && outside.smooth === true))
+      fail(fig, `the scheduled goal should carry its 10 steps and smooth flag, got ${JSON.stringify(outside)}`);
+  }
+}
+
 // The R loop must actually be drawn: a bare faucet fed only a constant stays
 // a closed tap. Feedback through a value-less relay dot still counts.
 {
@@ -175,6 +323,49 @@ interest rate: 0.1 -> interest added`;
   const relayed = simulate(sys('|=>f[a: 100]\nR(f <- statement <- a)\nc: 0.1 -> f'))[0];
   if (!(last(relayed) > 100))
     fail('relayed loop', 'feedback through a relay dot must still compound');
+}
+
+// Formulas: `: (expr)` is a rate law (faucets) or a computed auxiliary
+// (dots). Figure 14's book equations — output = capital / 3, investment =
+// output × fraction invested — give capital compound growth at
+// (1/3 × 0.2) per unit time. Mirrored step-for-step in the simulator's
+// float-op order.
+{
+  const F14 = `|=>investment[capital: 100]
+R(capital -> output -> investment)
+output: (capital / 3)
+investment: (output * fraction of output invested)
+fraction of output invested: 0.2`;
+  const system = sys(F14);
+  const capital = simulate(system).find(s => s.label === 'capital');
+  let want = 100;
+  for (let n = 0; n < Math.round(T_END / DT); n++)
+    want = Math.max(0, want + Math.max(0, (want / 3) * 0.2) * DT * 1);
+  if (Math.abs(last(capital) - want) > 1e-9)
+    fail('figure 14 formulas', `capital ends at ${last(capital)}, want ${want}`);
+  if (!capital.levels.every((v, i) => i === 0 || v > capital.levels[i - 1]))
+    fail('figure 14 formulas', 'capital must compound strictly');
+  // The formulas imply the arrows: fraction→investment exists without being
+  // hand-drawn, and the R(...) arrows are not duplicated.
+  const arrows = system.links.filter(l => l.type === 'arrow');
+  if (arrows.length !== 3)
+    fail('figure 14 formulas', `3 info arrows expected (capital→output, output→investment, fraction→investment), got ${arrows.length}`);
+  if (goalRefs(system).length !== 0)
+    fail('figure 14 formulas', 'formula faucets register no goal rules');
+}
+
+// Formula guard rails: a tap never runs backward (negative formula clamps
+// to 0), non-finite arithmetic (division by zero) reads as 0, and a
+// formula-only model still shows the chart.
+{
+  const flat = simulate(sys('[a: 10]=>drain: (0 - a)|'))[0];
+  if (!flat.levels.every(v => v === 10))
+    fail('formula clamp', 'a negative rate law must clamp to a closed tap');
+  const div0 = simulate(sys('|=>f: (1 / z)[s: 0]\nz: 0')).find(s => s.label === 's');
+  if (!div0.levels.every(v => v === 0))
+    fail('formula div0', 'division by zero must read as rate 0');
+  if (!hasNumbers(sys('|=>f: (x)[s]')))
+    fail('formula hasNumbers', 'a formula counts as numbers for the chart gate');
 }
 
 console.log(failures ? `${failures} FAILURE(S)` : 'SIMULATE CHECKS PASSED');

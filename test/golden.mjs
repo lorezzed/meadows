@@ -44,13 +44,15 @@ rate at eight: 0.08 -> interest at eight
 R(interest at ten <- ten percent interest)
 rate at ten: 0.1 -> interest at ten`;
 
-// Figure 14: the capital reinforcing loop — the loop rides the flow pipe
-// from faucet to stock, so only the info-arrow half is written in the R(...)
-// (annotating `investment -> capital` too would emit a spurious same-band
-// arrow shadowing the pipe).
-const EX_CAPITAL = `|=>investment[capital]
-fraction of output invested -> investment
-R(capital -> output -> investment)`;
+// Figure 14: the capital reinforcing loop, with the book's real equations —
+// output is a computed auxiliary (capital / 3), investment's rate law
+// multiplies it by the invested fraction. The formulas re-imply the R(...)
+// arrows (deduplicated) and draw fraction→investment themselves.
+const EX_CAPITAL = `|=>investment[capital: 100]
+R(capital -> output -> investment)
+output: (capital / 3)
+investment: (output * fraction of output invested)
+fraction of output invested: 0.2`;
 
 // Figure 15: the two-loop thermostat — one band, two goal-seeking B loops
 // through floating discrepancy dots, each fed by an outside constant.
@@ -59,6 +61,24 @@ B(heat from furnace <- discrepancy between desired and actual room temperatures 
 thermostat setting -> discrepancy between desired and actual room temperatures
 B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
 outside temperature -> discrepancy between inside and outside temperatures`;
+
+// Figures 15 & 16: the same structure valued — the furnace gain, the room's
+// initial level, and the thermostat setting (the outside loop stays inert:
+// bare faucet, valueless constant).
+const EX_THERMO16 = `|=>heat from furnace: 1.2[room temperature: 10]=>heat to outside|
+B(heat from furnace <- discrepancy between desired and actual room temperatures <- room temperature)
+thermostat setting: 18 -> discrepancy between desired and actual room temperatures
+B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
+outside temperature -> discrepancy between inside and outside temperatures`;
+
+// Figures 15 & 19: both loops live and the outside temperature SCHEDULED —
+// the cold-day driving variable, dipping to -5 (dot schedules + negative
+// literals end-to-end).
+const EX_THERMO19 = `|=>heat from furnace: 1.2[room temperature: 10]=>heat to outside: 0.13|
+B(heat from furnace <- discrepancy between desired and actual room temperatures <- room temperature)
+thermostat setting: 18 -> discrepancy between desired and actual room temperatures
+B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
+outside temperature: 10 ~1: 7 ~2: 4 ~3: 0 ~4: -3 ~4.5: -5 ~5.5: -3 ~6: 0 ~7: 4 ~8: 7 ~9: 10 -> discrepancy between inside and outside temperatures`;
 
 const EX_LOOPS = `|=>investment[capital]=>depreciation|
 |=>regeneration[resource]=>harvest|
@@ -137,15 +157,31 @@ const goldenInputs = [
   '|=>inflow: 0 @5: 5[water in tub: 50]=>outflow: 5|',   // figures 5 & 7
   'a=>f: 0 @2.5: 1 @7: 4',
   'a=>f: 9\na=>f: 0 @2: 1',   // first annotation wins as a unit
-  // Dot constants: a bare name takes a single `: N` (an auxiliary constant,
-  // e.g. a goal for the simulator's goal-seeking faucets).
+  // Dot annotations: a bare name takes a constant (`: N` -- e.g. a goal for
+  // the simulator's goal-seeking faucets) or a full piecewise schedule (a
+  // driving variable, figure 19's cold day); values may be negative.
   'a: 5',
   'room temperature: 18 -> discrepancy',
   'a: 5\na: 9',   // the first dot constant wins
+  'out: 10 @2: -5',
+  '[a: -5]',
+  // Smooth (`~`) schedules: same shape, `smooth: true` in the JSON — the
+  // simulator interpolates a curve through the points instead of stepping.
+  'a=>f: 0 ~5: 5',
+  'out: 10 ~2: -5 ~4: 10',
+  // Formulas: `: (expr)` — refs resolve to ids, serialized as a nested
+  // `expr` tree, and each reference draws its implied info arrow (dedup'd
+  // against hand-drawn ones).
+  'a: (2x * y + 3)',
+  '[capital: 100]\noutput: (capital / 3)',
+  'a -> b\nb: (a)',
+  'a=>f: (a)|',
   EX_COFFEE,      // figures 10 & 11
   EX_INTEREST,    // figures 12 & 13
   EX_CAPITAL,     // figure 14
   EX_THERMOSTAT,  // figure 15
+  EX_THERMO16,    // figures 15 & 16
+  EX_THERMO19,    // figures 15 & 19
 ];
 
 // Errors: the "kind: line L, column C:" prefix is contractual; wording may be tuned.
@@ -171,13 +207,14 @@ const errorCases = [
   ['a->R(b)',   /^Parsing error: line 1, column 4: /],  // loops are never interior terms
   ['R(a)->',    /^Parsing error: line 1, column 5: /],  // a loop's tail still needs an operand
   ['r(a)',      /^Parsing error: line 1, column 2: /],  // lowercase r is just a name
-  // Value annotations belong to stocks, faucets, and dots (a single constant)
-  ['a: 1 @2: 3', /^Parsing error: line 1, column 6: /], // dots never take schedules
+  // Value annotations belong to stocks, faucets, and dots (dots and faucets
+  // take full schedules; stocks a single value)
   ['[a:]',      /^Parsing error: line 1, column 4: /],  // a colon needs a number
   ['[a: b]',    /^Parsing error: line 1, column 5: /],  // a name is not a value
   ['[a]: 5',    /^Parsing error: line 1, column 4: /],  // the value goes inside the brackets
   ['5',         /^Parsing error: line 1, column 1: /],  // a bare number is not a term
-  ['-5',        /^Tokenization error: line 1, column 1: /],  // no negative literals
+  ['-5',        /^Parsing error: line 1, column 1: /],  // a signed number is still not a term
+  ['a -x',      /^Parsing error: line 1, column 3: /],  // a lone '-' only subtracts inside formulas
   ['[a: 5.]',   /^Tokenization error: line 1, column 6: /],  // no trailing bare dot
   // Rate schedules commit at each '@'/':' — malformed segments are positioned
   ['a=>f: 0 @',    /^Parsing error: line 1, column 9: /],   // step needs a time
@@ -185,6 +222,16 @@ const errorCases = [
   ['a=>f: 0 @5:',  /^Parsing error: line 1, column 11: /],  // step needs a rate
   ['[a: 1 @2: 3]', /^Parsing error: line 1, column 7: /],   // stocks: single value only
   ['a @ b',        /^Parsing error: line 1, column 3: /],   // '@' lives inside annotations
+  ['a: 5 ~',       /^Parsing error: line 1, column 6: /],   // '~' step needs a time
+  ['a=>f: 0 @2: 1 ~3: 2', /^Parsing error: line 1, column 15: /],  // one schedule, one marker
+  ['a=>f: 0 ~2: 1 @3: 2', /^Parsing error: line 1, column 15: /],  // (either way round)
+  // Formulas
+  ['a: ()',        /^Parsing error: line 1, column 5: /],   // an empty formula
+  ['a: (x',        /^Parsing error: line 1, column 5: /],   // unclosed formula
+  ['a: (x 5)',     /^Parsing error: line 1, column 7: /],   // no positive-number juxtaposition
+  ['[a: (x)]',     /^Parsing error: line 1, column 5: /],   // stocks take numbers, not formulas
+  ['x=>f\na: (f)', /^Model error: /],                       // a formula cannot read a faucet
+  ['a: (b)\nb: (a)', /^Model error: /],                     // formula cycles have no order
 ];
 
 if (process.argv.includes('--capture')) {

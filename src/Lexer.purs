@@ -64,6 +64,11 @@ data Token
   | TokRBracket
   | TokColon
   | TokAt
+  | TokTilde
+  | TokPlus
+  | TokMinus
+  | TokStar
+  | TokSlash
   | TokNumber Number
   | TokSep
 
@@ -117,17 +122,23 @@ digits = do
   pure $ SCU.singleton first <> SCU.fromCharArray (Array.fromFoldable rest)
 
 -- | A number literal: one or more digits with an optional `.digits` fraction
--- | (no sign, no exponent). The `try` mirrors the identifier's `spacedWord`:
--- | a trailing bare dot (`5.`) backtracks, leaving the `.` to fail
--- | tokenization at its own position. Digits are ASCII-only, so
--- | `Number.fromString` cannot fail on the assembled lexeme.
+-- | and an optional leading `-` sign (no exponent) -- figure 19's outside
+-- | temperature drops to -5. The operator alternatives run before numbers in
+-- | `token`, so `->` never reaches here; the signed form sits under `try`,
+-- | so a `-` not followed by digits backtracks and lexes as TokMinus (the
+-- | formula subtraction operator). The fraction's `try` mirrors the
+-- | identifier's `spacedWord`: a trailing bare dot (`5.`) backtracks,
+-- | leaving the `.` to fail tokenization at its own position. Digits are
+-- | ASCII-only, so `Number.fromString` cannot fail on the assembled lexeme.
 numberLit :: Parser String Number
-numberLit = do
-  whole <- digits
-  frac <- option "" (try (append "." <$> (char '.' *> digits)))
-  case Number.fromString (whole <> frac) of
-    Just n -> pure n
-    Nothing -> fail "invalid number literal"
+numberLit = try (char '-' *> (negate <$> unsigned)) <|> unsigned
+  where
+  unsigned = do
+    whole <- digits
+    frac <- option "" (try (append "." <$> (char '.' *> digits)))
+    case Number.fromString (whole <> frac) of
+      Just n -> pure n
+      Nothing -> fail "invalid number literal"
 
 arrowLeftOp :: Parser String Operator
 arrowLeftOp = ArrowL <$ string "<-"
@@ -174,7 +185,14 @@ token
   <|> (TokCloud <$ cloud)
   <|> (TokColon <$ char ':')
   <|> (TokAt <$ char '@')
+  <|> (TokTilde <$ char '~')
+  <|> (TokPlus <$ char '+')
+  <|> (TokStar <$ char '*')
+  <|> (TokSlash <$ char '/')
   <|> (TokNumber <$> numberLit)
+  -- after numberLit, so `-` followed by digits stays a signed literal and a
+  -- lone `-` is the formula subtraction operator
+  <|> (TokMinus <$ char '-')
   <|> (TokIdent <$> identifier)
 
 -- A run of newlines (plus any surrounding blank space) becomes one TokSep,
@@ -224,6 +242,11 @@ describeToken TokLBracket = "'['"
 describeToken TokRBracket = "']'"
 describeToken TokColon = "':'"
 describeToken TokAt = "'@'"
+describeToken TokTilde = "'~'"
+describeToken TokPlus = "'+'"
+describeToken TokMinus = "'-'"
+describeToken TokStar = "'*'"
+describeToken TokSlash = "'/'"
 describeToken (TokNumber n) = "number " <> show n
 describeToken TokSep = "end of line"
 

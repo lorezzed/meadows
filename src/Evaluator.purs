@@ -3,17 +3,19 @@ module Evaluator
   , Node
   , NodeType(..)
   , Link
+  , RFormula(..)
   , evaluate
   ) where
 
 import Prelude
 import Data.Array as Array
+import Data.Either (Either(..))
 import Data.Foldable (traverse_, foldl, minimum, any)
 import Data.Int as Int
 import Data.List (List(..), (:))
 import Data.List as List
 import Data.Map as Map
-import Data.Maybe (Maybe(..), fromMaybe, maybe)
+import Data.Maybe (Maybe(..), fromMaybe, isJust, maybe)
 import Data.Set (Set)
 import Data.Set as Set
 import Data.String (Pattern(..), split)
@@ -21,7 +23,7 @@ import Data.Tuple (Tuple(..), fst)
 import Control.Alt ((<|>))
 import Control.Monad.State (State, runState, gets, modify_)
 import Lexer (loopLetter)
-import Parser (Tree(..), Id, Sched, Step)
+import Parser (Annot(..), Formula(..), Tree(..), Id, Sched, Step, opString)
 import Simple.JSON (class WriteForeign, writeImpl)
 
 data NodeType = Dot | Stock | Faucet | Cloud
@@ -34,7 +36,30 @@ instance showNodeType :: Show NodeType where
 instance writeForeignNodeType :: WriteForeign NodeType where
   writeImpl = writeImpl <<< show
 
-type Node = { type :: NodeType, id :: String, label :: String, value :: Maybe Number, steps :: Maybe (Array Step), group :: Maybe Int, loop :: Maybe (Array String) }
+-- | A formula with its references resolved to node ids (identity, not
+-- | spelling -- the same seam rule as links). Serializes as nested objects:
+-- | {kind: "num", value}, {kind: "ref", id}, {kind: "+"|"-"|"*"|"/", left,
+-- | right} -- directly evaluable by the simulator with no re-parsing.
+data RFormula = RNum Number | RRef String | RBin String RFormula RFormula
+derive instance eqRFormula :: Eq RFormula
+instance showRFormula :: Show RFormula where
+  show (RNum n) = "RNum " <> show n
+  show (RRef id) = "RRef " <> id
+  show (RBin op l r) = "(" <> show l <> " " <> op <> " " <> show r <> ")"
+instance writeForeignRFormula :: WriteForeign RFormula where
+  writeImpl (RNum n) = writeImpl { kind: "num", value: n }
+  writeImpl (RRef id) = writeImpl { kind: "ref", id }
+  writeImpl (RBin op l r) = writeImpl { kind: op, left: l, right: r }
+
+-- | The ids a formula references, in reference order, deduplicated.
+refIds :: RFormula -> Array String
+refIds (RNum _) = []
+refIds (RRef id) = [ id ]
+refIds (RBin _ l r) = Array.nub (refIds l <> refIds r)
+
+type NodeRec = { ty :: NodeType, label :: String, value :: Maybe Number, steps :: Maybe (Array Step), smooth :: Maybe Boolean, expr :: Maybe RFormula }
+
+type Node = { type :: NodeType, id :: String, label :: String, value :: Maybe Number, steps :: Maybe (Array Step), smooth :: Maybe Boolean, expr :: Maybe RFormula, group :: Maybe Int, loop :: Maybe (Array String) }
 type Link = { type :: String, source :: String, target :: String }
 type Graph = { nodes :: Array Node, links :: Array Link }
 
@@ -49,10 +74,12 @@ type Graph = { nodes :: Array Node, links :: Array Link }
 -- | (statements evaluate in order), the way band groups are numbered.
 type EvalState =
   { registry :: Map.Map String String
-  , nodes :: Map.Map String { ty :: NodeType, label :: String, value :: Maybe Number, steps :: Maybe (Array Step) }
+  , nodes :: Map.Map String NodeRec
   , links :: Array Link
   , loopTags :: Map.Map String (Array String)
   , loopCount :: Int
+  -- first model-level error (bad formula reference); checked at the end
+  , err :: Maybe String
   }
 
 type Evaluator = State EvalState
@@ -78,7 +105,7 @@ resolveNamed ty i name = do
       let newId = prefixFor ty <> show i
       modify_ \s -> s
         { registry = Map.insert name newId s.registry
-        , nodes = Map.insert newId { ty, label: name, value: Nothing, steps: Nothing } s.nodes
+        , nodes = Map.insert newId { ty, label: name, value: Nothing, steps: Nothing, smooth: Nothing, expr: Nothing } s.nodes
         }
       pure newId
 
@@ -91,7 +118,7 @@ cloudLabel = "|"
 freshAnon :: NodeType -> Id -> String -> Evaluator String
 freshAnon ty i label = do
   let newId = prefixFor ty <> show i
-  modify_ \s -> s { nodes = Map.insert newId { ty, label, value: Nothing, steps: Nothing } s.nodes }
+  modify_ \s -> s { nodes = Map.insert newId { ty, label, value: Nothing, steps: Nothing, smooth: Nothing, expr: Nothing } s.nodes }
   pure newId
 
 -- | Attach a value annotation (a stock's initial level, a faucet's rate, a
@@ -105,21 +132,73 @@ setValue _ Nothing = pure unit
 setValue id mval = modify_ \s ->
   s { nodes = Map.update (\rec -> Just rec { value = rec.value <|> mval }) id s.nodes }
 
--- | Attach a faucet's rate schedule. Same first-wins spirit, but as a unit:
--- | the first mention carrying any annotation fixes both the initial rate
--- | (`value`) and the `@time: rate` steps; later annotations never overwrite
--- | either, and an empty steps list serializes as no `steps` key at all.
-setSched :: String -> Maybe Sched -> Evaluator Unit
-setSched _ Nothing = pure unit
-setSched id (Just sch) = modify_ \s ->
+-- | Attach a schedule (a faucet's rate, a dot's constant or driving curve).
+-- | Same first-wins spirit, but as a unit: the first mention carrying any
+-- | annotation fixes the initial (`value`), the steps, and the smooth flag
+-- | together; later annotations never overwrite any of them. An empty steps
+-- | list serializes as no `steps` key at all, and `smooth` appears only
+-- | when true (a `~` schedule).
+setSched :: String -> Sched -> Evaluator Unit
+setSched id sch = modify_ \s ->
   s { nodes = Map.update upd id s.nodes }
   where
-  upd rec = Just $ case rec.value of
-    Just _ -> rec
-    Nothing -> rec
-      { value = Just sch.initial
-      , steps = if Array.null sch.steps then Nothing else Just sch.steps
-      }
+  upd rec = Just $ if annotated rec then rec else rec
+    { value = Just sch.initial
+    , steps = if Array.null sch.steps then Nothing else Just sch.steps
+    , smooth = if sch.smooth then Just true else Nothing
+    }
+
+-- | Already carrying an annotation? (a plain/scheduled value or a formula
+-- | -- either blocks later annotations, as a unit)
+annotated :: NodeRec -> Boolean
+annotated rec = isJust rec.value || isJust rec.expr
+
+-- | Record the first model-level error; later ones keep the first.
+setErr :: String -> Evaluator Unit
+setErr msg = modify_ \s -> s { err = s.err <|> Just msg }
+
+-- | An info arrow, unless an identical one is already drawn -- formulas
+-- | re-imply arrows a hand-written statement (or an earlier formula) may
+-- | already have drawn.
+addArrowUnlessDup :: String -> String -> Evaluator Unit
+addArrowUnlessDup source target = modify_ \s ->
+  if Array.any (\l -> l.type == "arrow" && l.source == source && l.target == target) s.links
+  then s
+  else s { links = Array.snoc s.links { source, target, type: "arrow" } }
+
+-- | Resolve a formula's references through the registry (minting dots for
+-- | unseen names, exactly like a bare mention). A reference must land on a
+-- | stock or a dot -- a faucet has no value to read (v1).
+resolveFormula :: Formula -> Evaluator RFormula
+resolveFormula (FNum n) = pure (RNum n)
+resolveFormula (FBin op l r) = RBin (opString op) <$> resolveFormula l <*> resolveFormula r
+resolveFormula (FRef i name) = do
+  id <- resolveNamed Dot i name
+  tyM <- gets \s -> map _.ty (Map.lookup id s.nodes)
+  case tyM of
+    Just Faucet -> setErr ("a formula may only reference stocks and dots; '" <> name <> "' is a faucet")
+    _ -> pure unit
+  pure (RRef id)
+
+-- | Attach a formula annotation: resolve its references, store the resolved
+-- | tree, and draw the info arrows the equation implies (each referenced
+-- | node -> this one), deduplicated against arrows already present. First
+-- | annotation wins as a unit: a losing formula is ignored entirely (no
+-- | refs minted, no arrows).
+setFormula :: String -> Formula -> Evaluator Unit
+setFormula id f = do
+  already <- gets \s -> maybe false annotated (Map.lookup id s.nodes)
+  if already then pure unit
+  else do
+    rf <- resolveFormula f
+    modify_ \s -> s { nodes = Map.update (\rec -> Just rec { expr = Just rf }) id s.nodes }
+    traverse_ (\src -> addArrowUnlessDup src id) (refIds rf)
+
+-- | Dispatch an annotation to its setter.
+setAnnot :: String -> Maybe Annot -> Evaluator Unit
+setAnnot _ Nothing = pure unit
+setAnnot id (Just (SchedAnnot sch)) = setSched id sch
+setAnnot id (Just (FormulaAnnot f)) = setFormula id f
 
 -- | Resolve (registering as needed) the id of the leftmost leaf of a
 -- | subtree, without walking the rest of the subtree's internal links.
@@ -139,7 +218,7 @@ leftmostId (LoopExpr _ _ expr) = leftmostId expr
 evaluateNode :: Tree -> Evaluator String
 evaluateNode (NodeExpr i s v) = do
   did <- resolveNamed Dot i s
-  setValue did v
+  setAnnot did v
   pure did
 evaluateNode (StockExpr i s v) = do
   sid <- resolveNamed Stock i s
@@ -149,7 +228,7 @@ evaluateNode (CloudExpr i) = freshAnon Cloud i cloudLabel
 evaluateNode (FaucetRExpr i name v left right) = do
   l <- evaluateNode left
   fid <- resolveNamed Faucet i name
-  setSched fid v
+  setAnnot fid v
   addLink l fid "flow"
   case right of
     Nothing -> pure fid
@@ -162,7 +241,7 @@ evaluateNode (FaucetRExpr i name v left right) = do
 evaluateNode (FaucetLExpr i name v left right) = do
   l <- evaluateNode left
   fid <- resolveNamed Faucet i name
-  setSched fid v
+  setAnnot fid v
   addLink fid l "flow"
   case right of
     Nothing -> pure fid
@@ -282,14 +361,43 @@ computeGroups st =
       assign m (Tuple idx c) = foldl (\mm id -> Map.insert id idx mm) m (nonDot c)
   in foldl assign Map.empty (Array.mapWithIndex Tuple sorted)
 
+-- | Formulas may chain through other computed dots, but a cycle
+-- | (`a: (b + 1)` with `b: (a + 1)`) has no evaluation order -- reject the
+-- | model. Stocks break chains (their levels are integrated state, not
+-- | formulas), so only expr-to-expr references count as edges.
+formulaCycleError :: Map.Map String NodeRec -> Maybe String
+formulaCycleError nodes =
+  let hasExpr id = maybe false (isJust <<< _.expr) (Map.lookup id nodes)
+      succs id = case Map.lookup id nodes of
+        Just { expr: Just rf } -> Array.filter hasExpr (refIds rf)
+        _ -> []
+      cyclic start =
+        let go frontier seen = case Array.uncons frontier of
+              Nothing -> false
+              Just { head, tail }
+                | head == start -> true
+                | Set.member head seen -> go tail seen
+                | otherwise -> go (tail <> succs head) (Set.insert head seen)
+        in go (succs start) Set.empty
+      ids = map fst (Map.toUnfoldable nodes :: Array (Tuple String NodeRec))
+      labelOf id = maybe id _.label (Map.lookup id nodes)
+  in case Array.head (Array.filter cyclic (Array.filter hasExpr ids)) of
+       Nothing -> Nothing
+       Just id -> Just ("formula cycle through '" <> labelOf id <> "' -- a computed value cannot depend on itself")
+
 -- | Evaluate every statement against one shared state, so nodes named in
 -- | different statements resolve (via the registry) to a single graph node.
-evaluate :: List Tree -> Graph
+-- | Left = a model-level error (a formula referencing a faucet, or a
+-- | formula cycle); the stage errors ("Tokenization"/"Parsing"/"Model")
+-- | are prefixed by Main.go.
+evaluate :: List Tree -> Either String Graph
 evaluate trees =
-  let initialState = { registry: Map.empty, nodes: Map.empty, links: [], loopTags: Map.empty, loopCount: 0 }
+  let initialState = { registry: Map.empty, nodes: Map.empty, links: [], loopTags: Map.empty, loopCount: 0, err: Nothing }
       Tuple _ finalState = runState (traverse_ evaluateNode trees) initialState
-      nodeArray = (Map.toUnfoldable finalState.nodes :: Array (Tuple String { ty :: NodeType, label :: String, value :: Maybe Number, steps :: Maybe (Array Step) }))
+      nodeArray = (Map.toUnfoldable finalState.nodes :: Array (Tuple String NodeRec))
       groupOf = computeGroups finalState
-      nodes = map (\(Tuple id v) -> { type: v.ty, id, label: v.label, value: v.value, steps: v.steps, group: Map.lookup id groupOf, loop: Map.lookup id finalState.loopTags }) nodeArray
-  in { nodes, links: finalState.links }
+      nodes = map (\(Tuple id v) -> { type: v.ty, id, label: v.label, value: v.value, steps: v.steps, smooth: v.smooth, expr: v.expr, group: Map.lookup id groupOf, loop: Map.lookup id finalState.loopTags }) nodeArray
+  in case finalState.err <|> formulaCycleError finalState.nodes of
+       Just msg -> Left msg
+       Nothing -> Right { nodes, links: finalState.links }
 

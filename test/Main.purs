@@ -16,9 +16,9 @@ import Data.Tuple (Tuple(..), fst)
 import Effect (Effect)
 import Effect.Console (log)
 import Effect.Exception (throw)
-import Evaluator (Graph, Link, evaluate)
+import Evaluator (Graph, Link, RFormula(..), evaluate)
 import Lexer (LoopKind(..), Operator(..), Token(..), tokenize)
-import Parser (Tree(..), parse)
+import Parser (Annot(..), Formula(..), FormOp(..), Tree(..), parse)
 import Parsing (Position(..))
 
 -- | Nothing = pass; Just = failure report.
@@ -44,7 +44,7 @@ parseAll :: String -> Either String (List Tree)
 parseAll s = tokenize s >>= parse
 
 graphOf :: String -> Either String Graph
-graphOf s = evaluate <$> parseAll s
+graphOf s = parseAll s >>= evaluate
 
 toksOf :: String -> Either String (List Token)
 toksOf s = map _.tok <$> tokenize s
@@ -77,6 +77,16 @@ labelValues s =
 labelSteps :: String -> Either String (Array (Tuple String (Maybe (Array { at :: Number, value :: Number }))))
 labelSteps s =
   (Array.sortWith fst <<< map (\n -> Tuple n.label n.steps) <<< _.nodes) <$> graphOf s
+
+-- | (label, smooth flag) per node, sorted by label.
+labelSmooth :: String -> Either String (Array (Tuple String (Maybe Boolean)))
+labelSmooth s =
+  (Array.sortWith fst <<< map (\n -> Tuple n.label n.smooth) <<< _.nodes) <$> graphOf s
+
+-- | (label, resolved formula) per node, sorted by label.
+labelExprs :: String -> Either String (Array (Tuple String (Maybe RFormula)))
+labelExprs s =
+  (Array.sortWith fst <<< map (\n -> Tuple n.label n.expr) <<< _.nodes) <$> graphOf s
 
 tests :: Array (Maybe String)
 tests =
@@ -134,8 +144,17 @@ tests =
   , expectEq "@ lexes as its own token"
       (Right (TokIdent "f" : TokColon : TokNumber 0.0 : TokAt : TokNumber 5.0 : TokColon : TokNumber 5.0 : Nil))
       (toksOf "f: 0 @5: 5")
-  , expectErrorAt "negative numbers are not lexable"
-      "line 1, column 1" (toksOf "-5")
+  , expectEq "a leading '-' signs a number literal"
+      (Right (TokIdent "a" : TokColon : TokNumber (-5.0) : Nil))
+      (toksOf "a: -5")
+  , expectEq "'-' only signs numbers: '->' is still an operator"
+      (Right (TokIdent "a" : TokOp ArrowR : TokIdent "b" : Nil))
+      (toksOf "a->b")
+  , expectEq "a lone '-' lexes as the formula subtraction token"
+      (Right (TokIdent "a" : TokMinus : TokIdent "x" : Nil))
+      (toksOf "a -x")
+  , expectErrorAt "'-' outside a formula is a positioned parse error"
+      "line 1, column 3" (parseAll "a -x")
   , expectErrorAt "a number's trailing bare dot fails at the dot"
       "line 1, column 2" (toksOf "5.")
   -- Parser: tree shapes and exact ids (mint order: atoms after their tokens,
@@ -178,28 +197,28 @@ tests =
       (Right (StockExpr 0 "a" (Just 50.0) : Nil))
       (parseAll "[a: 50]")
   , expectEq "faucet with a rate, no target"
-      (Right (FaucetRExpr 1 "f" (Just { initial: 5.0, steps: [] }) (NodeExpr 0 "a" Nothing) Nothing : Nil))
+      (Right (FaucetRExpr 1 "f" (Just (SchedAnnot { initial: 5.0, steps: [], smooth: false })) (NodeExpr 0 "a" Nothing) Nothing : Nil))
       (parseAll "a=>f: 5")
   , expectEq "leftward faucet with a rate"
-      (Right (FaucetLExpr 1 "f" (Just { initial: 5.0, steps: [] }) (NodeExpr 0 "a" Nothing) Nothing : Nil))
+      (Right (FaucetLExpr 1 "f" (Just (SchedAnnot { initial: 5.0, steps: [], smooth: false })) (NodeExpr 0 "a" Nothing) Nothing : Nil))
       (parseAll "a<=f: 5")
   , expectEq "an operator after a valued faucet still applies to the faucet"
-      (Right (ArrowRExpr 2 (FaucetRExpr 1 "f" (Just { initial: 5.0, steps: [] }) (NodeExpr 0 "a" Nothing) Nothing) (NodeExpr 3 "c" Nothing) : Nil))
+      (Right (ArrowRExpr 2 (FaucetRExpr 1 "f" (Just (SchedAnnot { initial: 5.0, steps: [], smooth: false })) (NodeExpr 0 "a" Nothing) Nothing) (NodeExpr 3 "c" Nothing) : Nil))
       (parseAll "a=>f: 5->c")
   , expectEq "the figure 5 statement parses with its values"
       (Right (FaucetRExpr 1 "inflow" Nothing (CloudExpr 0)
-                (Just (FaucetRExpr 3 "outflow" (Just { initial: 5.0, steps: [] }) (StockExpr 2 "water in tub" (Just 50.0))
+                (Just (FaucetRExpr 3 "outflow" (Just (SchedAnnot { initial: 5.0, steps: [], smooth: false })) (StockExpr 2 "water in tub" (Just 50.0))
                   (Just (CloudExpr 4)))) : Nil))
       (parseAll "|=>inflow[water in tub: 50]=>outflow: 5|")
   -- Parser: faucet rate schedules (`@time: rate` steps)
   , expectEq "a faucet schedule parses its steps in order"
-      (Right (FaucetRExpr 1 "f" (Just { initial: 0.0, steps: [ { at: 5.0, value: 5.0 } ] }) (NodeExpr 0 "a" Nothing) Nothing : Nil))
+      (Right (FaucetRExpr 1 "f" (Just (SchedAnnot { initial: 0.0, steps: [ { at: 5.0, value: 5.0 } ], smooth: false })) (NodeExpr 0 "a" Nothing) Nothing : Nil))
       (parseAll "a=>f: 0 @5: 5")
   , expectEq "schedules chain and allow decimals"
-      (Right (FaucetRExpr 1 "f" (Just { initial: 0.0, steps: [ { at: 2.5, value: 1.0 }, { at: 7.0, value: 4.0 } ] }) (NodeExpr 0 "a" Nothing) Nothing : Nil))
+      (Right (FaucetRExpr 1 "f" (Just (SchedAnnot { initial: 0.0, steps: [ { at: 2.5, value: 1.0 }, { at: 7.0, value: 4.0 } ], smooth: false })) (NodeExpr 0 "a" Nothing) Nothing : Nil))
       (parseAll "a=>f: 0 @2.5: 1 @7: 4")
   , expectEq "a target may follow a schedule"
-      (Right (FaucetRExpr 1 "f" (Just { initial: 0.0, steps: [ { at: 5.0, value: 5.0 } ] }) (NodeExpr 0 "a" Nothing)
+      (Right (FaucetRExpr 1 "f" (Just (SchedAnnot { initial: 0.0, steps: [ { at: 5.0, value: 5.0 } ], smooth: false })) (NodeExpr 0 "a" Nothing)
                 (Just (StockExpr 2 "b" Nothing)) : Nil))
       (parseAll "a=>f: 0 @5: 5[b]")
   , expectErrorAt "a step needs a time"
@@ -210,15 +229,67 @@ tests =
       "line 1, column 11" (parseAll "a=>f: 0 @5:")
   , expectErrorAt "stocks take a single value, not a schedule"
       "line 1, column 7" (parseAll "[a: 1 @2: 3]")
-  -- Parser: dot constants (a single value; never a schedule)
+  -- Parser: dot annotations (a constant, or a full piecewise schedule --
+  -- the driving variables of figures 19 & 20)
   , expectEq "a bare dot takes a constant"
-      (Right (NodeExpr 0 "a" (Just 5.0) : Nil))
+      (Right (NodeExpr 0 "a" (Just (SchedAnnot { initial: 5.0, steps: [], smooth: false })) : Nil))
       (parseAll "a: 5")
   , expectEq "a dot constant composes with arrows (ids: dot 0, arrow 1, dot 2)"
-      (Right (ArrowRExpr 1 (NodeExpr 0 "room" (Just 18.0)) (NodeExpr 2 "d" Nothing) : Nil))
+      (Right (ArrowRExpr 1 (NodeExpr 0 "room" (Just (SchedAnnot { initial: 18.0, steps: [], smooth: false }))) (NodeExpr 2 "d" Nothing) : Nil))
       (parseAll "room: 18 -> d")
-  , expectErrorAt "dots take a single value, not a schedule"
-      "line 1, column 6" (parseAll "a: 1 @2: 3")
+  , expectEq "a dot takes a schedule, negative values included"
+      (Right (NodeExpr 0 "out" (Just (SchedAnnot { initial: 10.0, steps: [ { at: 2.0, value: -5.0 } ], smooth: false })) : Nil))
+      (parseAll "out: 10 @2: -5")
+  -- Parser: smooth (`~`) schedules — same shape, interpolated reading
+  , expectEq "~ lexes as its own token"
+      (Right (TokIdent "f" : TokColon : TokNumber 0.0 : TokTilde : TokNumber 5.0 : TokColon : TokNumber 5.0 : Nil))
+      (toksOf "f: 0 ~5: 5")
+  , expectEq "~ steps mark the schedule smooth"
+      (Right (FaucetRExpr 1 "f" (Just (SchedAnnot { initial: 0.0, steps: [ { at: 5.0, value: 5.0 } ], smooth: true })) (NodeExpr 0 "a" Nothing) Nothing : Nil))
+      (parseAll "a=>f: 0 ~5: 5")
+  , expectEq "a dot takes a smooth schedule"
+      (Right (NodeExpr 0 "out" (Just (SchedAnnot { initial: 10.0, steps: [ { at: 2.0, value: -5.0 }, { at: 4.0, value: 10.0 } ], smooth: true })) : Nil))
+      (parseAll "out: 10 ~2: -5 ~4: 10")
+  , expectErrorAt "one schedule uses one marker: '@' then '~' errors at the '~'"
+      "line 1, column 15" (parseAll "a=>f: 0 @2: 1 ~3: 2")
+  , expectErrorAt "one schedule uses one marker: '~' then '@' errors at the '@'"
+      "line 1, column 15" (parseAll "a=>f: 0 ~2: 1 @3: 2")
+  -- Parser: formulas — `: (expr)` with + - * /, implicit multiplication,
+  -- and precedence (* / bind tighter). Reference ids mint left to right.
+  , expectEq "formula AST: (2x * y + 3) — implicit mult, precedence"
+      (Right (NodeExpr 2 "a"
+        (Just (FormulaAnnot (FBin FAdd
+          (FBin FMul (FBin FMul (FNum 2.0) (FRef 0 "x")) (FRef 1 "y"))
+          (FNum 3.0)))) : Nil))
+      (parseAll "a: (2x * y + 3)")
+  , expectEq "formula: division and multi-word references"
+      (Right (NodeExpr 1 "output"
+        (Just (FormulaAnnot (FBin FDiv (FRef 0 "capital stock") (FNum 3.0)))) : Nil))
+      (parseAll "output: (capital stock / 3)")
+  , expectEq "formula: a juxtaposed negative literal is subtraction"
+      (Right (NodeExpr 1 "a"
+        (Just (FormulaAnnot (FBin FAdd (FRef 0 "x") (FNum (-5.0))))) : Nil))
+      (parseAll "a: (x -5)")
+  , expectEq "formula: explicit '-' subtracts"
+      (Right (NodeExpr 2 "a"
+        (Just (FormulaAnnot (FBin FSub (FRef 0 "x") (FRef 1 "y")))) : Nil))
+      (parseAll "a: (x - y)")
+  , expectEq "formula: parens group ((x + 1) / y)"
+      (Right (NodeExpr 2 "a"
+        (Just (FormulaAnnot (FBin FDiv (FBin FAdd (FRef 0 "x") (FNum 1.0)) (FRef 1 "y")))) : Nil))
+      (parseAll "a: ((x + 1) / y)")
+  , expectEq "formula on a faucet"
+      (Right (FaucetRExpr 2 "f"
+        (Just (FormulaAnnot (FRef 1 "x"))) (NodeExpr 0 "a" Nothing) Nothing : Nil))
+      (parseAll "a=>f: (x)")
+  , expectErrorAt "an empty formula needs an expression"
+      "line 1, column 5" (parseAll "a: ()")
+  , expectErrorAt "an unclosed formula is an error"
+      "line 1, column 5" (parseAll "a: (x")
+  , expectErrorAt "a juxtaposed positive number is not multiplication"
+      "line 1, column 7" (parseAll "a: (x 5)")
+  , expectErrorAt "stocks take a number, never a formula"
+      "line 1, column 5" (parseAll "[a: (x)]")
   -- Parser: values are positioned errors anywhere else
   , expectErrorAt "a colon needs a number"
       "line 1, column 4" (parseAll "[a:]")
@@ -329,6 +400,38 @@ tests =
   , expectEq "a later schedule never overwrites an earlier plain rate"
       (Right [ Tuple "a" Nothing, Tuple "f" Nothing ])
       (labelSteps "a=>f: 9\na=>f: 0 @2: 1")
+  , expectEq "a dot schedule lands on the dot, steps and all"
+      (Right [ Tuple "out" (Just [ { at: 2.0, value: -5.0 } ]) ])
+      (labelSteps "out: 10 @2: -5")
+  , expectEq "a ~ schedule serializes smooth: true; @ and plain omit the key"
+      (Right [ Tuple "a" Nothing, Tuple "b" Nothing, Tuple "c" (Just true) ])
+      (labelSmooth "a: 1 @2: 3\nb: 1\nc: 1 ~2: 3")
+  -- Evaluator: formulas resolve refs to ids, draw their arrows, and are
+  -- first-wins with every other annotation kind
+  , expectEq "a formula stores its resolved tree on the node"
+      (Right [ Tuple "a" Nothing, Tuple "b" (Just (RBin "+" (RRef "dot#0") (RNum 1.0))) ])
+      (labelExprs "a\nb: (a + 1)")
+  , expectEq "a formula draws the arrows its references imply"
+      (Right [ { type: "arrow", source: "dot#0", target: "dot#2" } ])
+      (linksOf "a\nb: (a + 1)")
+  , expectEq "a formula's implied arrow dedups against a hand-drawn one"
+      (Right [ { type: "arrow", source: "dot#0", target: "dot#2" } ])
+      (linksOf "a -> b\nb: (a)")
+  , expectEq "a formula may reference a stock"
+      (Right [ Tuple "f" (Just (RBin "*" (RRef "stock#0") (RNum 2.0))), Tuple "s" Nothing ])
+      (labelExprs "[s: 4]\nf: (s * 2)")
+  , expectEq "the first annotation wins: a value blocks a later formula"
+      (Right [ Tuple "a" Nothing, Tuple "b" Nothing ])
+      (labelExprs "b: 5\nb: (a)\na")
+  , expectEq "the first annotation wins: a formula blocks a later value"
+      (Right [ Tuple "a" Nothing, Tuple "b" Nothing ])
+      (labelValues "b: (a)\nb: 5\na")
+  , expectErrorAt "a formula may not reference a faucet"
+      "is a faucet" (graphOf "x=>f\na: (f)")
+  , expectErrorAt "formula cycles are rejected"
+      "cycle" (graphOf "a: (b)\nb: (a)")
+  , expectErrorAt "a formula cannot depend on itself"
+      "cycle" (graphOf "a: (a + 1)")
   -- Evaluator: band groups
   , expectEq "a flow band with a reservoir gets a group"
       (Right [ Tuple "a" (Just 0), Tuple "fill" (Just 0) ])

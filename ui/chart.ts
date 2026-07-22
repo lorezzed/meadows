@@ -8,7 +8,7 @@
 // there in one tooltip — it only reads the already-rendered series, so the
 // render-once contract holds.
 import * as d3 from "d3";
-import { DT, T_END, type GoalRef, type StockSeries } from "./simulate";
+import { DT, T_END, scheduleFn, type GoalRef, type StockSeries } from "./simulate";
 
 // Fixed-order categorical accents, one per stock in parser-id order, shared
 // with the stock rects in the diagram. The ordering is the CVD-safety
@@ -249,13 +249,17 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
 
   function render(series: StockSeries[], colorOf: (id: string) => string, goals: GoalRef[] = []): void {
     const x = d3.scaleLinear([0, T_END], [margin.left, chartWidth - margin.right]);
-    // The domain covers the goal rules too: a goal above every curve (a level
-    // still filling toward it) must not clip off the top of the plot.
+    // The domain covers the goal rules too — every scheduled value of every
+    // goal: a goal above every curve must not clip off the top, and figure
+    // 19's outside temperature dips below zero, so the floor follows the
+    // goals down (stock levels themselves never go negative).
+    const goalValues = goals.flatMap(g => [g.value, ...(g.steps ?? []).map(s => s.value)]);
     const maxLevel = Math.max(
       d3.max(series, s => d3.max(s.levels)) ?? 0,
-      d3.max(goals, g => g.value) ?? 0);
+      d3.max(goalValues) ?? 0);
+    const minLevel = Math.min(0, d3.min(goalValues) ?? 0);
     // max(1, ·) keeps an all-zero model from collapsing the scale.
-    const y = d3.scaleLinear([0, Math.max(1, maxLevel)], [chartHeight - margin.bottom, margin.top]).nice();
+    const y = d3.scaleLinear([minLevel, Math.max(1, maxLevel)], [chartHeight - margin.bottom, margin.top]).nice();
 
     gxAxis.call(d3.axisBottom(x));
     gyAxis.call(d3.axisLeft(y).ticks(5));
@@ -275,23 +279,47 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
       .attr("d", d => line(d.levels));
 
     // One dashed rule per goal constant (the book's "room temperature = 18°C"
-    // line), full plot width, recessive ink under the series lines.
-    gGoals.selectAll<SVGLineElement, GoalRef>("line")
+    // line), full plot width, recessive ink under the series lines. A
+    // SCHEDULED goal (figure 19's outside temperature) draws as a dashed
+    // path instead: `@` schedules step (holding each value until the next),
+    // `~` schedules sample the simulator's own smooth interpolant at every
+    // DT — either way the chart shows exactly what the run integrated.
+    const goalPts = (g: GoalRef) => {
+      if (g.smooth && g.steps?.length) {
+        const fn = scheduleFn(g);
+        return d3.range(0, T_END + DT / 2, DT).map(at => ({ at, value: fn(at) }));
+      }
+      const pts = [{ at: 0, value: g.value }, ...(g.steps ?? []).filter(s => s.at <= T_END)]
+        .sort((a, b) => a.at - b.at);
+      const lastPt = pts[pts.length - 1] ?? { at: 0, value: g.value };
+      return [...pts, { at: T_END, value: lastPt.value }];
+    };
+    const goalEndValue = (g: GoalRef) => {
+      const pts = goalPts(g);
+      return (pts[pts.length - 1] ?? { value: g.value }).value;
+    };
+    const stepLine = d3.line<{ at: number; value: number }>()
+      .x(p => x(Math.max(0, p.at)))
+      .y(p => y(p.value))
+      .curve(d3.curveStepAfter);
+    const smoothLine = d3.line<{ at: number; value: number }>()
+      .x(p => x(p.at))
+      .y(p => y(p.value));
+    gGoals.selectAll<SVGPathElement, GoalRef>("path")
       .data(goals, d => d.id)
-      .join("line")
-      .attr("x1", margin.left)
-      .attr("x2", chartWidth - margin.right)
-      .attr("y1", d => y(d.value))
-      .attr("y2", d => y(d.value))
+      .join("path")
+      .attr("fill", "none")
       .attr("stroke", secondaryInk)
       .attr("stroke-width", 1.5)
-      .attr("stroke-dasharray", "7 5");
+      .attr("stroke-dasharray", "7 5")
+      .attr("d", d => (d.smooth && d.steps?.length ? smoothLine : stepLine)(goalPts(d)));
 
     // Right-margin labels — series ends and goal rules together — dodge
-    // vertically so converging lines stay individually named.
+    // vertically so converging lines stay individually named. A scheduled
+    // goal's label anchors to its final value, where its path ends.
     const placed = dodgeLabels(
       [...series.map(s => y(s.levels[s.levels.length - 1] ?? 0)),
-       ...goals.map(g => y(g.value))],
+       ...goals.map(g => y(goalEndValue(g)))],
       margin.top, chartHeight - margin.bottom);
 
     gLabels.selectAll<SVGTextElement, StockSeries>("text")

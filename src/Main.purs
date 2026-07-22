@@ -16,4 +16,6 @@ go s = case tokenize s of
     Left err      -> JSON.writeJSON $ "Tokenization error: " <> err
     Right tokens  -> case parse tokens of
       Left err      -> JSON.writeJSON $ "Parsing error: " <> err
-      Right ast     -> JSON.writeJSON (evaluate ast)
+      Right ast     -> case evaluate ast of
+        Left err    -> JSON.writeJSON $ "Model error: " <> err
+        Right graph -> JSON.writeJSON graph
