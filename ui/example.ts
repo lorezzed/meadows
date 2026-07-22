@@ -80,6 +80,14 @@ fraction of output invested -> investment
 R(capital -> output -> investment)`
     },
     {
+        label: 'Figure 15',
+        content: `|=>heat from furnace[room temperature]=>heat to outside|
+B(heat from furnace <- discrepancy between desired and actual room temperatures <- room temperature)
+thermostat setting -> discrepancy between desired and actual room temperatures
+B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
+outside temperature -> discrepancy between inside and outside temperatures`
+    },
+    {
         label: 'Figure 42',
         content: `|=>investment[capital]=>depreciation|
 |=>regeneration[resource]=>harvest|

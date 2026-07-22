@@ -247,10 +247,20 @@ tests =
       "line 1, column 3" (parseAll "R(a")
   , expectErrorAt "an empty loop needs an expression"
       "line 1, column 3" (parseAll "R()")
-  , expectErrorAt "loops are statements, not terms"
+  , expectErrorAt "loops are statements, not interior terms"
       "line 1, column 4" (parseAll "a->R(b)")
-  , expectErrorAt "a loop closes its statement: no operator may follow"
-      "line 1, column 5" (parseAll "R(a)->b")
+  -- A loop may OPEN a statement and be continued by operators (figure 15's
+  -- `B(...) <- thermostat setting`); the loop still mints before its body,
+  -- the tail's operator after the ')'.
+  , expectEq "an operator may follow a loop: R(a)->b == (R(a))->b"
+      (Right (ArrowRExpr 2 (LoopExpr 0 Reinforcing (NodeExpr 1 "a" Nothing)) (NodeExpr 3 "b" Nothing) : Nil))
+      (parseAll "R(a)->b")
+  , expectEq "a tail after a loop stays outside the membership"
+      (Right [ Tuple "a" (Just [ "B0" ]), Tuple "b" (Just [ "B0" ]), Tuple "c" Nothing ])
+      (labelLoops "B(a<-b) <- c")
+  , expectEq "the tail links against what the loop's chain resolves to"
+      (Right [ { type: "arrow", source: "dot#3", target: "dot#1" }, { type: "arrow", source: "dot#5", target: "dot#1" } ])
+      (linksOf "B(a<-b) <- c")
   -- Evaluator: name identity
   , expectEq "repeating a name references one node"
       (Right 1) (nodeCount "a->a")

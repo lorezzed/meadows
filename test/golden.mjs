@@ -52,6 +52,14 @@ const EX_CAPITAL = `|=>investment[capital]
 fraction of output invested -> investment
 R(capital -> output -> investment)`;
 
+// Figure 15: the two-loop thermostat — one band, two goal-seeking B loops
+// through floating discrepancy dots, each fed by an outside constant.
+const EX_THERMOSTAT = `|=>heat from furnace[room temperature]=>heat to outside|
+B(heat from furnace <- discrepancy between desired and actual room temperatures <- room temperature)
+thermostat setting -> discrepancy between desired and actual room temperatures
+B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
+outside temperature -> discrepancy between inside and outside temperatures`;
+
 const EX_LOOPS = `|=>investment[capital]=>depreciation|
 |=>regeneration[resource]=>harvest|
 capital->growth goal->investment
@@ -111,6 +119,11 @@ const goldenInputs = [
   'R(a)',
   '[a]=>f\nB(f<-a)',
   'R(a->b)\nB(b->c)',
+  // A loop may open a statement and be continued by operators; the tail
+  // links against the loop's resolution and stays outside the membership.
+  'R(a)->b',
+  'B(a<-b) <- c',
+  'B(a->b) <- c',
   EX_LOOPS,
   // Value annotations: `[stock: N]` initial level, `=>faucet: N` rate.
   // Serialized as an optional `value` key (absent when unannotated).
@@ -132,6 +145,7 @@ const goldenInputs = [
   EX_COFFEE,      // figures 10 & 11
   EX_INTEREST,    // figures 12 & 13
   EX_CAPITAL,     // figure 14
+  EX_THERMOSTAT,  // figure 15
 ];
 
 // Errors: the "kind: line L, column C:" prefix is contractual; wording may be tuned.
@@ -154,8 +168,8 @@ const errorCases = [
   // Loop annotations
   ['R(a',       /^Parsing error: line 1, column 3: /],  // unclosed loop
   ['R()',       /^Parsing error: line 1, column 3: /],  // empty loop
-  ['a->R(b)',   /^Parsing error: line 1, column 4: /],  // loops are statements, not terms
-  ['R(a)->b',   /^Parsing error: line 1, column 5: /],  // nothing may follow a loop
+  ['a->R(b)',   /^Parsing error: line 1, column 4: /],  // loops are never interior terms
+  ['R(a)->',    /^Parsing error: line 1, column 5: /],  // a loop's tail still needs an operand
   ['r(a)',      /^Parsing error: line 1, column 2: /],  // lowercase r is just a name
   // Value annotations belong to stocks, faucets, and dots (a single constant)
   ['a: 1 @2: 3', /^Parsing error: line 1, column 6: /], // dots never take schedules
@@ -248,6 +262,16 @@ if (!(iOf('rate at ten')?.type === 'dot' && iOf('rate at ten')?.value === 0.1))
   fail('interest model', 'rate at ten should be a dot valued 0.1');
 if (iOf('interest at ten')?.value !== undefined)
   fail('interest model', 'the interest faucets carry no rate of their own');
+const thermo = JSON.parse(M.go(EX_THERMOSTAT));
+const tOf = label => thermo.nodes.find(n => n.label === label);
+if (thermo.nodes.length !== 9)   // 2 clouds, 2 faucets, 1 stock, 2 discrepancies, 2 constants
+  fail('thermostat model', `9 nodes expected, got ${thermo.nodes.length}`);
+if (thermo.links.filter(l => l.type === 'flow').length !== 4 || thermo.links.length !== 10)
+  fail('thermostat model', '4 flows + 6 arrows expected');
+if (JSON.stringify(tOf('room temperature')?.loop) !== JSON.stringify(['B0', 'B1']))
+  fail('thermostat model', `room temperature should be in B0 and B1, got ${JSON.stringify(tOf('room temperature')?.loop)}`);
+if (tOf('thermostat setting')?.loop !== undefined || tOf('outside temperature')?.loop !== undefined)
+  fail('thermostat model', 'the constants feed the loops without joining them');
 
 console.log(failures ? `${failures} FAILURE(S)` : 'ALL CHECKS PASSED');
 process.exit(failures ? 1 : 0);

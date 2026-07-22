@@ -92,8 +92,11 @@ JSON error string):
    `ParserT (List PosToken) (State Id)` with productions `program`/`statement`/
    `expression`/`exprTail`/`term`. A statement is a loop annotation (`R(expr)` /
    `B(expr)` → `LoopExpr`, minting before its body like `ParenExpr`) or a bare
-   expression; loops are whole statements only, never terms (`a->R(b)` and
-   `R(a)->b` are positioned errors). Stocks accept an optional `: N` initial
+   expression; a loop may open a statement and be continued by operators
+   (`B(...) <- thermostat setting` — the tail links against whatever the
+   loop's inner expression resolves to, and the tail's nodes are not loop
+   members), but is never an *interior* term (`a->R(b)` is a positioned
+   error). Stocks accept an optional `: N` initial
    value (`'[' NAME (':' NUMBER)? ']'`, `Maybe Number` on `StockExpr`); faucet
    names accept an optional piecewise-constant **rate schedule**
    (`NAME (':' NUMBER ('@' NUMBER ':' NUMBER)*)?` for both directions, e.g.
@@ -178,8 +181,10 @@ kept out of `Main` so the browser bundle never pulls in node-process.
   MAJOR arc (`arcLarge`; `trimArc`/`arcBulge` take the large flag), ballooning
   away from the pipe instead of hugging it; the auto-fit viewBox unions those
   bulge apexes so an outer band's balloon never clips. Each loop letter parks
-  at the centroid of its member nodes — except a two-member loop's, which
-  parks inside its feedback arc's balloon (midway chord → apex).
+  at the mean of its loop's drawn boundary — member-to-member pipe midpoints
+  plus info-arc bulge apexes — which sits inside the enclosed region even
+  when a wide stock rect would pull the plain member centroid onto its own
+  body; a loop with no member-to-member links falls back to the centroid.
 - Clicking empty svg space adds a dot node linked from the previous node (a manual
   editing affordance separate from the DSL path).
 

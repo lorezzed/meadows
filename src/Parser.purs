@@ -149,12 +149,17 @@ program = do
   trees <- sepEndBy statement (tk TokSep)
   Token.eof <?> "an operator ('->', '<-', '=>', '<='), a new line, or the end of the input"
   pure trees
--- | statement := loop | expression
--- | Loop annotations are whole statements, never terms: `a->R(b)` and
--- | `R(a)->b` are positioned parse errors. The alternatives dispatch on
--- | disjoint first tokens (TokLoop starts only a loop), so still no `try`.
+-- | statement := loop tail | expression
+-- | A loop annotation opens a statement and may be continued by operators,
+-- | exactly like a parenthesized term: `B(...) <- goal` hangs an arrow off
+-- | whatever the loop's inner expression resolves to (its chain's end), and
+-- | the tail's nodes are NOT loop members -- figure 15 feeds `thermostat
+-- | setting` into a discrepancy inside the B loop without joining it. A loop
+-- | is still never an *interior* term: `a->R(b)` is a positioned parse
+-- | error. The alternatives dispatch on disjoint first tokens (TokLoop
+-- | starts only a loop), so still no `try`.
 statement :: P Tree
-statement = choice [ loopStmt, expression ]
+statement = choice [ loopStmt >>= exprTail, expression ]
 -- | loop := LOOPKIND expression ')'   (the `R(`/`B(` lexeme is one token).
 -- | Mints BEFORE its body, like ParenExpr (id-stability point).
 loopStmt :: P Tree

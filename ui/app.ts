@@ -226,13 +226,13 @@ let infoLink = svg.append("g")
   .attr("fill", "none")
   .selectAll<SVGPathElement, Link>("path");
 
-// Loop letters render topmost: each R(...)/B(...) annotation floats its letter
-// at the centroid of the member nodes carrying its name (a pure overlay — loop
-// labels are not simulation nodes and feel no forces). A two-member loop —
-// figure 12's stock⇄faucet — also records its connecting info arc, so the
-// letter can park inside the arc's balloon instead of on the pipe between
-// the members.
-type LoopInstance = { name: string, letter: string, members: Node[], arc?: Link };
+// Loop letters render topmost: each R(...)/B(...) annotation floats its
+// letter inside its loop (a pure overlay — loop labels are not simulation
+// nodes and feel no forces). Each instance records the links joining two of
+// its members — the loop's drawn boundary — so the letter can park at that
+// boundary's mean (pipe midpoints, arc bulge apexes) rather than at the
+// member centroid, which a wide stock rect pulls onto its own body.
+type LoopInstance = { name: string, letter: string, members: Node[], edges: Link[] };
 let loopLabel = svg.append("g")
   .selectAll<SVGTextElement, LoopInstance>("text");
 
@@ -385,16 +385,14 @@ function update(system: System) {
     }
   }
   // Link endpoints are still id strings here (the force rewrites them to
-  // node objects later), so match the two-member arc by id either way.
+  // node objects later), so match member-to-member links by id either way.
   const endIdOf = (e: Link["source"]) =>
     typeof e === "object" && e !== null ? (e as Node).id : String(e);
   const loopInstances: LoopInstance[] = [...loopMembers.entries()]
     .map(([name, members]) => {
       const ids = new Set(members.map(m => m.id));
-      const arc = members.length === 2
-        ? links.find(l => l.type !== "flow" && ids.has(endIdOf(l.source)) && ids.has(endIdOf(l.target)))
-        : undefined;
-      return { name, letter: name.charAt(0), members, arc };
+      const edges = links.filter(l => ids.has(endIdOf(l.source)) && ids.has(endIdOf(l.target)));
+      return { name, letter: name.charAt(0), members, edges };
     });
   loopLabel = loopLabel
     .data(loopInstances, d => d.name)
@@ -747,19 +745,25 @@ function ticked() {
   nodeStock.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
   nodeFaucet.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
   nodeCloud.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
-  // A loop letter sits at the centroid of its member nodes, tracking them
-  // through the simulation (and through drags) for free. A two-member loop's
-  // centroid lands ON the pipe between its members, so that letter parks
-  // inside the drawn feedback arc instead — midway between the arc's chord
-  // and its bulge apex, on whichever side the arc currently bows.
+  // A loop letter parks at the mean of its loop's drawn boundary — each
+  // member-to-member pipe contributes its midpoint, each info arc its bulge
+  // apex (current bow side, balloons included) — which sits inside the
+  // enclosed region even when a wide stock rect pulls the member centroid
+  // onto its own body (figure 15's B sat on the stock's corner). A loop
+  // with no member-to-member links falls back to the member centroid.
   loopLabel.attr("transform", d => {
-    const s = d.arc?.source, t = d.arc?.target;
-    if (typeof s === "object" && typeof t === "object" && s !== null && t !== null) {
+    let px = 0, py = 0, pn = 0;
+    for (const l of d.edges) {
+      const s = l.source, t = l.target;
+      if (typeof s !== "object" || s === null || typeof t !== "object" || t === null) continue;
       const sx = (s as Node).x ?? 0, sy = (s as Node).y ?? 0;
       const tx = (t as Node).x ?? 0, ty = (t as Node).y ?? 0;
-      const b = arcBulge(sx, sy, tx, ty, d.arc?.sweep ?? 1, arcLarge(s as Node, t as Node));
-      if (b) return `translate(${((sx + tx) / 2 + b.x) / 2},${((sy + ty) / 2 + b.y) / 2})`;
+      const p = l.type === "flow"
+        ? { x: (sx + tx) / 2, y: (sy + ty) / 2 }
+        : arcBulge(sx, sy, tx, ty, l.sweep ?? 1, arcLarge(s as Node, t as Node));
+      if (p) { px += p.x; py += p.y; pn++; }
     }
+    if (pn > 0) return `translate(${px / pn},${py / pn})`;
     const n = d.members.length || 1;
     const cx = d.members.reduce((acc, m) => acc + (m.x ?? 0), 0) / n;
     const cy = d.members.reduce((acc, m) => acc + (m.y ?? 0), 0) / n;
