@@ -221,7 +221,15 @@ kept out of `Main` so the browser bundle never pulls in node-process.
   only, also used by the slot-width and viewBox-pad estimates; ids, the name
   registry, the JSON `label`, and the chart's labels all stay the bare name.
 - `ticked()` positions everything each frame; links are drawn as curved SVG arc
-  paths. An info arc between two members of the SAME band (a stock arrowing
+  paths. The faucet icon (solid black tap, `ui/shape/faucet.svg`) draws LIFTED
+  by `faucetLift`: in the artwork the tap's base sits at 79% of the icon's
+  height, and the lift puts that base — not the image centre — on the node
+  point, so the tap straddles its pipe as in the reference figures. Every
+  info-arc computation (trim, bulge, sweep scoring, letter parking, viewBox
+  union) reads faucet endpoints through `aimY`, which applies the same lift so
+  arrows meet the visible tap body; flow pipes keep the TRUE node point — that
+  is the pipe line through the base. An info arc between two members of the
+  SAME band (a stock arrowing
   into its own faucet — the figure 12 / figure 42 feedback loops) draws as the
   MAJOR arc (`arcLarge`; `trimArc`/`arcBulge` take the large flag), ballooning
   away from the pipe instead of hugging it; the auto-fit viewBox unions those

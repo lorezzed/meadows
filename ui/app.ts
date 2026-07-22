@@ -136,6 +136,12 @@ const stockWidth = 96;
 const stockHeight = 72;
 const faucetWidth = 40;
 const faucetHeight = 40
+// In the artwork the tap's base — the part the pipe passes through in the
+// reference figures — is centred at 79% of the icon's height, not its middle.
+// Draw the icon lifted by that excess so the base straddles the pipe line
+// (= the node point) and the handle rises above it; everything that AIMS at
+// a faucet (label, info arcs) shifts by the same amount via aimY.
+const faucetLift = faucetHeight * (0.79 - 0.5);
 const cloudWidth = 52;
 const cloudHeight = 52;
 // A port (the boundary dot the compiler mints where an info arrow meets a
@@ -183,6 +189,13 @@ function edgeOf(d: Node): number {
     default: return faucetWidth / 2;
   }
 }
+
+// Where an info arc aims. A faucet's node point is its pipe junction (the
+// lifted icon's base), but arrows should meet the visible tap body above it —
+// so every info-arc computation (trim, bulge, sweep scoring, letter parking,
+// viewBox union) reads faucet endpoints through this lift. Flow pipes keep
+// the true node point: that IS the pipe line.
+const aimY = (n: Node): number => (n.y ?? 0) - (n.type === "faucet" ? faucetLift : 0);
 
 // Each node is a <g> that holds its shape *and* its text label, so the two
 // move together (positioned via a transform in ticked()).
@@ -360,11 +373,11 @@ function update(system: System) {
       g.append("image")
         .attr("href", faucetSvg)
         .attr("x", -faucetWidth / 2)
-        .attr("y", -faucetHeight / 2)
+        .attr("y", -faucetHeight / 2 - faucetLift)
         .attr("width", faucetWidth)
         .attr("height", faucetHeight);
       // Label above the icon, as in the reference figure.
-      appendLabel(g, -28);
+      appendLabel(g, -28 - faucetLift);
       return g;
     })
     .call(sel => sel.select<SVGTextElement>("text").text(displayLabel))
@@ -888,7 +901,7 @@ function ticked() {
       const tx = (t as Node).x ?? 0, ty = (t as Node).y ?? 0;
       const p = l.type === "flow"
         ? { x: (sx + tx) / 2, y: (sy + ty) / 2 }
-        : arcBulge(sx, sy, tx, ty, l.sweep ?? 1, arcLarge(s as Node, t as Node));
+        : arcBulge(sx, aimY(s as Node), tx, aimY(t as Node), l.sweep ?? 1, arcLarge(s as Node, t as Node));
       if (p) { px += p.x; py += p.y; pn++; }
     }
     if (pn > 0) return `translate(${px / pn},${py / pn})`;
@@ -908,7 +921,7 @@ function ticked() {
   const obstacles = simulation.nodes();
   infoLink.each(d => {
     const s = d.source as Node, t = d.target as Node;
-    const sx = s.x ?? 0, sy = s.y ?? 0, tx = t.x ?? 0, ty = t.y ?? 0;
+    const sx = s.x ?? 0, sy = aimY(s), tx = t.x ?? 0, ty = aimY(t);
     const clearance = (b: { x: number, y: number } | null) => {
       if (!b) return 0;
       let min = Infinity;
@@ -966,8 +979,9 @@ function ticked() {
       // instead of buried under the shapes. The radius must match trimArc's.
       const sweep = d.sweep ?? 1;
       const large = arcLarge(source, target);
-      const r = infoArcRadius(dr);
-      const a = trimArc(sx, sy, tx, ty, edgeOf(source), edgeOf(target) + infoArrowLength, sweep, large);
+      const asy = aimY(source), aty = aimY(target);
+      const r = infoArcRadius(Math.hypot(tx - sx, aty - asy));
+      const a = trimArc(sx, asy, tx, aty, edgeOf(source), edgeOf(target) + infoArrowLength, sweep, large);
       return `M${a.start.x},${a.start.y}A${r},${r} 0 ${large},${sweep} ${a.end.x},${a.end.y}`;
   };
   flowLink.attr("d", pathFor);
@@ -983,7 +997,7 @@ function ticked() {
   for (const d of simulation.nodes()) {
     if (d.x == null || d.y == null) continue;
     const padX = Math.max(edgeOf(d) + 12, displayLabel(d).length * 3);
-    const padY = edgeOf(d) + 24;
+    const padY = edgeOf(d) + 24 + (d.type === "faucet" ? faucetLift : 0);
     x0 = Math.min(x0, d.x - padX); y0 = Math.min(y0, d.y - padY);
     x1 = Math.max(x1, d.x + padX); y1 = Math.max(y1, d.y + padY);
   }
@@ -994,7 +1008,7 @@ function ticked() {
   infoLink.each(d => {
     const s = d.source as Node, t = d.target as Node;
     if (!arcLarge(s, t)) return;
-    const b = arcBulge(s.x ?? 0, s.y ?? 0, t.x ?? 0, t.y ?? 0, d.sweep ?? 1, 1);
+    const b = arcBulge(s.x ?? 0, aimY(s), t.x ?? 0, aimY(t), d.sweep ?? 1, 1);
     if (!b) return;
     x0 = Math.min(x0, b.x - 12); y0 = Math.min(y0, b.y - 12);
     x1 = Math.max(x1, b.x + 12); y1 = Math.max(y1, b.y + 12);
