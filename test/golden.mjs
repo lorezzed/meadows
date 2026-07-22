@@ -44,6 +44,14 @@ rate at eight: 0.08 -> interest at eight
 R(interest at ten <- ten percent interest)
 rate at ten: 0.1 -> interest at ten`;
 
+// Figure 14: the capital reinforcing loop — the loop rides the flow pipe
+// from faucet to stock, so only the info-arrow half is written in the R(...)
+// (annotating `investment -> capital` too would emit a spurious same-band
+// arrow shadowing the pipe).
+const EX_CAPITAL = `|=>investment[capital]
+fraction of output invested -> investment
+R(capital -> output -> investment)`;
+
 const EX_LOOPS = `|=>investment[capital]=>depreciation|
 |=>regeneration[resource]=>harvest|
 capital->growth goal->investment
@@ -123,6 +131,7 @@ const goldenInputs = [
   'a: 5\na: 9',   // the first dot constant wins
   EX_COFFEE,      // figures 10 & 11
   EX_INTEREST,    // figures 12 & 13
+  EX_CAPITAL,     // figure 14
 ];
 
 // Errors: the "kind: line L, column C:" prefix is contractual; wording may be tuned.

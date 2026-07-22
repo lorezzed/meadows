@@ -228,8 +228,11 @@ let infoLink = svg.append("g")
 
 // Loop letters render topmost: each R(...)/B(...) annotation floats its letter
 // at the centroid of the member nodes carrying its name (a pure overlay — loop
-// labels are not simulation nodes and feel no forces).
-type LoopInstance = { name: string, letter: string, members: Node[] };
+// labels are not simulation nodes and feel no forces). A two-member loop —
+// figure 12's stock⇄faucet — also records its connecting info arc, so the
+// letter can park inside the arc's balloon instead of on the pipe between
+// the members.
+type LoopInstance = { name: string, letter: string, members: Node[], arc?: Link };
 let loopLabel = svg.append("g")
   .selectAll<SVGTextElement, LoopInstance>("text");
 
@@ -381,8 +384,18 @@ function update(system: System) {
       loopMembers.set(name, arr);
     }
   }
+  // Link endpoints are still id strings here (the force rewrites them to
+  // node objects later), so match the two-member arc by id either way.
+  const endIdOf = (e: Link["source"]) =>
+    typeof e === "object" && e !== null ? (e as Node).id : String(e);
   const loopInstances: LoopInstance[] = [...loopMembers.entries()]
-    .map(([name, members]) => ({ name, letter: name.charAt(0), members }));
+    .map(([name, members]) => {
+      const ids = new Set(members.map(m => m.id));
+      const arc = members.length === 2
+        ? links.find(l => l.type !== "flow" && ids.has(endIdOf(l.source)) && ids.has(endIdOf(l.target)))
+        : undefined;
+      return { name, letter: name.charAt(0), members, arc };
+    });
   loopLabel = loopLabel
     .data(loopInstances, d => d.name)
     .join("text")
@@ -657,32 +670,51 @@ function update(system: System) {
 
 // How round the info arcs are: arc radius = chord length × this factor, so it
 // fixes the arc's angular sweep regardless of distance. Must be ≥ 0.5:
-//   0.5  -> semicircle (180°), maximum roundness
-//   0.6  -> ~113° arc, the pronounced swoop of the Meadows reference figure
-//   0.75 -> ~84° arc, halfway
+//   0.5  -> semicircle (180°), maximum minor-arc roundness
+//   0.55 -> ~131° arc, the pronounced swoop of the Meadows reference figure
+//   0.6  -> ~113° arc
 //   1.0  -> 60° arc, the gentle bend this app previously drew
-const infoArcCurvature = 0.6;
+// The same radius serves the MAJOR (large-flag) arcs used for same-band
+// feedback loops, where roundness inverts: the balloon's apex sits
+// (κ + √(κ²−¼)) × chord off the chord — ≈ 0.78 × chord at 0.55 — so the
+// loop encloses real area instead of hugging the pipe it feeds back along.
+const infoArcCurvature = 0.55;
 const infoArcRadius = (chord: number) => chord * infoArcCurvature;
 
-// The info-link arc is the minor arc of the circle of radius
-// `infoArcRadius(chord)` through both endpoints, drawn with the given sweep
-// flag. Move both endpoints along that same circle — start forward by
-// `mStart`, end back by `mEnd` arc-pixels — so the shortened path still lies
-// exactly on the original arc and both markers orient to their true tangents.
-// For a minor arc the sweep-1 circle center always sits at w = +1 (and the
-// sweep-0 center mirrors it at w = -1); angular travel runs in the direction
-// of `w`, so the start advances by +w and the end backs up by -w arc-pixels.
-function trimArc(sx: number, sy: number, tx: number, ty: number, mStart: number, mEnd: number, sweep: 0 | 1): { start: { x: number, y: number }, end: { x: number, y: number } } {
+// A feedback arc between two members of the SAME band — figure 12's stock
+// arrowing into its own faucet, figure 42's capital → depreciation — cannot
+// read as a loop when drawn as a minor arc: it hugs the pipe connecting the
+// two. Draw it as the major arc instead (the reference figures' balloon),
+// leaving room for the R/B letter inside. Cross-band and floater arcs keep
+// the minor bow.
+const arcLarge = (s: Node, t: Node): 0 | 1 =>
+  s.group != null && s.group === t.group ? 1 : 0;
+
+// The info-link arc is an arc of the circle of radius `infoArcRadius(chord)`
+// through both endpoints, drawn with the given sweep and large-arc flags.
+// Move both endpoints along that same circle — start forward by `mStart`,
+// end back by `mEnd` arc-pixels — so the shortened path still lies exactly
+// on the original arc and both markers orient to their true tangents.
+// The two circle centers mirror across the chord: for a minor arc the
+// sweep-1 center sits at w = +1 opposite the bulge (sweep-0 mirrors it);
+// a major arc uses the other center, putting it inside the balloon. Angular
+// travel runs in the direction of `w` for either arc, so the start advances
+// by +w and the end backs up by -w arc-pixels.
+function trimArc(sx: number, sy: number, tx: number, ty: number, mStart: number, mEnd: number, sweep: 0 | 1, large: 0 | 1 = 0): { start: { x: number, y: number }, end: { x: number, y: number } } {
   const untrimmed = { start: { x: sx, y: sy }, end: { x: tx, y: ty } };
   const dx = tx - sx, dy = ty - sy;
   const d = Math.hypot(dx, dy);
-  if (d < mStart + mEnd + 8) return untrimmed; // too short to trim
   const r = infoArcRadius(d);
+  // Path length available for trimming: a minor arc has roughly its chord,
+  // a major arc the rest of its circle.
+  const arcLen = large ? r * (2 * Math.PI - 2 * Math.asin(Math.min(1, d / (2 * r)))) : d;
+  if (arcLen < mStart + mEnd + 8) return untrimmed; // too short to trim
   const mx = (sx + tx) / 2, my = (sy + ty) / 2;
   const h = Math.sqrt(Math.max(0, r * r - (d / 2) * (d / 2)));
   const ux = dx / d, uy = dy / d;
   const w = sweep === 1 ? 1 : -1;
-  const cx = mx - w * uy * h, cy = my + w * ux * h;
+  const cSide = large ? 1 : -1;
+  const cx = mx + cSide * w * uy * h, cy = my - cSide * w * ux * h;
   const a0 = Math.atan2(sy - cy, sx - cx);
   const a1 = Math.atan2(ty - cy, tx - cx);
   const as = a0 + w * (mStart / r); // arc length -> angle, along travel
@@ -693,18 +725,21 @@ function trimArc(sx: number, sy: number, tx: number, ty: number, mStart: number,
   };
 }
 
-// Bulge apex of the candidate arc for a sweep flag: the minor arc's midpoint
-// sits (r - h) off the chord midpoint, perpendicular to the chord — sweep 1
-// on one side, sweep 0 mirrored. Used to score which side has more room.
-function arcBulge(sx: number, sy: number, tx: number, ty: number, sweep: 0 | 1): { x: number, y: number } | null {
+// Bulge apex of the candidate arc for a sweep flag: the arc's midpoint sits
+// perpendicular to the chord off its midpoint — (r - h) out for a minor arc,
+// (r + h) for a major one (same side; the balloon just reaches further) —
+// sweep 1 on one side, sweep 0 mirrored. Used to score which side has more
+// room, and to park a two-member loop's letter inside its balloon.
+function arcBulge(sx: number, sy: number, tx: number, ty: number, sweep: 0 | 1, large: 0 | 1 = 0): { x: number, y: number } | null {
   const dx = tx - sx, dy = ty - sy;
   const d = Math.hypot(dx, dy);
   if (d === 0) return null;
   const r = infoArcRadius(d);
   const h = Math.sqrt(Math.max(0, r * r - (d / 2) * (d / 2)));
+  const off = large ? r + h : r - h;
   const ux = dx / d, uy = dy / d;
   const w = sweep === 1 ? 1 : -1;
-  return { x: (sx + tx) / 2 + w * uy * (r - h), y: (sy + ty) / 2 - w * ux * (r - h) };
+  return { x: (sx + tx) / 2 + w * uy * off, y: (sy + ty) / 2 - w * ux * off };
 }
 
 function ticked() {
@@ -713,8 +748,18 @@ function ticked() {
   nodeFaucet.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
   nodeCloud.attr("transform", d => `translate(${d.x ?? 0},${d.y ?? 0})`);
   // A loop letter sits at the centroid of its member nodes, tracking them
-  // through the simulation (and through drags) for free.
+  // through the simulation (and through drags) for free. A two-member loop's
+  // centroid lands ON the pipe between its members, so that letter parks
+  // inside the drawn feedback arc instead — midway between the arc's chord
+  // and its bulge apex, on whichever side the arc currently bows.
   loopLabel.attr("transform", d => {
+    const s = d.arc?.source, t = d.arc?.target;
+    if (typeof s === "object" && typeof t === "object" && s !== null && t !== null) {
+      const sx = (s as Node).x ?? 0, sy = (s as Node).y ?? 0;
+      const tx = (t as Node).x ?? 0, ty = (t as Node).y ?? 0;
+      const b = arcBulge(sx, sy, tx, ty, d.arc?.sweep ?? 1, arcLarge(s as Node, t as Node));
+      if (b) return `translate(${((sx + tx) / 2 + b.x) / 2},${((sy + ty) / 2 + b.y) / 2})`;
+    }
     const n = d.members.length || 1;
     const cx = d.members.reduce((acc, m) => acc + (m.x ?? 0), 0) / n;
     const cy = d.members.reduce((acc, m) => acc + (m.y ?? 0), 0) / n;
@@ -741,8 +786,9 @@ function ticked() {
       }
       return min;
     };
-    const c1 = clearance(arcBulge(sx, sy, tx, ty, 1));
-    const c0 = clearance(arcBulge(sx, sy, tx, ty, 0));
+    const large = arcLarge(s, t);
+    const c1 = clearance(arcBulge(sx, sy, tx, ty, 1, large));
+    const c0 = clearance(arcBulge(sx, sy, tx, ty, 0, large));
     if (d.sweep === undefined) d.sweep = c0 > c1 ? 0 : 1;
     else if ((d.sweep === 1 ? c0 - c1 : c1 - c0) > sweepHysteresis) d.sweep = d.sweep === 1 ? 0 : 1;
   });
@@ -787,9 +833,10 @@ function ticked() {
       // circle sits on the source's edge and the small head at the target's,
       // instead of buried under the shapes. The radius must match trimArc's.
       const sweep = d.sweep ?? 1;
+      const large = arcLarge(source, target);
       const r = infoArcRadius(dr);
-      const a = trimArc(sx, sy, tx, ty, edgeOf(source) + infoTailRadius, edgeOf(target) + infoArrowLength, sweep);
-      return `M${a.start.x},${a.start.y}A${r},${r} 0 0,${sweep} ${a.end.x},${a.end.y}`;
+      const a = trimArc(sx, sy, tx, ty, edgeOf(source) + infoTailRadius, edgeOf(target) + infoArrowLength, sweep, large);
+      return `M${a.start.x},${a.start.y}A${r},${r} 0 ${large},${sweep} ${a.end.x},${a.end.y}`;
   };
   flowLink.attr("d", pathFor);
   infoLink.attr("d", pathFor);
@@ -808,6 +855,18 @@ function ticked() {
     x0 = Math.min(x0, d.x - padX); y0 = Math.min(y0, d.y - padY);
     x1 = Math.max(x1, d.x + padX); y1 = Math.max(y1, d.y + padY);
   }
+  // A same-band feedback balloon swings well past its endpoint nodes, so an
+  // outer band's loop would clip at the canvas edge — union the major arcs'
+  // bulge apexes too (the loop letter parks inside the balloon, so this
+  // covers it as well).
+  infoLink.each(d => {
+    const s = d.source as Node, t = d.target as Node;
+    if (!arcLarge(s, t)) return;
+    const b = arcBulge(s.x ?? 0, s.y ?? 0, t.x ?? 0, t.y ?? 0, d.sweep ?? 1, 1);
+    if (!b) return;
+    x0 = Math.min(x0, b.x - 12); y0 = Math.min(y0, b.y - 12);
+    x1 = Math.max(x1, b.x + 12); y1 = Math.max(y1, b.y + 12);
+  });
   const ease = 0.2;
   viewX += (x0 - viewX) * ease;
   viewY += (y0 - viewY) * ease;

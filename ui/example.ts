@@ -74,6 +74,12 @@ R(interest at ten <- ten percent interest)
 rate at ten: 0.1 -> interest at ten`
     },
     {
+        label: 'Figure 14',
+        content: `|=>investment[capital]
+fraction of output invested -> investment
+R(capital -> output -> investment)`
+    },
+    {
         label: 'Figure 42',
         content: `|=>investment[capital]=>depreciation|
 |=>regeneration[resource]=>harvest|
