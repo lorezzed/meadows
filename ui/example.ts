@@ -172,6 +172,14 @@ fertility c: 0.21 ~2: 0.09 -> births c
 mortality c: 0.09 -> deaths c`
     },
     {
+        label: 'Figure 21 & 26',
+        content: `|=>births[population: 6.6]=>deaths|
+R(births <- population)
+B(deaths <- population)
+fertility: 0.21 ~2.5: 0.09 ~4.5: 0.09 ~7: 0.27 ~10: 0.36 -> births
+mortality: 0.09 -> deaths`
+    },
+    {
         label: 'Figure 42',
         content: `|=>investment[capital]=>depreciation|
 |=>regeneration[resource]=>harvest|

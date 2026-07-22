@@ -106,6 +106,15 @@ B(deaths <- population)
 fertility: 0.21 ~2: 0.09 -> births
 mortality: 0.09 -> deaths`;
 
+// Figures 21 & 26: shifting dominance — fertility above mortality, then
+// equal (the two-point 0.09 plateau interpolates exactly constant), then
+// above again and climbing: grow, hold, grow faster.
+const EX_POP26 = `|=>births[population: 6.6]=>deaths|
+R(births <- population)
+B(deaths <- population)
+fertility: 0.21 ~2.5: 0.09 ~4.5: 0.09 ~7: 0.27 ~10: 0.36 -> births
+mortality: 0.09 -> deaths`;
+
 // Figure 25: the three scenarios side by side — the same two-loop structure
 // three times over, three futures decided purely by the numbers.
 const EX_POP25 = `|=>births a[growth: 6.6]=>deaths a|
@@ -230,6 +239,7 @@ const goldenInputs = [
   EX_POP23,       // figures 21 & 23
   EX_POP24,       // figures 21 & 24
   EX_POP25,       // figure 25
+  EX_POP26,       // figures 21 & 26
 ];
 
 // Errors: the "kind: line L, column C:" prefix is contractual; wording may be tuned.
@@ -384,6 +394,11 @@ const fert24 = pop24.nodes.find(n => n.label === 'fertility');
 if (!(fert24?.value === 0.21 && fert24?.smooth === true
       && JSON.stringify(fert24?.steps) === JSON.stringify([{ value: 0.09, at: 2 }])))
   fail('population 24', `fertility should carry the smooth schedule, got ${JSON.stringify(fert24)}`);
+const fert26 = JSON.parse(M.go(EX_POP26)).nodes.find(n => n.label === 'fertility');
+if (!(fert26?.value === 0.21 && fert26?.smooth === true
+      && JSON.stringify(fert26?.steps) === JSON.stringify(
+        [{ value: 0.09, at: 2.5 }, { value: 0.09, at: 4.5 }, { value: 0.27, at: 7 }, { value: 0.36, at: 10 }])))
+  fail('population 26', `fertility should carry the four-step smooth schedule, got ${JSON.stringify(fert26)}`);
 const pop25 = JSON.parse(M.go(EX_POP25));
 if (pop25.nodes.length !== 21) fail('population 25', `21 nodes expected, got ${pop25.nodes.length}`);
 if (new Set(pop25.nodes.map(n => n.group).filter(g => g != null)).size !== 3)

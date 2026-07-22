@@ -412,6 +412,36 @@ mortality c: 0.09 -> deaths c`;
   }
   if (goalRefs(system25).length !== 0)
     fail('figure 25', 'no goal rules in the composite either');
+
+  // Figures 21 & 26: shifting dominance — one run, three phases. Fertility
+  // starts above mortality, falls onto it (the two equal schedule points
+  // interpolate exactly constant, so the plateau holds), then climbs past it
+  // again: grow, hold, grow faster — ending near the book's ≈18.3 billion.
+  const F26 = '0.21 ~2.5: 0.09 ~4.5: 0.09 ~7: 0.27 ~10: 0.36';
+  const fertShift = scheduleFn({
+    value: 0.21,
+    steps: [{ at: 2.5, value: 0.09 }, { at: 4.5, value: 0.09 }, { at: 7, value: 0.27 }, { at: 10, value: 0.36 }],
+    smooth: true,
+  });
+  const system26 = sys(pop(F26, '0.09'));
+  const shift = simulate(system26).find(s => s.label === 'population');
+  const want26 = mirror(fertShift, constant(0.09));
+  if (!shift.levels.every((v, i) => Math.abs(v - want26[i]) < 1e-12))
+    fail('figure 26', 'series must match the mirrored recurrence sample-for-sample');
+  if (!shift.levels.every((v, i) => i === 0 || v >= shift.levels[i - 1]))
+    fail('figure 26', 'fertility never drops below mortality: population never falls');
+  const idx = (t) => Math.round(t / DT);
+  if (!shift.levels.slice(1, idx(2.5) + 1).every((v, i) => v > shift.levels[i]))
+    fail('figure 26', 'phase one: births dominant, strict growth until the schedules meet');
+  const plateau = shift.levels.slice(idx(2.5), idx(4.5) + 2);
+  if (Math.max(...plateau) - Math.min(...plateau) > 1e-6)
+    fail('figure 26', `phase two: fertility = mortality must hold the level, drifted ${Math.max(...plateau) - Math.min(...plateau)}`);
+  if (!(last(shift) > 2 * shift.levels[idx(4.5)]))
+    fail('figure 26', 'phase three: renewed dominance must more than double the plateau');
+  if (!(last(shift) > 17.5 && last(shift) < 18.7))
+    fail('figure 26', `should end near the book's ≈18.3, got ${last(shift)}`);
+  if (goalRefs(system26).length !== 0)
+    fail('figure 26', 'the shifting fertility is a factor, not a goal');
 }
 
 // Formulas: `: (expr)` is a rate law (faucets) or a computed auxiliary
