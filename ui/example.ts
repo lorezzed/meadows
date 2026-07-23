@@ -219,6 +219,31 @@ output per unit capital at ten: (5 / 3)
 capital lifetime at ten: 2`
     },
     {
+        label: 'figure 29',
+        content: `| =>deliveries [inventory of cars on the lot] =>sales |
+B(deliveries <- orders to factory <- discrepancy <- inventory of cars on the lot)
+B(inventory of cars on the lot -> sales)
+desired inventory -> discrepancy
+perceived sales -> orders to factory
+perceived sales -> desired inventory
+sales -> perceived sales
+customer demand -> sales`
+    },
+    {
+        label: 'figure 29 & 30',
+        content: `| =>deliveries [inventory of cars on the lot: 200] =>sales |
+B(deliveries <- orders to factory <- discrepancy <- inventory of cars on the lot)
+orders to factory: (perceived sales + adjustment * discrepancy)
+deliveries: (orders to factory)
+discrepancy: (desired inventory - inventory of cars on the lot)
+desired inventory: (coverage * perceived sales)
+perceived sales: (customer demand)
+sales: (customer demand)
+customer demand: 20 @2.5: 22
+coverage: 10
+adjustment: 10`
+    },
+    {
         label: 'figure 42',
         content: `| =>investment [capital] =>depreciation |
 | =>regeneration [resource] =>harvest |

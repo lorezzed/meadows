@@ -159,6 +159,38 @@ output per unit capital at ${suffix}: (5 / 3)
 capital lifetime at ${suffix}: ${lifetime}`;
 const EX_CAP28 = [cap28('twenty', 4), cap28('fifteen', 3), cap28('ten', 2)].join('\n');
 
+// figure 29: the car dealership as pure structure — deliveries fill the
+// inventory, sales drain it, and two balancing loops (the ordering machinery
+// on the left, the sales/inventory coupling on the right) close through the
+// aux web. The info arrow `sales -> perceived sales` runs off a faucet, and
+// the stock sprouts two ports (one to discrepancy, one to sales).
+const EX_CAR29 = `| =>deliveries [inventory of cars on the lot] =>sales |
+B(deliveries <- orders to factory <- discrepancy <- inventory of cars on the lot)
+B(inventory of cars on the lot -> sales)
+desired inventory -> discrepancy
+perceived sales -> orders to factory
+perceived sales -> desired inventory
+sales -> perceived sales
+customer demand -> sales`;
+
+// figures 29 & 30: the same dealership valued for the behavior chart. The
+// no-delay idealization figure 30 depicts — perceived sales tracks customer
+// demand directly, so the net flow reduces to adjustment × (desired −
+// inventory) and inventory goal-seeks its target. One time unit = 10 days
+// (T_END = 10 spans the book's 100-day axis); a 10% demand step at day 25
+// lands at t = 2.5 and inventory eases 200 → 220.
+const EX_CAR2930 = `| =>deliveries [inventory of cars on the lot: 200] =>sales |
+B(deliveries <- orders to factory <- discrepancy <- inventory of cars on the lot)
+orders to factory: (perceived sales + adjustment * discrepancy)
+deliveries: (orders to factory)
+discrepancy: (desired inventory - inventory of cars on the lot)
+desired inventory: (coverage * perceived sales)
+perceived sales: (customer demand)
+sales: (customer demand)
+customer demand: 20 @2.5: 22
+coverage: 10
+adjustment: 10`;
+
 const EX_LOOPS = `|=>investment[capital]=>depreciation|
 |=>regeneration[resource]=>harvest|
 capital->growth goal->investment
@@ -268,6 +300,8 @@ const goldenInputs = [
   EX_POP26,       // figures 21 & 26
   EX_CAP27,       // figure 27
   EX_CAP28,       // figures 27 & 28
+  EX_CAR29,       // figure 29
+  EX_CAR2930,     // figures 29 & 30
 ];
 
 // Errors: the "kind: line L, column C:" prefix is contractual; wording may be tuned.
@@ -464,6 +498,39 @@ if (!(c28Of('investment at twenty')?.expr?.kind === '*' && c28Of('investment at 
   fail('capital 28', 'the faucets carry rate-law formulas, not plain rates');
 if (!(c28Of('output per unit capital at ten')?.expr?.kind === '/' && c28Of('capital lifetime at ten')?.value === 2))
   fail('capital 28', 'output per unit capital is the 5/3 formula, the lifetime a scaled constant');
+const car29 = JSON.parse(M.go(EX_CAR29));
+const c29Of = label => car29.nodes.find(n => n.label === label);
+if (car29.nodes.length !== 12)   // 2 clouds, 2 faucets, 1 stock, 5 dots, 2 ports
+  fail('car 29', `12 nodes expected, got ${car29.nodes.length}`);
+if (car29.links.filter(l => l.type === 'flow').length !== 4 || car29.links.length !== 13)
+  fail('car 29', '4 flows + 9 arrows expected');
+const c29Ports = car29.nodes.filter(n => n.type === 'port');
+if (c29Ports.length !== 2 || !c29Ports.every(p => p.parent === c29Of('inventory of cars on the lot').id))
+  fail('car 29', 'the inventory stock sprouts two info-arrow ports (to discrepancy and to sales)');
+if (JSON.stringify(c29Of('inventory of cars on the lot')?.loop) !== JSON.stringify(['B0', 'B1']))
+  fail('car 29', `inventory should be in both B loops, got ${JSON.stringify(c29Of('inventory of cars on the lot')?.loop)}`);
+if (JSON.stringify(c29Of('sales')?.loop) !== JSON.stringify(['B1']))
+  fail('car 29', `sales rides the right B loop, got ${JSON.stringify(c29Of('sales')?.loop)}`);
+if (c29Of('customer demand')?.loop !== undefined || c29Of('perceived sales')?.loop !== undefined)
+  fail('car 29', 'the aux dots feed the loops without joining them');
+if (car29.nodes.some(n => n.value !== undefined || n.expr !== undefined))
+  fail('car 29', 'the structure figure carries no numbers');
+const car30 = JSON.parse(M.go(EX_CAR2930));
+const c30Of = label => car30.nodes.find(n => n.label === label);
+if (car30.nodes.length !== 13)   // 2 clouds, 2 faucets, 1 stock, 7 dots, 1 port
+  fail('car 30', `13 nodes expected, got ${car30.nodes.length}`);
+if (car30.links.filter(l => l.type === 'flow').length !== 4 || car30.links.length !== 14)
+  fail('car 30', '4 flows + 10 arrows expected (formula arrows dedup against the B one)');
+if (c30Of('inventory of cars on the lot')?.value !== 200)
+  fail('car 30', 'inventory starts at 200');
+if (!(c30Of('deliveries')?.expr?.kind === 'ref' && c30Of('deliveries')?.value === undefined
+      && c30Of('sales')?.expr?.kind === 'ref'))
+  fail('car 30', 'both faucets carry formula rate laws, not plain rates');
+if (!(c30Of('customer demand')?.value === 20
+      && JSON.stringify(c30Of('customer demand')?.steps) === JSON.stringify([{ value: 22, at: 2.5 }])))
+  fail('car 30', `customer demand steps 20 -> 22 at t=2.5, got ${JSON.stringify(c30Of('customer demand'))}`);
+if (!(c30Of('coverage')?.value === 10 && c30Of('adjustment')?.value === 10))
+  fail('car 30', 'coverage and adjustment are the model constants');
 
 console.log(failures ? `${failures} FAILURE(S)` : 'ALL CHECKS PASSED');
 process.exit(failures ? 1 : 0);

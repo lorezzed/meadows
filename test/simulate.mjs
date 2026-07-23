@@ -549,5 +549,57 @@ capital lifetime at ${suffix}: ${lifetime}`;
     fail('figure 28', `6 info arrows per copy expected (formulas dedup against R/B), got ${arrows.length}`);
 }
 
+// figures 29 & 30: the car dealership. deliveries fill the inventory, sales
+// drain it, and the ordering machinery — perceived sales → desired inventory
+// → discrepancy → orders to factory → deliveries — closes the balancing loop.
+// figure 30 is the no-delay idealization: perceived sales = customer demand,
+// so the two faucet formulas cancel the sales rate and the net flow is exactly
+// adjustment × (desired − inventory) — inventory goal-seeks its target with no
+// oscillation. One time unit = 10 days (T_END = 10 over the book's 100-day
+// axis); a 10% demand step at day 25 (t = 2.5) eases the level 200 → 220.
+// Mirrored step-for-step in the simulator's float-op order: the deliveries and
+// sales formulas clamp at 0, and the outflow ration is exactly 1 throughout.
+{
+  const CAR = `| =>deliveries [inventory of cars on the lot: 200] =>sales |
+B(deliveries <- orders to factory <- discrepancy <- inventory of cars on the lot)
+orders to factory: (perceived sales + adjustment * discrepancy)
+deliveries: (orders to factory)
+discrepancy: (desired inventory - inventory of cars on the lot)
+desired inventory: (coverage * perceived sales)
+perceived sales: (customer demand)
+sales: (customer demand)
+customer demand: 20 @2.5: 22
+coverage: 10
+adjustment: 10`;
+  const system = sys(CAR);
+  const inv = simulate(system).find(s => s.label === 'inventory of cars on the lot');
+  const demandFn = scheduleFn({ value: 20, steps: [{ at: 2.5, value: 22 }] });
+  let I = 200;
+  const want = [I];
+  for (let n = 0; n < Math.round(T_END / DT); n++) {
+    const d = demandFn(n * DT);
+    const desired = 10 * d;                 // coverage × perceived sales
+    const discrepancy = desired - I;
+    const orders = d + 10 * discrepancy;    // perceived sales + adjustment × discrepancy
+    const deliveries = Math.max(0, orders);
+    const sales = Math.max(0, d);
+    let delta = 0;
+    delta += deliveries * DT * 1;           // deliveries fills (no source stock, ration 1)
+    delta -= sales * DT * 1;                // sales drains, inventory ample so ration 1
+    I = Math.max(0, I + delta);
+    want.push(I);
+  }
+  if (!inv.levels.every((v, i) => v === want[i]))
+    fail('figure 30', 'inventory must match the mirrored goal-seeking recurrence sample-for-sample');
+  if (!inv.levels.slice(0, Math.round(2.5 / DT) + 1).every(v => v === 200))
+    fail('figure 30', 'inventory holds exactly at 200 until the demand step at t=2.5 (day 25)');
+  if (!(last(inv) > 219.99 && last(inv) <= 220))
+    fail('figure 30', `inventory should ease up to the new 220 target, got ${last(inv)}`);
+  if (!inv.levels.every((v, i) => i === 0 || v >= inv.levels[i - 1]))
+    fail('figure 30', 'the ideal (no-delay) adjustment is monotone — no overshoot, no oscillation');
+  if (goalRefs(system).length !== 0)
+    fail('figure 30', 'the formula faucets register no goal rules — figure 30 draws no dashed line');
+}
+
 console.log(failures ? `${failures} FAILURE(S)` : 'SIMULATE CHECKS PASSED');
 process.exit(failures ? 1 : 0);
