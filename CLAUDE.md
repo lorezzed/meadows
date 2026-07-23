@@ -205,20 +205,23 @@ bare shell that loads it. Page chrome (panels, buttons, textarea, error state)
 is a stylesheet **injected by `app.ts` via d3**, keyed on the class names it
 assigns — inline styles in TS are layout logic only (flex `order`, display
 toggles). The page is two full-width columns pinned to the window (the app
-itself never scrolls): the example buttons, editor, fixed-height JSON output
-`<pre>` and chart stacked in a `side` div on the left, which scrolls
-internally when its stack overflows (a narrow-window media query reverts to
-one ordinary scrolling column); the diagram svg on the right at the full
-fixed window height, so oversized models zoom out inside it. Almost
-everything lives in **`app.ts`**:
+itself never scrolls): the example buttons, editor, compile-error `<pre>`
+(shown only while the model fails to compile) and chart stacked in a `side`
+div on the left, which scrolls internally when its stack overflows (a
+narrow-window media query reverts to one ordinary scrolling column); the
+diagram svg on the right at the full fixed window height, so oversized
+models zoom out inside it — with a `+`/`1×`/`−` zoom cluster overlaying its
+top-right corner (a user factor scaled onto the auto-fit viewBox target in
+`easeView()`, animated by a self-stopping frame timer even while the
+simulation is idle). Almost everything lives in **`app.ts`**:
 
-- Builds the DOM (example buttons, a `<textarea>` editor, a fixed-height
-  `<pre>` output panel, and the two `<svg>` panels) entirely via d3 `.append`,
-  using flexbox `order` for layout.
+- Builds the DOM (example buttons, a `<textarea>` editor, a `<pre>` error
+  panel hidden while the model compiles, and the two `<svg>` panels) entirely
+  via d3 `.append`, using flexbox `order` for layout.
 - On textarea `input`: calls `interpreter.go(input)` and `JSON.parse`s the result. A
-  *string* result is a compile error: the editor's border flags red, the message
-  prints red in the `<pre>`, and `update()` is skipped (the last good graph
-  stays). Otherwise the `System` is pretty-printed into the `<pre>` and passed
+  *string* result is a compile error: the editor's border flags red, the `<pre>`
+  appears with the message in red, and `update()` is skipped (the last good
+  graph stays). Otherwise the `<pre>` hides again and the `System` is passed
   to `update(system)`.
 - `update()` does the d3 data-join per node type (dots→`circle`, stocks→`rect`,
   faucets/clouds→`image` with inlined SVGs from `ui/shape/`, ports→small open
@@ -316,7 +319,7 @@ the diagram's figure 5):
   `goalRefs` exports the constants serving as goals for the chart's dashed
   reference rules (factor constants are not goals and draw no rule).
 - **`ui/chart.ts`** — the panel at the bottom of the left-hand column (its
-  `order` 9 sorts after the buttons/editor's 2 and the output's 3). One 2px line per stock with an ink label at
+  `order` 9 sorts after the buttons/editor's 2 and the error panel's 3). One 2px line per stock with an ink label at
   its end, recessive axes, rendered once per `update()` (never per tick).
   Goal constants draw as dashed horizontal rules under the series lines
   (the book's "room temperature = 18°C"), labeled in the right margin — a
