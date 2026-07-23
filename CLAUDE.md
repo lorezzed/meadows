@@ -283,8 +283,9 @@ Two sibling modules add the **behavior-over-time chart** (the book's figure 6 to
 the diagram's figure 5):
 
 - **`ui/simulate.ts`** — pure, dependency-free (type-only imports, so node can
-  run it headlessly; `test/simulate.mjs` does). Forward-Euler over `T_END`/`DT`
-  constants: stock `value` = initial level; a `: (expr)` formula is a rate
+  run it headlessly; `test/simulate.mjs` does). Forward-Euler in `DT` steps
+  over a horizon `simulate` takes as a parameter defaulting to `T_END`
+  (the chart's `t =` field passes a custom one): stock `value` = initial level; a `: (expr)` formula is a rate
   law (faucets — clamped at 0, a tap never runs backward) or a computed
   auxiliary (dots), evaluated per step over current levels and dot values
   (memoized per step; non-finite arithmetic like division by zero reads as
@@ -339,7 +340,13 @@ the diagram's figure 5):
   stock's rect stroke, which is the visible link between the two views. The
   chart panel is always visible: whenever the model carries no `value`s it
   clears to an empty frame — the time axis, a unit-less y (tick marks, no
-  numbers), nothing plotted — and rect strokes stay black.
+  numbers), nothing plotted — and rect strokes stay black. A `t =` number
+  field footers the panel (`.horizon`, flex order 10, built in `app.ts`): it
+  sets the simulated horizon — default `T_END` (10), clamped to 1–1000, live
+  per keystroke, snapped to the effective value on blur — and re-runs the
+  chart alone through `refreshChart()`/`lastChart` (the diagram never updates
+  on a horizon change; loading an example keeps the chosen horizon). `render`
+  and `empty` take the horizon as a trailing parameter defaulting to `T_END`.
 
 `update()` clears `group`/`loop`/`value`/`steps` on recycled nodes before
 merging new data (the JSON omits absent `Maybe` keys, so stale values would

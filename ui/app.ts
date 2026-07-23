@@ -5,7 +5,7 @@ import type { Expr, Node, Link, System } from "./type";
 import faucetSvg from './shape/faucet.svg'
 import cloudSvg from './shape/cloud.svg'
 import { exampleList } from "./example";
-import { goalRefs, hasNumbers, simulate } from "./simulate";
+import { T_END, goalRefs, hasNumbers, simulate } from "./simulate";
 import { createChart, STOCK_PALETTE } from "./chart";
 
 // All page chrome lives in this stylesheet, injected via d3 so index.html
@@ -73,13 +73,68 @@ const css = `
   /* The diagram panel is pinned to the window: it stretches to the fixed
      container height and never grows with content — a model that outgrows
      the canvas zooms OUT inside it (the eased viewBox letterboxes via
-     preserveAspectRatio) rather than growing the page. */
-  svg.svg { flex: 1 1 480px; min-width: 320px; }
+     preserveAspectRatio) rather than growing the page. The wrapper is
+     positioned so the zoom cluster can overlay the panel's corner. */
+  .diagram {
+    position: relative;
+    flex: 1 1 480px;
+    min-width: 320px;
+    display: flex;
+  }
+  svg.svg { flex: 1; min-width: 0; }
+  .zoom {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: flex;
+    gap: 6px;
+  }
+  .zoom button {
+    min-width: 26px;
+    height: 26px;
+    padding: 0 7px;
+    font-family: var(--sans);
+    font-size: 13px;
+    line-height: 1;
+    color: var(--secondary);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .zoom button:hover { color: var(--ink); border-color: var(--faint); }
+  .zoom button:active { background: var(--paper); }
   svg.chart { width: 100%; aspect-ratio: 700 / 260; }
   svg.chart:focus-visible {
     outline: 2px solid var(--faint);
     outline-offset: 2px;
   }
+  /* The chart's horizon field: a footer row tucked under the panel's right
+     corner, right where the time axis it edits ends. */
+  .horizon {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: -4px;
+  }
+  .horizon label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--secondary);
+  }
+  .horizon input {
+    width: 62px;
+    padding: 3px 8px;
+    font-family: var(--sans);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+  }
+  .horizon input:focus { outline: none; border-color: var(--faint); }
   .text-input:focus {
     outline: none;
     border-color: var(--faint);
@@ -122,30 +177,28 @@ const css = `
   /* Last so it also beats :focus (same specificity): a non-compiling model
      keeps the editor's border flagged while typing continues. */
   .text-input.error { border-color: rgba(176, 0, 32, 0.55); }
+  /* Shown only while the model fails to compile (display toggled inline by
+     the input handler), so the error styling is baked in. */
   .pre-output {
     margin: 0;
-    height: 14em;   /* fixed, so the chart below never jumps as content changes */
+    max-height: 14em;
     overflow: auto;
     padding: 10px 12px;
     font-family: var(--mono);
     font-size: 11px;
     line-height: 1.5;
-    color: var(--secondary);
+    color: var(--error);
     background: var(--panel);
-    border: 1px solid var(--line);
+    border: 1px solid rgba(176, 0, 32, 0.4);
     border-radius: 8px;
     white-space: pre-wrap;
     word-wrap: break-word;
-  }
-  .pre-output.error {
-    color: var(--error);
-    border-color: rgba(176, 0, 32, 0.4);
   }
   /* Narrow windows: back to one ordinary scrolling document column. */
   @media (max-width: 760px) {
     body { height: auto; min-height: 100vh; overflow: visible; }
     .container { flex-direction: column; }
-    svg.svg { min-height: 70vh; }
+    .diagram { min-height: 70vh; }
     .side { overflow-y: visible; }
   }
 `
@@ -158,9 +211,9 @@ pageHeader.append('p')
   .text('stock-and-flow diagrams from text, after ')
   .append('em').text('Thinking in Systems')
 
-// Two columns filling the window: the example buttons, editor, JSON output
-// and chart stacked in `side` on the left (flex orders 2, 2, 3, 9); the
-// diagram svg on the right (container orders — side 1, svg 2).
+// Two columns filling the window: the example buttons, editor, compile-error
+// panel and chart stacked in `side` on the left (flex orders 2, 2, 3, 9);
+// the diagram svg on the right (container orders — side 1, svg 2).
 const container = body
   .append('div')
   .attr('class', 'container')
@@ -172,10 +225,13 @@ const examples = side
   .append('div')
   .attr('class', 'examples')
   .style('order', 2)
+// The compile-error panel: hidden while the model compiles, shown below the
+// editor with the positioned message when it doesn't (see the input handler).
 const pre = side
   .append('pre')
   .attr('class', 'pre-output')
   .style('order', 3)
+  .style('display', 'none')
 exampleList.map(x => {
   const { label, content } = x
   examples.append('button')
@@ -188,18 +244,91 @@ exampleList.map(x => {
 
 const svgWidth = 700
 const svgHeight = 600
-// Current viewBox, eased toward the auto-fit target each tick (zoom-out only).
+// Current viewBox, eased toward the auto-fit target scaled by the
+// button-driven user zoom; see easeView().
 let viewX = 0, viewY = 0, viewW = svgWidth, viewH = svgHeight;
+// Button-driven zoom factor on top of the auto-fit: 1 = the fit itself,
+// >1 closer, <1 further out.
+let userZoom = 1;
 
-const svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, any> = container
+// The diagram panel: a positioned wrapper (see .diagram) so the zoom
+// cluster can overlay the svg's top-right corner.
+const diagram = container
+  .append('div')
+  .attr('class', 'diagram')
+  .style('order', 2)
+const svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, any> = diagram
   .append('svg')
   .attr('class', 'svg')
-  .style('order', 2)
   .attr("viewBox", `0 0 ${svgWidth} ${svgHeight}`)
   .on("click", click)
+// Zoom controls: zoom in, reset to the auto-fit, zoom out — 1.25× steps
+// about the view center, clamped; ensureViewEase animates the change even
+// while the simulation is idle.
+const zoomButtons = diagram
+  .append('div')
+  .attr('class', 'zoom')
+const zoomStep = 1.25;
+const setZoom = (z: number) => {
+  userZoom = Math.min(8, Math.max(0.2, z));
+  ensureViewEase();
+};
+zoomButtons.append('button')
+  .attr('title', 'zoom in').attr('aria-label', 'zoom in')
+  .text('+')
+  .on('click', () => setZoom(userZoom * zoomStep));
+zoomButtons.append('button')
+  .attr('title', 'reset zoom').attr('aria-label', 'reset zoom')
+  .text('1×')
+  .on('click', () => setZoom(1));
+zoomButtons.append('button')
+  .attr('title', 'zoom out').attr('aria-label', 'zoom out')
+  .text('−')
+  .on('click', () => setZoom(userZoom / zoomStep));
 // The behavior-over-time panel, at the bottom of the left-hand column: its
-// order 9 sorts after the examples' and editor's order 2.
+// order 9 sorts after the examples' and editor's order 2; the t= horizon
+// field footers it at order 10.
 const chart = createChart(side)
+// The simulation horizon: how much time the chart runs and shows. The t=
+// field edits it live; only the chart re-renders (the diagram is time-free).
+// lastChart holds what a horizon change must re-run: the last successfully
+// compiled system with its stock accent assignment, and whether it plots.
+let tEnd = T_END;
+let lastChart: { system: System; colorOf: (id: string) => string; plottable: boolean } | null = null;
+function refreshChart(): void {
+  if (lastChart?.plottable) {
+    const { system, colorOf } = lastChart;
+    chart.render(simulate(system, tEnd), colorOf, goalRefs(system), tEnd);
+  } else {
+    chart.empty(tEnd);
+  }
+}
+const horizonRow = side
+  .append('div')
+  .attr('class', 'horizon')
+  .style('order', 10)
+const horizonLabel = horizonRow
+  .append('label')
+  .attr('title', 'simulated time horizon')
+horizonLabel.append('span').text('t =')
+horizonLabel.append('input')
+  .attr('type', 'number')
+  .attr('min', 1)
+  .attr('max', 1000)
+  .attr('step', 1)
+  .attr('value', T_END)
+  .on('input', function () {
+    // Live while typing; a mid-edit blank (NaN) keeps the current horizon.
+    const v = this.valueAsNumber;
+    if (!Number.isFinite(v)) return;
+    tEnd = Math.min(1000, Math.max(1, v));
+    refreshChart();
+  })
+  .on('change', function () {
+    // Enter/blur: snap the field to the horizon actually in effect (applies
+    // the clamp, un-blanks an emptied field).
+    this.value = String(tEnd);
+  });
 const textInput = side
   .append('textarea')
   .attr('class', 'text-input')
@@ -218,16 +347,16 @@ const textInput = side
       const result = JSON.parse(output) as unknown;
       const editor = d3.select(e.target);
       if (typeof result === 'string') {
-        // Compile error: flag the editor's border, print the message in the
-        // output panel, and keep the last good graph on screen.
+        // Compile error: flag the editor's border, reveal the error panel
+        // with the message, and keep the last good graph on screen.
         editor.classed('error', true);
-        pre.classed('error', true).text(result);
+        pre.style('display', null).text(result);
         return;
       }
       editor.classed('error', false);
+      pre.style('display', 'none').text('');
       const parse = result as System;
       console.log('parse::', parse)
-      pre.classed('error', false).text(JSON.stringify(parse, null, 2));
       update(parse)
     } catch (error: unknown) {
       if (error instanceof Error) {
@@ -879,15 +1008,16 @@ function update(system: System) {
   // model carries numbers and has a stock to plot, simulate it and draw the
   // chart, giving each stock the same accent color on its diagram rect and
   // its chart line. Without numbers the strokes stay black and the panel
-  // clears to its empty frame.
+  // clears to its empty frame. The render itself goes through refreshChart
+  // so the t= horizon field can re-run it without a diagram update.
   const numeric = hasNumbers(system);
   const stockIds = nodes.filter(n => n.type === "stock").map(n => n.id)
     .sort((a, b) => parserId(a) - parserId(b));
   const colorOf = (id: string): string =>
     (numeric ? STOCK_PALETTE[stockIds.indexOf(id)] : undefined) ?? "#000";
   nodeStock.select<SVGRectElement>("rect").attr("stroke", d => colorOf(d.id));
-  if (numeric && stockIds.length > 0) chart.render(simulate(system), colorOf, goalRefs(system));
-  else chart.empty();
+  lastChart = { system, colorOf, plottable: numeric && stockIds.length > 0 };
+  refreshChart();
 }
 
 // How round the info arcs are: arc radius = chord length × this factor, so it
@@ -1136,12 +1266,21 @@ function ticked() {
   flowLink.attr("d", pathFor);
   infoLink.attr("d", pathFor);
 
-  // Zoom out (never in) so all nodes stay visible: target viewBox = union of
-  // the nominal canvas and the padded node bbox, eased 20%/tick for smoothness.
-  // Pads follow each node's own size; the x-pad also grows with the label so
-  // wide names ("yield per unit capital") never clip — ~3px per char ≈ half
-  // the rendered width at font-size 10; the y-pad leaves room for the labels
-  // that sit above dots and faucets.
+  easeView();
+}
+
+// One easing step of the viewBox toward its current target: the union of the
+// nominal canvas and the padded node bbox — the auto-fit, which on its own
+// only ever zooms OUT so all nodes stay visible — scaled about its center by
+// the button-driven userZoom (>1 = closer; nodes may then clip past the
+// panel, which is the point of zooming in). Pads follow each node's own
+// size; the x-pad also grows with the label so wide names ("yield per unit
+// capital") never clip — ~3px per char ≈ half the rendered width at
+// font-size 10; the y-pad leaves room for the labels that sit above dots and
+// faucets. Runs every simulation tick, and from the zoom buttons' timer
+// while the simulation is idle; returns true once within half a pixel of
+// the target, so that timer knows when to stop.
+function easeView(): boolean {
   let x0 = 0, y0 = 0, x1 = svgWidth, y1 = svgHeight;
   for (const d of simulation.nodes()) {
     if (d.x == null || d.y == null) continue;
@@ -1162,12 +1301,33 @@ function ticked() {
     x0 = Math.min(x0, b.x - 12); y0 = Math.min(y0, b.y - 12);
     x1 = Math.max(x1, b.x + 12); y1 = Math.max(y1, b.y + 12);
   });
+  const tw = (x1 - x0) / userZoom;
+  const th = (y1 - y0) / userZoom;
+  const tx = (x0 + x1 - tw) / 2;
+  const ty = (y0 + y1 - th) / 2;
   const ease = 0.2;
-  viewX += (x0 - viewX) * ease;
-  viewY += (y0 - viewY) * ease;
-  viewW += ((x1 - x0) - viewW) * ease;
-  viewH += ((y1 - y0) - viewH) * ease;
+  viewX += (tx - viewX) * ease;
+  viewY += (ty - viewY) * ease;
+  viewW += (tw - viewW) * ease;
+  viewH += (th - viewH) * ease;
   svg.attr("viewBox", `${viewX} ${viewY} ${viewW} ${viewH}`);
+  return Math.max(Math.abs(tx - viewX), Math.abs(ty - viewY),
+    Math.abs(tw - viewW), Math.abs(th - viewH)) < 0.5;
+}
+
+// The zoom buttons animate through the same easing while the simulation is
+// idle (ticked() only fires while it runs): a self-stopping frame timer. If
+// the simulation IS running, both step toward the same target — the glide
+// just lands sooner; they never fight.
+let zoomEaseTimer: d3.Timer | null = null;
+function ensureViewEase() {
+  if (zoomEaseTimer) return;
+  zoomEaseTimer = d3.timer(() => {
+    if (easeView()) {
+      zoomEaseTimer?.stop();
+      zoomEaseTimer = null;
+    }
+  });
 }
 
 function click(event: MouseEvent) {

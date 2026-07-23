@@ -63,9 +63,9 @@ function dodgeLabels(desired: number[], lo: number, hi: number): number[] {
 }
 
 export type Chart = {
-  render(series: StockSeries[], colorOf: (id: string) => string, goals?: GoalRef[]): void;
+  render(series: StockSeries[], colorOf: (id: string) => string, goals?: GoalRef[], tEnd?: number): void;
   /** Clear to the value-less placeholder: axes only, nothing plotted. */
-  empty(): void;
+  empty(tEnd?: number): void;
 };
 
 export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTMLElement, any>): Chart {
@@ -246,8 +246,10 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
       }
     });
 
-  function render(series: StockSeries[], colorOf: (id: string) => string, goals: GoalRef[] = []): void {
-    const x = d3.scaleLinear([0, T_END], [margin.left, chartWidth - margin.right]);
+  // tEnd is the horizon the series were simulated over — the x-domain and
+  // every goal path/label extends exactly that far.
+  function render(series: StockSeries[], colorOf: (id: string) => string, goals: GoalRef[] = [], tEnd: number = T_END): void {
+    const x = d3.scaleLinear([0, tEnd], [margin.left, chartWidth - margin.right]);
     // The domain covers the goal rules too — every scheduled value of every
     // goal: a goal above every curve must not clip off the top, and figure
     // 19's outside temperature dips below zero, so the floor follows the
@@ -286,12 +288,12 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
     const goalPts = (g: GoalRef) => {
       if (g.smooth && g.steps?.length) {
         const fn = scheduleFn(g);
-        return d3.range(0, T_END + DT / 2, DT).map(at => ({ at, value: fn(at) }));
+        return d3.range(0, tEnd + DT / 2, DT).map(at => ({ at, value: fn(at) }));
       }
-      const pts = [{ at: 0, value: g.value }, ...(g.steps ?? []).filter(s => s.at <= T_END)]
+      const pts = [{ at: 0, value: g.value }, ...(g.steps ?? []).filter(s => s.at <= tEnd)]
         .sort((a, b) => a.at - b.at);
       const lastPt = pts[pts.length - 1] ?? { at: 0, value: g.value };
-      return [...pts, { at: T_END, value: lastPt.value }];
+      return [...pts, { at: tEnd, value: lastPt.value }];
     };
     const goalEndValue = (g: GoalRef) => {
       const pts = goalPts(g);
@@ -324,7 +326,7 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
     gLabels.selectAll<SVGTextElement, StockSeries>("text")
       .data(series, d => d.id)
       .join("text")
-      .attr("x", x(T_END) + 8)
+      .attr("x", x(tEnd) + 8)
       .attr("y", (_, i) => placed[i] ?? 0)
       .attr("dy", "0.32em")
       .attr("fill", labelInk)
@@ -333,7 +335,7 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
     gGoals.selectAll<SVGTextElement, GoalRef>("text")
       .data(goals, d => d.id)
       .join("text")
-      .attr("x", x(T_END) + 8)
+      .attr("x", x(tEnd) + 8)
       .attr("y", (_, i) => placed[series.length + i] ?? 0)
       .attr("dy", "0.32em")
       .attr("fill", secondaryInk)
@@ -347,12 +349,12 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
   }
 
   // The value-less placeholder: the same recessive frame — the time axis with
-  // its numbers (the horizon is fixed by T_END) and a unit-less y (tick marks,
-  // no numbers, the 0..1 domain is arbitrary and unlabeled) — with nothing
-  // plotted, so the panel always shows where behavior-over-time will appear.
-  // cur stays null: the hover/keyboard layer has nothing to read out.
-  function empty(): void {
-    const x = d3.scaleLinear([0, T_END], [margin.left, chartWidth - margin.right]);
+  // its numbers (running to the current horizon) and a unit-less y (tick
+  // marks, no numbers, the 0..1 domain is arbitrary and unlabeled) — with
+  // nothing plotted, so the panel always shows where behavior-over-time will
+  // appear. cur stays null: the hover/keyboard layer has nothing to read out.
+  function empty(tEnd: number = T_END): void {
+    const x = d3.scaleLinear([0, tEnd], [margin.left, chartWidth - margin.right]);
     const y = d3.scaleLinear([0, 1], [chartHeight - margin.bottom, margin.top]);
     gxAxis.call(d3.axisBottom(x));
     gyAxis.call(d3.axisLeft(y).ticks(5).tickFormat(() => ""));

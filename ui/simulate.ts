@@ -7,7 +7,8 @@
 // steps (see scheduleFn). Flow-link
 // direction decides which stock a faucet drains (stock→faucet) and fills
 // (faucet→stock); clouds, dots, and chained faucets are infinite sources/
-// sinks. Forward Euler over T_END/DT steps; each step rations a stock's
+// sinks. Forward Euler in DT steps over a horizon defaulting to T_END (the
+// chart's t= field passes a custom one); each step rations a stock's
 // outflows by what it holds (min(1, level/demand)), so levels never go
 // negative and chained stocks conserve — an empty tub stops draining.
 //
@@ -31,10 +32,10 @@
 // tap, exactly as before.
 import type { Expr, Link, Node, System } from "./type";
 
-export const T_END = 10; // simulated time units
+export const T_END = 10; // default simulated horizon (simulate() takes an override)
 export const DT = 0.05;  // Euler step
 
-// levels[i] is the stock's level at t = i * DT (T_END/DT + 1 samples).
+// levels[i] is the stock's level at t = i * DT (horizon/DT + 1 samples).
 export type StockSeries = { id: string; label: string; levels: number[] };
 
 // d3 rewrites link endpoints from id strings to node objects once a system
@@ -207,7 +208,7 @@ export function scheduleFn(n: SchedLike): (t: number) => number {
   };
 }
 
-export function simulate(system: System): StockSeries[] {
+export function simulate(system: System, tEnd: number = T_END): StockSeries[] {
   const stocks = system.nodes
     .filter(n => n.type === "stock")
     .sort((a, b) => parserId(a.id) - parserId(b.id));
@@ -267,7 +268,7 @@ export function simulate(system: System): StockSeries[] {
   };
 
   const series: StockSeries[] = stocks.map(s => ({ id: s.id, label: s.label, levels: [level.get(s.id) ?? 0] }));
-  const steps = Math.round(T_END / DT);
+  const steps = Math.round(tEnd / DT);
   for (let i = 0; i < steps; i++) {
     // Two-pass synchronous step: total demand each source stock faces, then
     // a ration factor prorating its outflows down to what it holds — the
