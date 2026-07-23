@@ -17,7 +17,7 @@ yield per unit capital->price->profit
 capital->depreciation`;
 
 // The full Meadows reference model, with R(...)/B(...) loop annotations.
-// Figures 10 & 11: goal-seeking balancing loops — dot constants (`room
+// figures 10 & 11: goal-seeking balancing loops — dot constants (`room
 // temperature: 18`) wired through discrepancy dots into the faucets.
 const EX_COFFEE = `[hot coffee: 100]=>cooling: 0.26|
 B(cooling <- discrepancy <- hot coffee)
@@ -26,7 +26,7 @@ room temperature: 18 -> discrepancy
 B(heating <- warming discrepancy <- iced coffee)
 room temperature -> warming discrepancy`;
 
-// Figures 12 & 13: the reinforcing interest loop, five accounts wide — bare
+// figures 12 & 13: the reinforcing interest loop, five accounts wide — bare
 // faucets, valued rate dots, and the drawn level→faucet feedback arrows.
 const EX_INTEREST = `|=>interest at two[two percent interest: 100]
 R(interest at two <- two percent interest)
@@ -44,7 +44,7 @@ rate at eight: 0.08 -> interest at eight
 R(interest at ten <- ten percent interest)
 rate at ten: 0.1 -> interest at ten`;
 
-// Figure 14: the capital reinforcing loop, with the book's real equations —
+// figure 14: the capital reinforcing loop, with the book's real equations —
 // output is a computed auxiliary (capital / 3), investment's rate law
 // multiplies it by the invested fraction. The formulas re-imply the R(...)
 // arrows (deduplicated) and draw fraction→investment themselves.
@@ -54,7 +54,7 @@ output: (capital / 3)
 investment: (output * fraction of output invested)
 fraction of output invested: 0.2`;
 
-// Figure 15: the two-loop thermostat — one band, two goal-seeking B loops
+// figure 15: the two-loop thermostat — one band, two goal-seeking B loops
 // through floating discrepancy dots, each fed by an outside constant.
 const EX_THERMOSTAT = `|=>heat from furnace[room temperature]=>heat to outside|
 B(heat from furnace <- discrepancy between desired and actual room temperatures <- room temperature)
@@ -62,7 +62,7 @@ thermostat setting -> discrepancy between desired and actual room temperatures
 B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
 outside temperature -> discrepancy between inside and outside temperatures`;
 
-// Figures 15 & 16: the same structure valued — the furnace gain, the room's
+// figures 15 & 16: the same structure valued — the furnace gain, the room's
 // initial level, and the thermostat setting (the outside loop stays inert:
 // bare faucet, valueless constant).
 const EX_THERMO16 = `|=>heat from furnace: 1.2[room temperature: 10]=>heat to outside|
@@ -71,7 +71,7 @@ thermostat setting: 18 -> discrepancy between desired and actual room temperatur
 B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
 outside temperature -> discrepancy between inside and outside temperatures`;
 
-// Figures 15 & 19: both loops live and the outside temperature SCHEDULED —
+// figures 15 & 19: both loops live and the outside temperature SCHEDULED —
 // the cold-day driving variable, dipping to -5 (dot schedules + negative
 // literals end-to-end).
 const EX_THERMO19 = `|=>heat from furnace: 1.2[room temperature: 10]=>heat to outside: 0.13|
@@ -80,7 +80,7 @@ thermostat setting: 18 -> discrepancy between desired and actual room temperatur
 B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
 outside temperature: 10 ~1: 7 ~2: 4 ~3: 0 ~4: -3 ~4.5: -5 ~5.5: -3 ~6: 0 ~7: 4 ~8: 7 ~9: 10 -> discrepancy between inside and outside temperatures`;
 
-// Figures 21 & 22: the population system — one stock, a reinforcing births
+// figures 21 & 22: the population system — one stock, a reinforcing births
 // loop and a balancing deaths loop, fertility and mortality as the valued
 // factor dots (one time unit = a decade, so 2007's crude rates 21 and 9 per
 // 1000 per year read 0.21 and 0.09).
@@ -90,14 +90,14 @@ B(deaths <- population)
 fertility: 0.21 -> births
 mortality: 0.09 -> deaths`;
 
-// Figures 21 & 23: the same structure, mortality now dominant — decline.
+// figures 21 & 23: the same structure, mortality now dominant — decline.
 const EX_POP23 = `|=>births[population: 6.6]=>deaths|
 R(births <- population)
 B(deaths <- population)
 fertility: 0.21 -> births
 mortality: 0.3 -> deaths`;
 
-// Figures 21 & 24: fertility falls smoothly to meet mortality by t=2 — the
+// figures 21 & 24: fertility falls smoothly to meet mortality by t=2 — the
 // scheduled FACTOR dot (goal dots had schedules already; this pins one on a
 // reinforcing loop's constant).
 const EX_POP24 = `|=>births[population: 6.6]=>deaths|
@@ -106,7 +106,7 @@ B(deaths <- population)
 fertility: 0.21 ~2: 0.09 -> births
 mortality: 0.09 -> deaths`;
 
-// Figures 21 & 26: shifting dominance — fertility above mortality, then
+// figures 21 & 26: shifting dominance — fertility above mortality, then
 // equal (the two-point 0.09 plateau interpolates exactly constant), then
 // above again and climbing: grow, hold, grow faster.
 const EX_POP26 = `|=>births[population: 6.6]=>deaths|
@@ -115,7 +115,7 @@ B(deaths <- population)
 fertility: 0.21 ~2.5: 0.09 ~4.5: 0.09 ~7: 0.27 ~10: 0.36 -> births
 mortality: 0.09 -> deaths`;
 
-// Figure 25: the three scenarios side by side — the same two-loop structure
+// figure 25: the three scenarios side by side — the same two-loop structure
 // three times over, three futures decided purely by the numbers.
 const EX_POP25 = `|=>births a[growth: 6.6]=>deaths a|
 R(births a <- growth)
@@ -133,7 +133,7 @@ B(deaths c <- stabilization)
 fertility c: 0.21 ~2: 0.09 -> births c
 mortality c: 0.09 -> deaths c`;
 
-// Figure 27: the capital archetype as pure structure — the population
+// figure 27: the capital archetype as pure structure — the population
 // system's R+B pair on an industrial stock: investment reinforces through
 // annual output, depreciation balances through capital lifetime.
 const EX_CAP27 = `|=>investment[capital stock]=>depreciation|
@@ -143,7 +143,7 @@ investment fraction -> investment
 output per unit capital -> annual output
 capital lifetime -> depreciation`;
 
-// Figures 27 & 28: the same structure three times over with the book's real
+// figures 27 & 28: the same structure three times over with the book's real
 // equations, three futures decided by the capital lifetime alone. One time
 // unit = 5 years (the book's 50-year axis on T_END = 10), so output per
 // unit capital reads 5/3 per unit (1/3 per year) and the 10/15/20-year

@@ -45,13 +45,15 @@ build:
 # positions, exact Tree shapes, evaluator identity/links/groups) plus the golden
 # battery (byte-exact graph JSON + positioned error messages) plus the headless
 # frontend checks (ui/simulate.ts and ui/highlight.ts run directly via node's
-# type stripping).
+# type stripping) plus the formatter contract (test/format.mjs: reference
+# style, graph preservation, idempotence).
 # After an INTENDED output change: node test/golden.mjs --capture
 test: build
 	nix --experimental-features 'nix-command flakes' develop --command spago test
 	node test/golden.mjs
 	node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/simulate.mjs
 	node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/highlight.mjs
+	node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/format.mjs
 
 # Run the esbuild dev server against ui/index.html
 dev:

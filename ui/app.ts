@@ -152,7 +152,14 @@ const css = `
     flex-wrap: wrap;
     gap: 6px;
   }
-  .examples button {
+  /* The format row tucks under the editor's right corner, mirroring the
+     horizon row under the chart; its button shares the example-pill look. */
+  .tools {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: -4px;
+  }
+  .examples button, .tools button {
     font-family: var(--sans);
     font-size: 12px;
     color: var(--secondary);
@@ -162,8 +169,8 @@ const css = `
     padding: 4px 11px;
     cursor: pointer;
   }
-  .examples button:hover { color: var(--ink); border-color: var(--faint); }
-  .examples button:active { background: var(--paper); }
+  .examples button:hover, .tools button:hover { color: var(--ink); border-color: var(--faint); }
+  .examples button:active, .tools button:active { background: var(--paper); }
   /* The editor is a textarea stacked over a color backdrop: .highlight
      renders the same text with each node name in its accent color, and the
      textarea above it makes its own glyphs transparent (caret and selection
@@ -371,7 +378,7 @@ horizonLabel.append('input')
 // Editor accent per node NAME, rebuilt by update() from the compiled graph:
 // the compiler's registry makes a name one node, so the editor colors every
 // mention of that name alike. renderHighlight() reads it; names it doesn't
-// hold (mid-edit in a not-yet-compiling model, or past the palette) stay ink.
+// hold (mid-edit in a not-yet-compiling model) stay ink.
 let nameColor = new Map<string, string>();
 // A palette accent readable AS TEXT on the white panel: the pale entries
 // (yellow, aqua, magenta) clamp to LAB lightness 55 — the same hue family
@@ -437,6 +444,27 @@ const textInput = editorWrap
     }
   })
   .on('scroll', syncHighlightScroll)
+
+// The format button, tucked under the editor: reprints the model in the
+// canonical spacing (src/Formatter.purs — token-preserving, so the graph,
+// layout, and accents are untouched). Applied through the same value-set +
+// input-dispatch path as loadExample, so compile, diagram recycle, and the
+// highlight backdrop all refresh; input that doesn't lex comes back
+// unchanged from format(), and the button simply no-ops.
+const tools = side
+  .append('div')
+  .attr('class', 'tools')
+  .style('order', 2)
+tools.append('button')
+  .text('format')
+  .on('click', () => {
+    const ta = textInput.node();
+    if (!ta) return;
+    const formatted: string = interpreter.format(ta.value);
+    if (formatted === ta.value) return;
+    textInput.property('value', formatted);
+    ta.dispatchEvent(new Event('input'));
+  });
 
 // Rebuild the editor's color backdrop: the same text the textarea holds,
 // with every recognized node name in its accent (weight 600 so pale accents
@@ -1108,16 +1136,23 @@ function update(system: System) {
   // faucets — clouds and ports are nameless) draws from the remaining
   // entries, also in first-appearance order. Every entry passes through the
   // text clamp, so the views agree on the same hex — not a pale sibling.
-  // Past the palette a node stays ink (the chart's own 9th-stock rule); the
-  // coloring is identity, not simulation state, so it is always on —
-  // numeric or not.
+  // Past the palette (figure 25 alone names fifteen nodes) accents are
+  // MINTED, never cycled: a golden-angle walk around the HCL hue wheel,
+  // slightly darker than the palette band so a minted hue reads as its own
+  // color, deterministic in assignment order so a model recolors the same
+  // way every compile. Minted hues lack the palette's validated pair
+  // separation, but every mark keeps its direct label — the color links
+  // mentions, it never identifies alone. The coloring is identity, not
+  // simulation state, so it is always on — numeric or not.
   const numeric = hasNumbers(system);
   const stockIds = nodes.filter(n => n.type === "stock").map(n => n.id)
     .sort((a, b) => parserId(a) - parserId(b));
   nameColor = new Map();
   const accentById = new Map<string, string>();
-  const assign = (n: Node | undefined, c: string | undefined) => {
-    if (!n || c == null || n.label === "") return;
+  let minted = 0;
+  const mintAccent = () => d3.hcl(210 + 137.508 * minted++, 50, 42).formatHex();
+  const assign = (n: Node | undefined, c: string) => {
+    if (!n || n.label === "") return;
     accentById.set(n.id, textAccent(c));
     nameColor.set(n.label, textAccent(c));
   };
@@ -1125,13 +1160,13 @@ function update(system: System) {
   stockIds.forEach((id, i) => {
     const c = STOCK_PALETTE[i];
     if (c != null) taken.add(c);
-    assign(nodeById.get(id), c);
+    assign(nodeById.get(id), c ?? mintAccent());
   });
   const spare = STOCK_PALETTE.filter(c => !taken.has(c));
   nodes
     .filter(n => (n.type === "dot" || n.type === "faucet") && n.label !== "" && !nameColor.has(n.label))
     .sort((a, b) => parserId(a.id) - parserId(b.id))
-    .forEach((n, i) => assign(n, spare[i]));
+    .forEach((n, i) => assign(n, spare[i] ?? mintAccent()));
   const colorOf = (id: string): string => accentById.get(id) ?? "#000";
   // The diagram wears the accents: stock rect strokes (as before, no longer
   // gated on the model being numeric), dot circles and their labels, and

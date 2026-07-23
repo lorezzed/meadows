@@ -45,7 +45,8 @@ make test         # spago test (PureScript unit suite) + golden battery
                   #   (test/golden.mjs: byte-exact graph JSON + positioned errors)
                   #   + headless frontend checks (test/simulate.mjs and
                   #   test/highlight.mjs run ui/simulate.ts / ui/highlight.ts
-                  #   directly via node's TS type stripping).
+                  #   directly via node's TS type stripping) + the formatter
+                  #   contract (test/format.mjs).
                   #   Refresh goldens after an INTENDED change: node test/golden.mjs --capture
 
 # Inside `nix develop` (or `make shell`) you also have the raw tools:
@@ -58,9 +59,10 @@ npx tsc           # typecheck ui/ (tsconfig has noEmit; type-check only)
 Tests live in three layers, all run by `make test`: `test/Main.purs` unit-tests the
 compiler internals (token streams & positions, exact `Tree` shapes including minted
 ids, evaluator identity/link/group/value rules), `test/golden.mjs` pins the
-end-to-end JSON seam byte-exactly, and `test/simulate.mjs` / `test/highlight.mjs`
-check the frontend simulator and the editor's highlight tokenizer against the real
-compiled backend.
+end-to-end JSON seam byte-exactly, and `test/simulate.mjs` / `test/highlight.mjs` /
+`test/format.mjs` check the frontend simulator, the editor's highlight tokenizer,
+and the formatter (reference style, graph preservation, idempotence) against the
+real compiled backend.
 
 ### Build coupling (important)
 
@@ -197,8 +199,24 @@ JSON error string):
    (`Dot`/`Stock`/`Faucet`/`Cloud`/`Port`) has a `WriteForeign` instance so the
    whole graph serializes to the JSON the UI expects.
 
-`Main` exports only `go`. The terminal runner is `src/CLI.purs` (argv → `go` → stdout),
-kept out of `Main` so the browser bundle never pulls in node-process.
+Alongside the pipeline sits **`Formatter.purs`** — `format :: String -> String`,
+the canonical pretty-printer behind the UI's format button. It re-lexes with the
+real lexer and reprints the token stream (so it can never disagree with the
+syntax): one statement per line (blank lines collapse), tokens space-separated
+except where a lexeme glues to its neighbor — brackets hug their stock, a colon
+hugs the name before it, faucet ops take their name (`| =>tree growth [wood in
+living trees]`; a bare `=` reprints as `=>`), schedule markers take their time
+(`@5: 5`), loop-opens and parens hug inward, and juxtaposed multiplication stays
+tight inside formula groups only (`2x`, but `5 [stock]` at statement level).
+Arrows and formula operators breathe on both sides. Token-preserving (a name
+followed by a number keeps its space — `x2` would re-lex as one identifier;
+numbers reprint from their value, integral ones without `.0`) and total: input
+that doesn't lex comes back untouched. `test/format.mjs` pins the reference
+style, graph-JSON preservation, and idempotence over every example.
+
+`Main` exports `go` and re-exports Formatter's `format`. The terminal runner is
+`src/CLI.purs` (argv → `go` → stdout), kept out of `Main` so the browser bundle
+never pulls in node-process.
 
 ## Frontend architecture (`ui/`)
 
@@ -243,6 +261,13 @@ simulation is idle). Almost everything lives in **`app.ts`**:
   handler re-renders the backdrop on every path — after `update()` on
   success (a just-typed name colors on its own keystroke), with the stale
   map on a compile error.
+- A "format" button in a `.tools` row tucked under the editor's right corner
+  (order 2 after the editor wrap; pill styling shared with the example
+  buttons) reprints the model via the backend's `format` (see
+  `src/Formatter.purs`) through the same value-set + input-dispatch path as
+  `loadExample` — compile, diagram recycle (token-preserving, so node ids
+  and positions survive), and highlight all refresh. Unlexable input returns
+  unchanged, so the button no-ops on broken models.
 - `update()` does the d3 data-join per node type (dots→`circle`, stocks→`rect`,
   faucets/clouds→`image` with inlined SVGs from `ui/shape/`, ports→small open
   circles), rebinds the link force, and restarts the simulation. (There is deliberately no `forceCenter`:
@@ -259,12 +284,16 @@ simulation is idle). Almost everything lives in **`app.ts`**:
   `STOCK_PALETTE` slots in parser-id order, every other named node draws
   from the remaining entries in first-appearance order, and each entry is
   clamped to text-safe lightness (`textAccent`, LAB L ≤ 55) so the editor,
-  diagram, and chart show the SAME hex. The diagram wears it on stock rect
+  diagram, and chart show the SAME hex. Past the palette accents are
+  MINTED, never cycled (`mintAccent`: a golden-angle HCL hue walk, darker
+  than the palette band, deterministic in assignment order), so every
+  named node keeps a color even in figure-25-sized models — minted hues
+  lack the palette's validated pair separation, so the direct label stays
+  each mark's identity. The diagram wears the accent on stock rect
   strokes (always — numbers gate the chart's plot, never the accents), dot
   circles and dot/faucet labels (the tap icon stays the black Meadows
-  glyph; stock labels stay ink, their rect carries the accent); past the
-  palette a node stays ink everywhere. Clouds, ports, pipes, and arcs stay
-  black-and-gray notation.
+  glyph; stock labels stay ink, their rect carries the accent). Clouds,
+  ports, pipes, and arcs stay black-and-gray notation.
 - `ticked()` positions everything each frame; links are drawn as curved SVG arc
   paths. The faucet icon (solid black tap, `ui/shape/faucet.svg`) draws LIFTED
   by `faucetLift`: in the artwork the tap's base sits at 79% of the icon's

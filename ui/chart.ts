@@ -18,8 +18,10 @@ import { DT, T_END, scheduleFn, type GoalRef, type StockSeries } from "./simulat
 // named nodes draw from the remaining entries (editor names, diagram dot
 // circles and dot/faucet labels, goal rules here). The ordering is the
 // CVD-safety mechanism (validated adjacent-pair separation on the white
-// surface), so assign by slot and never cycle: a node past the palette
-// falls back to ink and is identified by its direct label alone. The
+// surface), so assign by slot and never cycle: past the palette app.ts
+// MINTS fresh hues (a golden-angle walk at text-safe lightness) rather
+// than reusing an entry — minted accents lack the validated separation,
+// so the direct label stays each mark's identity. The
 // sub-3:1 slots (aqua, yellow, magenta) never reach a view raw: app.ts
 // clamps every assigned entry to text-safe lightness (LAB L <= 55), so all
 // views share the same readable hex.
@@ -51,7 +53,7 @@ const fmt = d3.format(",.2~f");
 
 // Spread right-margin label anchors to a minimum rhythm inside [lo, hi],
 // moving each as little as possible: sort, push down (forward pass), pull
-// back up under the ceiling (backward pass). Figure 11's curves all converge
+// back up under the ceiling (backward pass). figure 11's curves all converge
 // on one goal line — without this, every label piles onto the shared
 // asymptote. Returns positions in the input's order; if the labels can't all
 // fit, the gaps compress rather than spilling outside the plot.

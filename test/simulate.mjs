@@ -15,7 +15,7 @@ const sys = (input) => {
 };
 const last = (s) => s.levels[s.levels.length - 1];
 
-// Figures 5 & 6: 50 gallons draining at 5/min hits exactly 0 at t = 10.
+// figures 5 & 6: 50 gallons draining at 5/min hits exactly 0 at t = 10.
 {
   const series = simulate(sys('|=>inflow[water in tub: 50]=>outflow: 5|'));
   if (series.length !== 1) fail('figure 5', `1 series expected, got ${series.length}`);
@@ -47,7 +47,7 @@ const last = (s) => s.levels[s.levels.length - 1];
     fail('chained', `b ends at ${last(b)}, want ${25 + 2.5 * DT}`);
 }
 
-// Figures 5 & 7: drain from 50, then at t=5 the inflow steps up to match the
+// figures 5 & 7: drain from 50, then at t=5 the inflow steps up to match the
 // outflow — dynamic equilibrium at 25 for the rest of the run.
 {
   const series = simulate(sys('|=>inflow: 0 @5: 5[water in tub: 50]=>outflow: 5|'));
@@ -78,7 +78,7 @@ const last = (s) => s.levels[s.levels.length - 1];
   if (!hasNumbers(sys('a: 5'))) fail('hasNumbers', 'a dot constant counts');
 }
 
-// Figures 10 & 11: goal-seeking rates. The faucet's annotation acts as a
+// figures 10 & 11: goal-seeking rates. The faucet's annotation acts as a
 // gain on the discrepancy to the goal constant (found through the info-arrow
 // web), so hot coffee cools exponentially onto room temperature and iced
 // coffee warms up to it — Euler closed form:
@@ -134,7 +134,7 @@ room temperature -> warming discrepancy`;
     fail('ambiguous goals', 'no goal should register for the chart');
 }
 
-// Figures 12 & 13: reinforcing interest. A bare faucet fed one constant AND
+// figures 12 & 13: reinforcing interest. A bare faucet fed one constant AND
 // its own stock's level (the drawn R-loop arrow) compounds: rate = factor ×
 // level, so each Euler step multiplies the level by (1 + factor·DT) —
 // exponential growth. The factor constant is NOT a goal: no dashed rule.
@@ -166,7 +166,7 @@ interest rate: 0.1 -> interest added`;
     fail('decay', 'levels must decay strictly and stay nonnegative');
 }
 
-// Figures 15 & 16: the thermostat. The furnace goal-seeks the thermostat
+// figures 15 & 16: the thermostat. The furnace goal-seeks the thermostat
 // setting through its discrepancy relay (room warms 10 → 18, Euler closed
 // form), while the heat-to-outside loop stays closed — its faucet is bare
 // and `outside temperature` carries no value, so there is neither a goal
@@ -190,7 +190,7 @@ outside temperature -> discrepancy between inside and outside temperatures`;
     fail('figure 16', `goalRefs should be the setting alone, got ${JSON.stringify(goals)}`);
 }
 
-// Figures 15 & 17: furnace off (bare faucet, valueless setting) — the leak
+// figures 15 & 17: furnace off (bare faucet, valueless setting) — the leak
 // goal-seeks the outside temperature, so the warm room decays toward 10 and
 // only the outside temperature registers as a reference rule.
 {
@@ -211,7 +211,7 @@ outside temperature: 10 -> discrepancy between inside and outside temperatures`;
     fail('figure 17', `goalRefs should be the outside temperature alone, got ${JSON.stringify(goals)}`);
 }
 
-// Figures 15 & 18: both loops live. The room warms from 10 but settles just
+// figures 15 & 18: both loops live. The room warms from 10 but settles just
 // BELOW the setting — the leak steals heat, so equilibrium sits where
 // furnace gain × (18 − T) = leak gain × (T − 10), ≈ 17.2. Mirror the
 // simulator's per-step float ops exactly.
@@ -267,7 +267,7 @@ outside temperature: 10 -> discrepancy between inside and outside temperatures`;
     fail('stepped schedule', 'must hold each value until the next step');
 }
 
-// Figures 15 & 19 (well insulated, leak 0.13) & 20 (poorly insulated, 0.4):
+// figures 15 & 19 (well insulated, leak 0.13) & 20 (poorly insulated, 0.4):
 // the outside temperature is a smooth `~` schedule — a cold day dipping to
 // -5 — so the leak chases a moving target. The room sags mid-run and
 // recovers; the deeper the leak gain, the deeper the sag. Mirrored
@@ -325,7 +325,7 @@ outside temperature: ${wave} -> discrepancy between inside and outside temperatu
     fail('relayed loop', 'feedback through a relay dot must still compound');
 }
 
-// Figures 21–25: the population system — a reinforcing births loop and a
+// figures 21–25: the population system — a reinforcing births loop and a
 // balancing deaths loop on one stock, both read through the factor rule
 // (bare faucets, drawn level→faucet arrows, valued fertility and mortality
 // dots). One time unit is a decade, so 2007's crude rates (21 births, 9
@@ -384,7 +384,7 @@ mortality: ${mortality} -> deaths`;
   if (!stab.levels.every((v, i) => i < flatFrom || v === stab.levels[flatFrom]))
     fail('figure 24', 'level must hold exactly once fertility equals mortality');
 
-  // Figure 25: the three scenarios side by side — three copies of the same
+  // figure 25: the three scenarios side by side — three copies of the same
   // structure in one model, each reproducing its standalone run exactly.
   const F25 = `|=>births a[growth: 6.6]=>deaths a|
 R(births a <- growth)
@@ -413,7 +413,7 @@ mortality c: 0.09 -> deaths c`;
   if (goalRefs(system25).length !== 0)
     fail('figure 25', 'no goal rules in the composite either');
 
-  // Figures 21 & 26: shifting dominance — one run, three phases. Fertility
+  // figures 21 & 26: shifting dominance — one run, three phases. Fertility
   // starts above mortality, falls onto it (the two equal schedule points
   // interpolate exactly constant, so the plateau holds), then climbs past it
   // again: grow, hold, grow faster — ending near the book's ≈18.3 billion.
@@ -445,7 +445,7 @@ mortality c: 0.09 -> deaths c`;
 }
 
 // Formulas: `: (expr)` is a rate law (faucets) or a computed auxiliary
-// (dots). Figure 14's book equations — output = capital / 3, investment =
+// (dots). figure 14's book equations — output = capital / 3, investment =
 // output × fraction invested — give capital compound growth at
 // (1/3 × 0.2) per unit time. Mirrored step-for-step in the simulator's
 // float-op order.
@@ -487,7 +487,7 @@ fraction of output invested: 0.2`;
     fail('formula hasNumbers', 'a formula counts as numbers for the chart gate');
 }
 
-// Figures 27 & 28: the capital archetype — the population system's R+B pair
+// figures 27 & 28: the capital archetype — the population system's R+B pair
 // with the book's real equations as formulas: annual output = capital ×
 // output per unit capital, investment = annual output × investment fraction
 // (the reinforcing inflow), depreciation = capital / capital lifetime (the
