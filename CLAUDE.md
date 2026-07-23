@@ -43,8 +43,9 @@ make run-with in="a=>j"  # in= form REQUIRED when the input contains '='
                   #   (make parses a bare "a=>j" goal as a variable override)
 make test         # spago test (PureScript unit suite) + golden battery
                   #   (test/golden.mjs: byte-exact graph JSON + positioned errors)
-                  #   + headless simulator checks (test/simulate.mjs runs
-                  #   ui/simulate.ts directly via node's TS type stripping).
+                  #   + headless frontend checks (test/simulate.mjs and
+                  #   test/highlight.mjs run ui/simulate.ts / ui/highlight.ts
+                  #   directly via node's TS type stripping).
                   #   Refresh goldens after an INTENDED change: node test/golden.mjs --capture
 
 # Inside `nix develop` (or `make shell`) you also have the raw tools:
@@ -57,8 +58,9 @@ npx tsc           # typecheck ui/ (tsconfig has noEmit; type-check only)
 Tests live in three layers, all run by `make test`: `test/Main.purs` unit-tests the
 compiler internals (token streams & positions, exact `Tree` shapes including minted
 ids, evaluator identity/link/group/value rules), `test/golden.mjs` pins the
-end-to-end JSON seam byte-exactly, and `test/simulate.mjs` checks the frontend
-simulator against the real compiled backend.
+end-to-end JSON seam byte-exactly, and `test/simulate.mjs` / `test/highlight.mjs`
+check the frontend simulator and the editor's highlight tokenizer against the real
+compiled backend.
 
 ### Build coupling (important)
 
@@ -223,6 +225,24 @@ simulation is idle). Almost everything lives in **`app.ts`**:
   appears with the message in red, and `update()` is skipped (the last good
   graph stays). Otherwise the `<pre>` hides again and the `System` is passed
   to `update(system)`.
+- The editor color-codes node names: the `<textarea>` sits on a `.highlight`
+  backdrop `<div>` that renders the same text with every recognized name in
+  its accent (weight 600), the textarea's own glyphs transparent above it
+  (caret/selection native; the shared CSS rule pins every glyph-positioning
+  property, plus `scrollbar-gutter: stable` so classic scrollbars can't skew
+  the wrap; scrollTop syncs on scroll/input; a `\u200b` sentinel keeps a
+  trailing newline's height). **`ui/highlight.ts`** (pure, dependency-free,
+  headlessly tested like simulate.ts) scans the source into spans, mirroring
+  the lexer's naming: multi-word joining with whitespace normalization
+  (`water   in   tub` IS `water in tub`), `R(`/`B(` loop-opens excluded, the
+  greedy join (`foo R(` is one name "foo R"). Colors key on the NAME — the
+  compiler's identity rule — via `nameColor`, one half of the single
+  per-node accent assignment `update()` rebuilds from the compiled graph
+  (see the coordination note on the `update()` bullet below); unknown names
+  (mid-edit) stay ink until the model compiles. The `finally` in the input
+  handler re-renders the backdrop on every path — after `update()` on
+  success (a just-typed name colors on its own keystroke), with the stale
+  map on a compile error.
 - `update()` does the d3 data-join per node type (dots→`circle`, stocks→`rect`,
   faucets/clouds→`image` with inlined SVGs from `ui/shape/`, ports→small open
   circles), rebinds the link force, and restarts the simulation. (There is deliberately no `forceCenter`:
@@ -234,6 +254,17 @@ simulation is idle). Almost everything lives in **`app.ts`**:
   name plus `: value` when the node carries one (`water in tub: 50`) — display
   only, also used by the slot-width and viewBox-pad estimates; ids, the name
   registry, the JSON `label`, and the chart's labels all stay the bare name.
+  `update()` also builds the ONE per-node accent assignment every view
+  shares (`accentById` by id, `nameColor` by name): stocks take
+  `STOCK_PALETTE` slots in parser-id order, every other named node draws
+  from the remaining entries in first-appearance order, and each entry is
+  clamped to text-safe lightness (`textAccent`, LAB L ≤ 55) so the editor,
+  diagram, and chart show the SAME hex. The diagram wears it on stock rect
+  strokes (always — numbers gate the chart's plot, never the accents), dot
+  circles and dot/faucet labels (the tap icon stays the black Meadows
+  glyph; stock labels stay ink, their rect carries the accent); past the
+  palette a node stays ink everywhere. Clouds, ports, pipes, and arcs stay
+  black-and-gray notation.
 - `ticked()` positions everything each frame; links are drawn as curved SVG arc
   paths. The faucet icon (solid black tap, `ui/shape/faucet.svg`) draws LIFTED
   by `faucetLift`: in the artwork the tap's base sits at 79% of the icon's
@@ -320,10 +351,12 @@ the diagram's figure 5):
   `goalRefs` exports the constants serving as goals for the chart's dashed
   reference rules (factor constants are not goals and draw no rule).
 - **`ui/chart.ts`** — the panel at the bottom of the left-hand column (its
-  `order` 9 sorts after the buttons/editor's 2 and the error panel's 3). One 2px line per stock with an ink label at
-  its end, recessive axes, rendered once per `update()` (never per tick).
+  `order` 9 sorts after the buttons/editor's 2 and the error panel's 3). One 2px line per stock, its end label in the
+  line's own accent, recessive axes, rendered once per `update()` (never per tick).
   Goal constants draw as dashed horizontal rules under the series lines
-  (the book's "room temperature = 18°C"), labeled in the right margin — a
+  (the book's "room temperature = 18°C") in their goal DOT's accent — the
+  same color the dot wears in the editor and diagram — labeled in the right
+  margin in that accent too; a
   SCHEDULED goal draws as a dashed path instead (figure 19's cold day):
   stepped for `@`, and for `~` a per-DT sampling of the simulator's own
   `scheduleFn` interpolant, so the chart shows exactly the curve the run
@@ -335,12 +368,13 @@ the diagram's figure 5):
   reading out every stock's level (keyboard parity: the svg is focusable,
   ←/→ steps a sample, Shift ×10, Escape dismisses); it reads the last
   render's scales/series from closure state, so the render-once rule holds.
-  `STOCK_PALETTE` is a fixed-order categorical palette assigned by stock
-  parser-id slot (never cycled); `update()` paints the same accent on each
-  stock's rect stroke, which is the visible link between the two views. The
+  `STOCK_PALETTE` is the base palette for the per-node accent assignment
+  described on the `update()` bullet (fixed-order, assigned by slot, never
+  cycled, clamped by `textAccent` before any view uses it). The
   chart panel is always visible: whenever the model carries no `value`s it
   clears to an empty frame — the time axis, a unit-less y (tick marks, no
-  numbers), nothing plotted — and rect strokes stay black. A `t =` number
+  numbers), nothing plotted (the accents stay on in the editor and diagram;
+  numbers gate only the plot). A `t =` number
   field footers the panel (`.horizon`, flex order 10, built in `app.ts`): it
   sets the simulated horizon — default `T_END` (10), clamped to 1–1000, live
   per keystroke, snapped to the effective value on blur — and re-runs the

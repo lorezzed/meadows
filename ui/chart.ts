@@ -1,7 +1,8 @@
 // The behavior-over-time panel: the book's "figure 6" to the diagram's
 // "figure 5". One 2px line per stock over the simulated horizon, real axes,
-// each line named by an ink label at its right end (identity is never
-// color-alone). Rendered once per successful update — never per tick. The
+// each line named by a label in its own accent at its right end (the direct
+// label, never color alone, is the identity mechanism); goal rules dash in
+// their goal dot's accent. Rendered once per successful update — never per tick. The
 // panel itself is always visible: while the model carries no numbers it
 // shows a bare frame (the time axis and a unit-less y) with nothing plotted. A hover layer (also
 // reachable by keyboard: focus the panel, arrows step, Escape dismisses)
@@ -11,12 +12,17 @@
 import * as d3 from "d3";
 import { DT, T_END, scheduleFn, type GoalRef, type StockSeries } from "./simulate";
 
-// Fixed-order categorical accents, one per stock in parser-id order, shared
-// with the stock rects in the diagram. The ordering is the CVD-safety
-// mechanism (validated adjacent-pair separation on the white surface), so
-// assign by slot and never cycle: a 9th+ stock falls back to ink and is
-// identified by its direct label alone. The sub-3:1 slots (aqua, yellow,
-// magenta) are legal because every line carries a visible ink label.
+// Fixed-order categorical accents: the base palette for the ONE per-node
+// color assignment app.ts's update() builds for every view — stocks take
+// the slots in parser-id order (chart lines, diagram rects), the other
+// named nodes draw from the remaining entries (editor names, diagram dot
+// circles and dot/faucet labels, goal rules here). The ordering is the
+// CVD-safety mechanism (validated adjacent-pair separation on the white
+// surface), so assign by slot and never cycle: a node past the palette
+// falls back to ink and is identified by its direct label alone. The
+// sub-3:1 slots (aqua, yellow, magenta) never reach a view raw: app.ts
+// clamps every assigned entry to text-safe lightness (LAB L <= 55), so all
+// views share the same readable hex.
 export const STOCK_PALETTE = [
   "#2a78d6", // blue
   "#1baf7a", // aqua
@@ -280,7 +286,9 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
       .attr("d", d => line(d.levels));
 
     // One dashed rule per goal constant (the book's "room temperature = 18°C"
-    // line), full plot width, recessive ink under the series lines. A
+    // line), full plot width, in its goal dot's accent — the same color the
+    // dot wears in the editor and the diagram; the dash keeps it a
+    // reference under the series lines. A
     // SCHEDULED goal (figure 19's outside temperature) draws as a dashed
     // path instead: `@` schedules step (holding each value until the next),
     // `~` schedules sample the simulator's own smooth interpolant at every
@@ -310,7 +318,7 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
       .data(goals, d => d.id)
       .join("path")
       .attr("fill", "none")
-      .attr("stroke", secondaryInk)
+      .attr("stroke", d => colorOf(d.id))
       .attr("stroke-width", 1.5)
       .attr("stroke-dasharray", "7 5")
       .attr("d", d => (d.smooth && d.steps?.length ? smoothLine : stepLine)(goalPts(d)));
@@ -329,7 +337,7 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
       .attr("x", x(tEnd) + 8)
       .attr("y", (_, i) => placed[i] ?? 0)
       .attr("dy", "0.32em")
-      .attr("fill", labelInk)
+      .attr("fill", d => colorOf(d.id))
       .style("font", `11px ${font}`)
       .text(d => d.label);
     gGoals.selectAll<SVGTextElement, GoalRef>("text")
@@ -338,7 +346,7 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
       .attr("x", x(tEnd) + 8)
       .attr("y", (_, i) => placed[series.length + i] ?? 0)
       .attr("dy", "0.32em")
-      .attr("fill", secondaryInk)
+      .attr("fill", d => colorOf(d.id))
       .style("font", `11px ${font}`)
       .text(d => d.label);
 

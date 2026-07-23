@@ -7,12 +7,16 @@ import cloudSvg from './shape/cloud.svg'
 import { exampleList } from "./example";
 import { T_END, goalRefs, hasNumbers, simulate } from "./simulate";
 import { createChart, STOCK_PALETTE } from "./chart";
+import { nameSpans } from "./highlight";
 
 // All page chrome lives in this stylesheet, injected via d3 so index.html
 // stays a bare shell. It is keyed on the class names assigned below; the
 // inline styles in this file are layout logic only (flex `order`, display
-// toggles). The diagram's own marks (Meadows notation) stay black-on-white —
-// the grays extend the chart's recessive ink family (see ui/chart.ts).
+// toggles). The diagram's structural marks (pipes, arcs, icons) stay
+// black-on-white Meadows notation; each named NODE wears its accent — the
+// one per-node color shared with the editor text and the chart (see the
+// assignment in update()) — and the grays extend the chart's recessive ink
+// family (see ui/chart.ts).
 const css = `
   :root {
     --ink: #0b0b0b;
@@ -160,17 +164,52 @@ const css = `
   }
   .examples button:hover { color: var(--ink); border-color: var(--faint); }
   .examples button:active { background: var(--paper); }
-  .text-input {
-    width: 100%;
-    min-height: 10em;
+  /* The editor is a textarea stacked over a color backdrop: .highlight
+     renders the same text with each node name in its accent color, and the
+     textarea above it makes its own glyphs transparent (caret and selection
+     stay native). The two must share exact text metrics — the shared rule
+     below pins every property that positions a glyph, so the colors sit
+     precisely under the letters. The backdrop takes no part in layout
+     (absolute) — the textarea alone sizes the wrapper, and its vertical
+     resize handle keeps working. */
+  .editor {
+    position: relative;
+    display: flex;
+  }
+  .text-input, .highlight {
+    margin: 0;
     padding: 10px 12px;
     font-family: var(--mono);
     font-size: 12.5px;
     line-height: 1.55;
-    color: var(--ink);
-    background: var(--panel);
-    border: 1px solid var(--line);
+    letter-spacing: normal;
+    tab-size: 8;
+    text-align: left;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    /* Classic (space-taking) scrollbars would narrow the textarea's wrap
+       width but not the backdrop's; reserving the gutter in both keeps the
+       two wrapping identically. Overlay scrollbars reserve nothing. */
+    scrollbar-gutter: stable;
+    border: 1px solid transparent;
     border-radius: 8px;
+  }
+  .highlight {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    background: var(--panel);
+    color: var(--ink);
+    pointer-events: none;
+  }
+  .text-input {
+    position: relative; /* paints above the backdrop */
+    width: 100%;
+    min-height: 10em;
+    color: transparent;
+    caret-color: var(--ink);
+    background: transparent;
+    border-color: var(--line);
     resize: vertical;
   }
   .text-input::placeholder { color: var(--faint); }
@@ -329,20 +368,44 @@ horizonLabel.append('input')
     // the clamp, un-blanks an emptied field).
     this.value = String(tEnd);
   });
-const textInput = side
+// Editor accent per node NAME, rebuilt by update() from the compiled graph:
+// the compiler's registry makes a name one node, so the editor colors every
+// mention of that name alike. renderHighlight() reads it; names it doesn't
+// hold (mid-edit in a not-yet-compiling model, or past the palette) stay ink.
+let nameColor = new Map<string, string>();
+// A palette accent readable AS TEXT on the white panel: the pale entries
+// (yellow, aqua, magenta) clamp to LAB lightness 55 — the same hue family
+// the chart shows, dark enough for 12.5px glyphs. The chart may run them
+// pale because its labels are ink; in the editor the color IS the glyph.
+const textAccent = (c: string): string => {
+  const lab = d3.lab(c);
+  if (lab.l > 55) lab.l = 55;
+  return lab.formatHex();
+};
+// The editor stack: the .highlight color backdrop first, the transparent-text
+// textarea after it (so the textarea paints on top — see the stylesheet).
+const editorWrap = side
+  .append('div')
+  .attr('class', 'editor')
+  .style('order', 2)
+const highlight = editorWrap
+  .append('div')
+  .attr('class', 'highlight')
+  .attr('aria-hidden', 'true')
+const textInput = editorWrap
   .append('textarea')
   .attr('class', 'text-input')
-  .style('order', 2)
   .attr('placeholder', '|=>inflow[stock]=>outflow|')
   .attr('spellcheck', 'false')
   .attr('autocapitalize', 'off')
   .attr('autocomplete', 'off')
   .on('input', function (e: Event) {
+    if (!(e.target instanceof HTMLTextAreaElement)) {
+      console.error("Event target is not a HTMLTextAreaElement");
+      return;
+    }
+    const input = e.target.value;
     try {
-      if (!(e.target instanceof HTMLTextAreaElement)) {
-        throw new Error("Event target is not a HTMLTextAreaElement");
-      }
-      const input = e.target.value;
       const output = interpreter.go(input);
       const result = JSON.parse(output) as unknown;
       const editor = d3.select(e.target);
@@ -365,8 +428,41 @@ const textInput = side
         return
       }
       console.error("An unknown error occurred:", error);
+    } finally {
+      // Every path re-inks the backdrop — on a compile error too, where the
+      // last good compile's colors still mark the recognized names. On
+      // success this runs AFTER update() refreshed nameColor, so a
+      // just-typed name colors on its own keystroke.
+      renderHighlight(input);
     }
   })
+  .on('scroll', syncHighlightScroll)
+
+// Rebuild the editor's color backdrop: the same text the textarea holds,
+// with every recognized node name in its accent (weight 600 so pale accents
+// still carry; the mono face keeps the same advance width when bold, so the
+// glyphs stay exactly under the textarea's). Wholesale rebuild per
+// keystroke — models are tiny.
+function renderHighlight(text: string): void {
+  highlight.selectAll('span').remove();
+  for (const s of nameSpans(text)) {
+    const span = highlight.append('span').text(s.text);
+    const c = s.name != null ? nameColor.get(s.name) : undefined;
+    if (c != null) span.style('color', c).style('font-weight', 600);
+  }
+  // pre-wrap drops a trailing newline's empty line box where the textarea
+  // keeps one; a zero-width space holds the backdrop's height in step.
+  if (text.endsWith('\n')) highlight.append('span').text('\u200b');
+  syncHighlightScroll();
+}
+// The backdrop shows whatever slice the textarea has scrolled to.
+function syncHighlightScroll(): void {
+  const hl = highlight.node(), ta = textInput.node();
+  if (hl && ta) {
+    hl.scrollTop = ta.scrollTop;
+    hl.scrollLeft = ta.scrollLeft;
+  }
+}
 
 // Arrowhead markers. Both anchor their BASE at the path's end (refX 0) so the
 // line stops cleanly where the triangle starts and the head extends beyond it —
@@ -1004,18 +1100,54 @@ function update(system: System) {
   linkForce.links(links);
   simulation.alpha(0.5).restart();
 
-  // Behavior-over-time panel (figure 6 to the diagram's figure 5): when the
-  // model carries numbers and has a stock to plot, simulate it and draw the
-  // chart, giving each stock the same accent color on its diagram rect and
-  // its chart line. Without numbers the strokes stay black and the panel
-  // clears to its empty frame. The render itself goes through refreshChart
-  // so the t= horizon field can re-run it without a diagram update.
+  // One accent assignment for ALL views — the editor's names, the diagram's
+  // marks, the chart's lines and goal rules — keyed by node id here and by
+  // NAME in nameColor (the compiler's identity rule: one name, one node),
+  // so a node wears one color everywhere it appears. Stocks take the
+  // palette slots in parser-id order; every other named node (dots,
+  // faucets — clouds and ports are nameless) draws from the remaining
+  // entries, also in first-appearance order. Every entry passes through the
+  // text clamp, so the views agree on the same hex — not a pale sibling.
+  // Past the palette a node stays ink (the chart's own 9th-stock rule); the
+  // coloring is identity, not simulation state, so it is always on —
+  // numeric or not.
   const numeric = hasNumbers(system);
   const stockIds = nodes.filter(n => n.type === "stock").map(n => n.id)
     .sort((a, b) => parserId(a) - parserId(b));
-  const colorOf = (id: string): string =>
-    (numeric ? STOCK_PALETTE[stockIds.indexOf(id)] : undefined) ?? "#000";
+  nameColor = new Map();
+  const accentById = new Map<string, string>();
+  const assign = (n: Node | undefined, c: string | undefined) => {
+    if (!n || c == null || n.label === "") return;
+    accentById.set(n.id, textAccent(c));
+    nameColor.set(n.label, textAccent(c));
+  };
+  const taken = new Set<string>();
+  stockIds.forEach((id, i) => {
+    const c = STOCK_PALETTE[i];
+    if (c != null) taken.add(c);
+    assign(nodeById.get(id), c);
+  });
+  const spare = STOCK_PALETTE.filter(c => !taken.has(c));
+  nodes
+    .filter(n => (n.type === "dot" || n.type === "faucet") && n.label !== "" && !nameColor.has(n.label))
+    .sort((a, b) => parserId(a.id) - parserId(b.id))
+    .forEach((n, i) => assign(n, spare[i]));
+  const colorOf = (id: string): string => accentById.get(id) ?? "#000";
+  // The diagram wears the accents: stock rect strokes (as before, no longer
+  // gated on the model being numeric), dot circles and their labels, and
+  // faucet labels — the tap icon itself stays the black Meadows glyph, so
+  // its label carries the color. Stock labels stay ink: the rect already
+  // carries the accent, matching the chart's line-plus-label reading.
   nodeStock.select<SVGRectElement>("rect").attr("stroke", d => colorOf(d.id));
+  nodeDot.select<SVGCircleElement>("circle").attr("stroke", d => colorOf(d.id));
+  nodeDot.select<SVGTextElement>("text").attr("fill", d => colorOf(d.id));
+  nodeFaucet.select<SVGTextElement>("text").attr("fill", d => colorOf(d.id));
+  // Behavior-over-time panel (figure 6 to the diagram's figure 5): when the
+  // model carries numbers and has a stock to plot, simulate it and draw the
+  // chart through the same colorOf. Without numbers the panel clears to its
+  // empty frame (numbers gate the PLOT, never the accents). The render goes
+  // through refreshChart so the t= horizon field can re-run it without a
+  // diagram update.
   lastChart = { system, colorOf, plottable: numeric && stockIds.length > 0 };
   refreshChart();
 }
