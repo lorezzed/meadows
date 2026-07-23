@@ -200,15 +200,26 @@ kept out of `Main` so the browser bundle never pulls in node-process.
 
 ## Frontend architecture (`ui/`)
 
-`ui/index.js` is a one-line entrypoint that imports `app.ts`; `index.html` loads
-`index.js`. Almost everything lives in **`app.ts`**:
+`ui/index.js` is a one-line entrypoint that imports `app.ts`; `index.html` is a
+bare shell that loads it. Page chrome (panels, buttons, textarea, error state)
+is a stylesheet **injected by `app.ts` via d3**, keyed on the class names it
+assigns — inline styles in TS are layout logic only (flex `order`, display
+toggles). The page is two full-width columns pinned to the window (the app
+itself never scrolls): the example buttons, editor, fixed-height JSON output
+`<pre>` and chart stacked in a `side` div on the left, which scrolls
+internally when its stack overflows (a narrow-window media query reverts to
+one ordinary scrolling column); the diagram svg on the right at the full
+fixed window height, so oversized models zoom out inside it. Almost
+everything lives in **`app.ts`**:
 
-- Builds the DOM (a `<pre>` output panel, example buttons, an `<svg>`, and a
-  `<textarea>`) entirely via d3 `.append`, using flexbox `order` for layout.
+- Builds the DOM (example buttons, a `<textarea>` editor, a fixed-height
+  `<pre>` output panel, and the two `<svg>` panels) entirely via d3 `.append`,
+  using flexbox `order` for layout.
 - On textarea `input`: calls `interpreter.go(input)` and `JSON.parse`s the result. A
-  *string* result is a compile error: it renders red in the `<pre>` and `update()` is
-  skipped (the last good graph stays). Otherwise the `System` is pretty-printed into
-  the `<pre>` and passed to `update(system)`.
+  *string* result is a compile error: the editor's border flags red, the message
+  prints red in the `<pre>`, and `update()` is skipped (the last good graph
+  stays). Otherwise the `System` is pretty-printed into the `<pre>` and passed
+  to `update(system)`.
 - `update()` does the d3 data-join per node type (dots→`circle`, stocks→`rect`,
   faucets/clouds→`image` with inlined SVGs from `ui/shape/`, ports→small open
   circles), rebinds the link force, and restarts the simulation. (There is deliberately no `forceCenter`:
@@ -256,8 +267,14 @@ kept out of `Main` so the browser bundle never pulls in node-process.
   of `[a]->[b]`); `arcLarge` reads a port's band group from `portParent` and
   the loop-letter edge matching resolves port endpoints to the parent stock —
   the figure-12 balloons and letter parking survive the indirection.
-- Clicking empty svg space adds a dot node linked from the previous node (a manual
-  editing affordance separate from the DSL path).
+- Dragging a node pins it: `fx`/`fy` keep the drop point, so hand placement
+  holds exactly while the forces lay out everything else; clicking a node
+  releases the pin (and clicking a port clears its hand-set `portAngle`). The
+  two gestures share d3-drag start/end and are told apart by whether any drag
+  movement landed between them.
+- Clicking empty svg space (the svg itself, not a shape) adds a dot node linked
+  from the previous node (a manual editing affordance separate from the DSL
+  path).
 
 Two sibling modules add the **behavior-over-time chart** (the book's figure 6 to
 the diagram's figure 5):
@@ -298,8 +315,8 @@ the diagram's figure 5):
   constants) or stocks on both sides fall back to the constant-rate reading.
   `goalRefs` exports the constants serving as goals for the chart's dashed
   reference rules (factor constants are not goals and draw no rule).
-- **`ui/chart.ts`** — the panel below the diagram (equal flex `order` 1;
-  DOM-insertion order places it). One 2px line per stock with an ink label at
+- **`ui/chart.ts`** — the panel at the bottom of the left-hand column (its
+  `order` 9 sorts after the buttons/editor's 2 and the output's 3). One 2px line per stock with an ink label at
   its end, recessive axes, rendered once per `update()` (never per tick).
   Goal constants draw as dashed horizontal rules under the series lines
   (the book's "room temperature = 18°C"), labeled in the right margin — a
@@ -317,8 +334,9 @@ the diagram's figure 5):
   `STOCK_PALETTE` is a fixed-order categorical palette assigned by stock
   parser-id slot (never cycled); `update()` paints the same accent on each
   stock's rect stroke, which is the visible link between the two views. The
-  chart is hidden (and rect strokes stay black) whenever the model carries no
-  `value`s — value-less inputs look exactly as they did before the feature.
+  chart panel is always visible: whenever the model carries no `value`s it
+  clears to an empty frame — the time axis, a unit-less y (tick marks, no
+  numbers), nothing plotted — and rect strokes stay black.
 
 `update()` clears `group`/`loop`/`value`/`steps` on recycled nodes before
 merging new data (the JSON omits absent `Maybe` keys, so stale values would

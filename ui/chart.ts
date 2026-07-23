@@ -1,8 +1,9 @@
 // The behavior-over-time panel: the book's "figure 6" to the diagram's
 // "figure 5". One 2px line per stock over the simulated horizon, real axes,
 // each line named by an ink label at its right end (identity is never
-// color-alone). Rendered once per successful update — never per tick — and
-// hidden entirely while the model carries no numbers. A hover layer (also
+// color-alone). Rendered once per successful update — never per tick. The
+// panel itself is always visible: while the model carries no numbers it
+// shows a bare frame (the time axis and a unit-less y) with nothing plotted. A hover layer (also
 // reachable by keyboard: focus the panel, arrows step, Escape dismisses)
 // snaps a crosshair to the nearest sample and reads out every stock's level
 // there in one tooltip — it only reads the already-rendered series, so the
@@ -63,21 +64,19 @@ function dodgeLabels(desired: number[], lo: number, hi: number): number[] {
 
 export type Chart = {
   render(series: StockSeries[], colorOf: (id: string) => string, goals?: GoalRef[]): void;
-  hide(): void;
+  /** Clear to the value-less placeholder: axes only, nothing plotted. */
+  empty(): void;
 };
 
 export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTMLElement, any>): Chart {
-  // Same flex order as the diagram svg; equal-order ties break by DOM order,
-  // so append this only after the diagram to land directly below it.
+  // Order 9 bottoms the side column, below the order-2 examples and editor.
+  // Panel chrome (size, border, background) comes from the stylesheet via the
+  // class. The panel is never hidden — empty() draws the placeholder frame.
   const svg = container
     .append('svg')
     .attr('class', 'chart')
-    .style('order', 1)
-    .style('width', chartWidth)
-    .style('height', chartHeight)
-    .attr('viewBox', `0 0 ${chartWidth} ${chartHeight}`)
-    .style('border', '1px solid black')
-    .style('display', 'none');
+    .style('order', 9)
+    .attr('viewBox', `0 0 ${chartWidth} ${chartHeight}`);
 
   // Goal rules render under the series lines (a reference, never a subject).
   const gGoals = svg.append("g");
@@ -345,14 +344,29 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
     // from the previous model (its sample index no longer means anything).
     cur = { series, colorOf, x, y };
     hideHover();
-    svg.style("display", null);
   }
 
-  function hide(): void {
+  // The value-less placeholder: the same recessive frame — the time axis with
+  // its numbers (the horizon is fixed by T_END) and a unit-less y (tick marks,
+  // no numbers, the 0..1 domain is arbitrary and unlabeled) — with nothing
+  // plotted, so the panel always shows where behavior-over-time will appear.
+  // cur stays null: the hover/keyboard layer has nothing to read out.
+  function empty(): void {
+    const x = d3.scaleLinear([0, T_END], [margin.left, chartWidth - margin.right]);
+    const y = d3.scaleLinear([0, 1], [chartHeight - margin.bottom, margin.top]);
+    gxAxis.call(d3.axisBottom(x));
+    gyAxis.call(d3.axisLeft(y).ticks(5).tickFormat(() => ""));
+    restyleAxis(gxAxis);
+    restyleAxis(gyAxis);
+    gLines.selectAll("path").remove();
+    gGoals.selectAll("path").remove();
+    gGoals.selectAll("text").remove();
+    gLabels.selectAll("text").remove();
     cur = null;
     hideHover();
-    svg.style("display", "none");
   }
 
-  return { render, hide };
+  empty(); // the frame is on screen from first paint, before any input
+
+  return { render, empty };
 }

@@ -8,22 +8,174 @@ import { exampleList } from "./example";
 import { goalRefs, hasNumbers, simulate } from "./simulate";
 import { createChart, STOCK_PALETTE } from "./chart";
 
-const container = d3.select('body')
+// All page chrome lives in this stylesheet, injected via d3 so index.html
+// stays a bare shell. It is keyed on the class names assigned below; the
+// inline styles in this file are layout logic only (flex `order`, display
+// toggles). The diagram's own marks (Meadows notation) stay black-on-white —
+// the grays extend the chart's recessive ink family (see ui/chart.ts).
+const css = `
+  :root {
+    --ink: #0b0b0b;
+    --secondary: #52514e;
+    --faint: #898781;
+    --line: #dbd9d2;
+    --paper: #faf9f7;
+    --panel: #fff;
+    --error: #b00020;
+    --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px;
+    height: 100vh;    /* the app is fixed to the window; only the side column scrolls */
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+  }
+  header { margin-bottom: 16px; }
+  header h1 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 650;
+    letter-spacing: 0.02em;
+  }
+  header p {
+    margin: 3px 0 0;
+    font-size: 12.5px;
+    color: var(--faint);
+  }
+  .container {
+    flex: 1;        /* fill the window below the header */
+    min-height: 0;  /* may shrink to the fixed window height, never grow past it */
+    display: flex;  /* default align-items stretch runs the diagram panel full height */
+    gap: 12px;
+  }
+  .side {
+    flex: 1 1 420px;
+    min-width: 320px;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow-y: auto; /* a long stack scrolls inside; the window never does */
+  }
+  .side > * { flex: none; } /* children keep natural height (no squash before scroll) */
+  svg.svg, svg.chart {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
+  /* The diagram panel is pinned to the window: it stretches to the fixed
+     container height and never grows with content — a model that outgrows
+     the canvas zooms OUT inside it (the eased viewBox letterboxes via
+     preserveAspectRatio) rather than growing the page. */
+  svg.svg { flex: 1 1 480px; min-width: 320px; }
+  svg.chart { width: 100%; aspect-ratio: 700 / 260; }
+  svg.chart:focus-visible {
+    outline: 2px solid var(--faint);
+    outline-offset: 2px;
+  }
+  .text-input:focus {
+    outline: none;
+    border-color: var(--faint);
+  }
+  /* Stylesheet rules beat SVG presentation attributes: one font for the
+     diagram labels without touching the render code. */
+  svg.svg text { font-family: var(--sans); }
+  svg.svg circle, svg.svg rect, svg.svg image { cursor: grab; }
+  .examples {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .examples button {
+    font-family: var(--sans);
+    font-size: 12px;
+    color: var(--secondary);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 4px 11px;
+    cursor: pointer;
+  }
+  .examples button:hover { color: var(--ink); border-color: var(--faint); }
+  .examples button:active { background: var(--paper); }
+  .text-input {
+    width: 100%;
+    min-height: 10em;
+    padding: 10px 12px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--ink);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    resize: vertical;
+  }
+  .text-input::placeholder { color: var(--faint); }
+  /* Last so it also beats :focus (same specificity): a non-compiling model
+     keeps the editor's border flagged while typing continues. */
+  .text-input.error { border-color: rgba(176, 0, 32, 0.55); }
+  .pre-output {
+    margin: 0;
+    height: 14em;   /* fixed, so the chart below never jumps as content changes */
+    overflow: auto;
+    padding: 10px 12px;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--secondary);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  .pre-output.error {
+    color: var(--error);
+    border-color: rgba(176, 0, 32, 0.4);
+  }
+  /* Narrow windows: back to one ordinary scrolling document column. */
+  @media (max-width: 760px) {
+    body { height: auto; min-height: 100vh; overflow: visible; }
+    .container { flex-direction: column; }
+    svg.svg { min-height: 70vh; }
+    .side { overflow-y: visible; }
+  }
+`
+d3.select('head').append('style').text(css)
+
+const body = d3.select('body')
+const pageHeader = body.append('header')
+pageHeader.append('h1').text('meadows')
+pageHeader.append('p')
+  .text('stock-and-flow diagrams from text, after ')
+  .append('em').text('Thinking in Systems')
+
+// Two columns filling the window: the example buttons, editor, JSON output
+// and chart stacked in `side` on the left (flex orders 2, 2, 3, 9); the
+// diagram svg on the right (container orders — side 1, svg 2).
+const container = body
   .append('div')
   .attr('class', 'container')
-  .style('display', 'flex')
-  .style('flex-direction', 'column')
-const pre = container
+const side = container
+  .append('div')
+  .attr('class', 'side')
+  .style('order', 1)
+const examples = side
+  .append('div')
+  .attr('class', 'examples')
+  .style('order', 2)
+const pre = side
   .append('pre')
   .attr('class', 'pre-output')
-  .style('order', 9)
-  .style('min-height', '2em')
-  .style('border', '1px solid black')
-  .style('white-space', 'pre-wrap')
-  .style('word-wrap', 'break-word')
-const examples = container
-  .append('div')
-  .style('order', 2)
+  .style('order', 3)
 exampleList.map(x => {
   const { label, content } = x
   examples.append('button')
@@ -42,22 +194,20 @@ let viewX = 0, viewY = 0, viewW = svgWidth, viewH = svgHeight;
 const svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, any> = container
   .append('svg')
   .attr('class', 'svg')
-  .style('order', 1)
-  .style('width', svgWidth)
-  .style('height', svgHeight)
+  .style('order', 2)
   .attr("viewBox", `0 0 ${svgWidth} ${svgHeight}`)
-  .style('border', '1px solid black')
   .on("click", click)
-// The behavior-over-time panel. Appended right after the diagram svg: both
-// carry flex order 1, and equal orders resolve by DOM position, so it sits
-// directly below the diagram and above the order-2 examples/textarea.
-const chart = createChart(container)
-const textInput = container
+// The behavior-over-time panel, at the bottom of the left-hand column: its
+// order 9 sorts after the examples' and editor's order 2.
+const chart = createChart(side)
+const textInput = side
   .append('textarea')
   .attr('class', 'text-input')
   .style('order', 2)
-  .style('width', '80em')
-  .style('height', '10em')
+  .attr('placeholder', '|=>inflow[stock]=>outflow|')
+  .attr('spellcheck', 'false')
+  .attr('autocapitalize', 'off')
+  .attr('autocomplete', 'off')
   .on('input', function (e: Event) {
     try {
       if (!(e.target instanceof HTMLTextAreaElement)) {
@@ -66,19 +216,18 @@ const textInput = container
       const input = e.target.value;
       const output = interpreter.go(input);
       const result = JSON.parse(output) as unknown;
+      const editor = d3.select(e.target);
       if (typeof result === 'string') {
-        // Compile error: show it and keep the last good graph on screen.
-        pre.style('color', '#b00020')
-          .style('border', '1px solid #b00020')
-          .text(result);
+        // Compile error: flag the editor's border, print the message in the
+        // output panel, and keep the last good graph on screen.
+        editor.classed('error', true);
+        pre.classed('error', true).text(result);
         return;
       }
+      editor.classed('error', false);
       const parse = result as System;
       console.log('parse::', parse)
-
-      pre.style('color', null)
-        .style('border', '1px solid black')
-        .text(JSON.stringify(parse, null, 2));
+      pre.classed('error', false).text(JSON.stringify(parse, null, 2));
       update(parse)
     } catch (error: unknown) {
       if (error instanceof Error) {
@@ -729,8 +878,8 @@ function update(system: System) {
   // Behavior-over-time panel (figure 6 to the diagram's figure 5): when the
   // model carries numbers and has a stock to plot, simulate it and draw the
   // chart, giving each stock the same accent color on its diagram rect and
-  // its chart line. Without numbers everything stays as before — black
-  // strokes, no chart.
+  // its chart line. Without numbers the strokes stay black and the panel
+  // clears to its empty frame.
   const numeric = hasNumbers(system);
   const stockIds = nodes.filter(n => n.type === "stock").map(n => n.id)
     .sort((a, b) => parserId(a) - parserId(b));
@@ -738,7 +887,7 @@ function update(system: System) {
     (numeric ? STOCK_PALETTE[stockIds.indexOf(id)] : undefined) ?? "#000";
   nodeStock.select<SVGRectElement>("rect").attr("stroke", d => colorOf(d.id));
   if (numeric && stockIds.length > 0) chart.render(simulate(system), colorOf, goalRefs(system));
-  else chart.hide();
+  else chart.empty();
 }
 
 // How round the info arcs are: arc radius = chord length × this factor, so it
@@ -1022,6 +1171,10 @@ function ticked() {
 }
 
 function click(event: MouseEvent) {
+  // Only EMPTY space adds a node: a click that lands on a shape bubbles up
+  // here too, but that gesture now means "release the pin" (see drag) and
+  // must not also spawn a linked dot.
+  if (event.target !== svg.node()) return;
   const [x, y] = d3.pointer(event);
   nextId++;
   const newNode: Node = { type: "dot", id: `${nextId}`, label: `${nextId}`, x, y };
@@ -1062,29 +1215,42 @@ function appendLabel(g: d3.Selection<SVGGElement, Node, SVGGElement, unknown>, y
 // `portAngle` so hand placement sticks (ticked() prefers it over the
 // automatic face-the-far-endpoint bearing, and auto ports yield to it in the
 // spread). The port never leaves the boundary — there is nothing else to
-// drag it to.
+// drag it to. Clicking a port is the same release gesture as clicking a
+// node: the hand-set bearing clears and the port returns to its automatic
+// placement.
 function portDrag() {
+  let moved = false;
   return d3.drag<any, Node>()
     .on("start", (event) => {
+      moved = false;
       if (!event.active) {
         simulation.alphaTarget(0.3).restart();
       }
     })
     .on("drag", (event, d) => {
+      moved = true;
       const p = d.portParent;
       if (!p) return;
       d.portAngle = Math.atan2(event.y - (p.y ?? 0), event.x - (p.x ?? 0));
     })
-    .on("end", (event) => {
+    .on("end", (event, d) => {
       if (!event.active) {
         simulation.alphaTarget(0);
       }
+      if (!moved) delete d.portAngle;
     });
 }
 
+// Dragging a node PINS it: fx/fy keep the drop point, so hand placement
+// holds exactly against the forces (which still layout everything else).
+// A plain click releases the pin — fx/fy unset, the node rejoins the
+// simulation. d3.drag fires start/end for clicks too, so the two gestures
+// are told apart by whether any drag (movement) event landed between them.
 function drag() {
+  let moved = false;
   return d3.drag<any, Node>()
     .on("start", (event, d) => {
+      moved = false;
       if (!event.active) {
         simulation.alphaTarget(0.3).restart();
       }
@@ -1092,6 +1258,7 @@ function drag() {
       d.fy = d.y;
     })
     .on("drag", (event, d) => {
+      moved = true;
       d.fx = event.x;
       d.fy = event.y;
     })
@@ -1099,7 +1266,12 @@ function drag() {
       if (!event.active) {
         simulation.alphaTarget(0);
       }
-      d.fx = null;
-      d.fy = null;
+      // A drag keeps the pin; a click (no movement) removes it. The brief
+      // alphaTarget kick above doubles as the resettle that shows a released
+      // node drifting back to where the forces want it.
+      if (!moved) {
+        d.fx = null;
+        d.fy = null;
+      }
     })
 }
