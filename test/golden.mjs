@@ -191,6 +191,70 @@ customer demand: 20 @2.5: 22
 coverage: 10
 adjustment: 10`;
 
+// figure 31: the dealership structure WITH its three delays marked — the
+// same nine arrows as figure 29 plus a delay dot feeding each machine part
+// (delivery delay → deliveries, response delay → orders, perception delay →
+// perceived sales).
+const EX_CAR31 = `| =>deliveries [inventory of cars on the lot] =>sales |
+B(deliveries <- orders to factory <- discrepancy <- inventory of cars on the lot)
+B(inventory of cars on the lot -> sales)
+desired inventory -> discrepancy
+perceived sales -> orders to factory
+perceived sales -> desired inventory
+sales -> perceived sales
+customer demand -> sales
+delivery delay -> deliveries
+response delay -> orders to factory
+perception delay -> perceived sales`;
+
+// figures 31 & 32 (and 35/36 by the response delay alone): the dealership
+// with its delays LIVE — perceived sales reads the sales flow smoothed
+// (`sales(t ~ perception delay)`), deliveries the orders pipeline-delayed
+// (`(t - delivery delay)`), and the response delay divides the
+// discrepancy. One time unit = 10 days (the 29 & 30 scaling), rates in cars
+// per unit: demand 200 → 220 at t = 2.5, perception/delivery delays 0.5
+// (5 days), response delay 0.3 / 0.2 / 0.6 (3 / 2 / 6 days).
+const car32 = (rd) => `| =>deliveries [inventory of cars on the lot: 200] =>sales |
+B(deliveries <- orders to factory <- discrepancy <- inventory of cars on the lot)
+orders to factory: (perceived sales + discrepancy / response delay)
+deliveries: (orders to factory(t - delivery delay))
+discrepancy: (desired inventory - inventory of cars on the lot)
+desired inventory: (perceived sales)
+perceived sales: (sales(t ~ perception delay))
+sales: (customer demand)
+customer demand: 200 @2.5: 220
+perception delay: 0.5
+response delay: ${rd}
+delivery delay: 0.5`;
+const EX_CAR3132 = car32('0.3');
+const EX_CAR35 = car32('0.2');
+const EX_CAR36 = car32('0.6');
+
+// The showcase buttons (not book figures) — each flexes a capability: a
+// nonlinear rate law, @ pulse schedules, a loop closed through a pipeline
+// shift, and ^ in a real physical law (see ui/example.ts).
+const EX_EPIDEMIC = `[susceptible: 990] =>infection [infected: 10]
+infection: (0.001 susceptible * infected)
+R(infection <- infected)
+B(infection <- susceptible)`;
+
+const EX_CAFFEINE = `| =>espresso: 0 @1: 240 @1.5: 0 @6: 240 @6.5: 0 [caffeine in blood: 0] =>metabolism |
+metabolism: (0.14 caffeine in blood)
+B(metabolism <- caffeine in blood)`;
+
+const EX_HOGS = `| =>breeding [pigs at market: 90] =>sales |
+breeding: (price(t - 2))
+price: (200 - pigs at market)
+sales: (0.5 pigs at market)
+B(breeding <- price <- pigs at market)`;
+
+const EX_SKYDIVER = `| =>gravity [speed: 0] =>air drag |
+gravity: 10
+air drag: (0.02 speed^2)
+[altitude: 180] =>falling |
+falling: (speed)
+B(air drag <- speed)`;
+
 const EX_LOOPS = `|=>investment[capital]=>depreciation|
 |=>regeneration[resource]=>harvest|
 capital->growth goal->investment
@@ -287,6 +351,21 @@ const goldenInputs = [
   '[capital: 100]\noutput: (capital / 3)',
   'a -> b\nb: (a)',
   'a=>f: (a)|',
+  // Time shifts: {kind: "smooth"|"delay", input, time} in the expr tree —
+  // x(t ~ T) smooths, x(t - T) pipelines — arrows from both the input and
+  // the time, faucets readable as the input, and state-through-the-shift
+  // self-reference legal.
+  'a: (x(t ~ 0.5))',
+  'd: 2\na: (x(t - d))',
+  'a: (a(t ~ 1))',
+  's=>f\na: (f(t ~ 1))',
+  'a: (x(t ~ 1)(t - 2))',   // shifts chain left to right
+  'a: (x(t))',              // the identity shift is just x
+  'a: (x(t -3))',           // a signed literal folds into the delay
+  'a: ((x + y)(t - 1))',    // a paren group takes a shift
+  // Exponents: ^ binds tightest, right-associative.
+  'y: ((2x^2) + 3)',
+  'y: (x^2^3)',
   EX_COFFEE,      // figures 10 & 11
   EX_INTEREST,    // figures 12 & 13
   EX_CAPITAL,     // figure 14
@@ -302,6 +381,15 @@ const goldenInputs = [
   EX_CAP28,       // figures 27 & 28
   EX_CAR29,       // figure 29
   EX_CAR2930,     // figures 29 & 30
+  EX_CAR31,       // figure 31
+  EX_CAR3132,     // figures 31 & 32 (also the 33 flow view and figure 34's
+                  // inventory chart — one model, three book figures)
+  EX_CAR35,       // figure 35 — react faster, oscillate harder
+  EX_CAR36,       // figure 36 — react slower, damp out
+  EX_EPIDEMIC,    // showcase: nonlinear rate law over two stocks
+  EX_CAFFEINE,    // showcase: @ pulse schedule + proportional decay
+  EX_HOGS,        // showcase: loop closed through price(t - 2)
+  EX_SKYDIVER,    // showcase: speed^2 drag, cross-band rate, the 0-floor
 ];
 
 // Errors: the "kind: line L, column C:" prefix is contractual; wording may be tuned.
@@ -342,6 +430,7 @@ const errorCases = [
   ['a=>f: 0 @5:',  /^Parsing error: line 1, column 11: /],  // step needs a rate
   ['[a: 1 @2: 3]', /^Parsing error: line 1, column 7: /],   // stocks: single value only
   ['a @ b',        /^Parsing error: line 1, column 3: /],   // '@' lives inside annotations
+  ['a, b',         /^Tokenization error: line 1, column 2: /],  // ',' left the language
   ['a: 5 ~',       /^Parsing error: line 1, column 6: /],   // '~' step needs a time
   ['a=>f: 0 @2: 1 ~3: 2', /^Parsing error: line 1, column 15: /],  // one schedule, one marker
   ['a=>f: 0 ~2: 1 @3: 2', /^Parsing error: line 1, column 15: /],  // (either way round)
@@ -352,6 +441,12 @@ const errorCases = [
   ['[a: (x)]',     /^Parsing error: line 1, column 5: /],   // stocks take numbers, not formulas
   ['x=>f\na: (f)', /^Model error: /],                       // a formula cannot read a faucet
   ['a: (b)\nb: (a)', /^Model error: /],                     // formula cycles have no order
+  // Time shifts: `(t` after a name or group, `-`/`~` the only shift
+  // operators, one term of time, and the time still may not read a faucet
+  ['a: (t)',            /^Parsing error: line 1, column 5: /],   // t is the time variable, not a name
+  ['a: (x(t + 1))',     /^Parsing error: line 1, column 9: /],   // only - and ~ shift time
+  ['a: (x(t - 3 - d))', /^Parsing error: line 1, column 13: /],  // a compound time needs parens
+  ['s=>f\na: (x(t - f))', /^Model error: /],                     // a shift time is a value, not a flow
 ];
 
 if (process.argv.includes('--capture')) {
@@ -531,6 +626,47 @@ if (!(c30Of('customer demand')?.value === 20
   fail('car 30', `customer demand steps 20 -> 22 at t=2.5, got ${JSON.stringify(c30Of('customer demand'))}`);
 if (!(c30Of('coverage')?.value === 10 && c30Of('adjustment')?.value === 10))
   fail('car 30', 'coverage and adjustment are the model constants');
+const car31 = JSON.parse(M.go(EX_CAR31));
+const c31Of = label => car31.nodes.find(n => n.label === label);
+if (car31.nodes.length !== 15)   // 2 clouds, 2 faucets, 1 stock, 8 dots, 2 ports
+  fail('car 31', `15 nodes expected, got ${car31.nodes.length}`);
+if (car31.links.filter(l => l.type === 'flow').length !== 4 || car31.links.length !== 16)
+  fail('car 31', '4 flows + 12 arrows expected (figure 29 plus the three delay arrows)');
+for (const d of ['delivery delay', 'response delay', 'perception delay'])
+  if (!(c31Of(d)?.type === 'dot' && c31Of(d)?.value === undefined && c31Of(d)?.loop === undefined))
+    fail('car 31', `${d} should be a bare dot outside the loops`);
+if (JSON.stringify(c31Of('inventory of cars on the lot')?.loop) !== JSON.stringify(['B0', 'B1']))
+  fail('car 31', 'inventory should still be in both B loops');
+if (car31.nodes.some(n => n.value !== undefined || n.expr !== undefined))
+  fail('car 31', 'the structure figure carries no numbers');
+const car32g = JSON.parse(M.go(EX_CAR3132));
+const c32Of = label => car32g.nodes.find(n => n.label === label);
+if (car32g.nodes.length !== 14)   // 2 clouds, 2 faucets, 1 stock, 8 dots, 1 port
+  fail('car 32', `14 nodes expected, got ${car32g.nodes.length}`);
+if (car32g.links.filter(l => l.type === 'flow').length !== 4 || car32g.links.length !== 15)
+  fail('car 32', '4 flows + 11 arrows expected (formula arrows dedup against the B chain)');
+if (!(c32Of('deliveries')?.expr?.kind === 'delay'
+      && c32Of('deliveries')?.expr?.input?.kind === 'ref'
+      && c32Of('deliveries')?.expr?.input?.id === c32Of('orders to factory')?.id
+      && c32Of('deliveries')?.expr?.time?.id === c32Of('delivery delay')?.id))
+  fail('car 32', `deliveries should be delay(orders, delivery delay), got ${JSON.stringify(c32Of('deliveries')?.expr)}`);
+if (!(c32Of('perceived sales')?.expr?.kind === 'smooth'
+      && c32Of('perceived sales')?.expr?.input?.id === c32Of('sales')?.id
+      && c32Of('perceived sales')?.expr?.time?.id === c32Of('perception delay')?.id))
+  fail('car 32', `perceived sales should be smooth(sales, perception delay), got ${JSON.stringify(c32Of('perceived sales')?.expr)}`);
+if (c32Of('sales')?.type !== 'faucet')
+  fail('car 32', 'the smoothed input is the sales FAUCET — a perceived flow');
+if (!(c32Of('customer demand')?.value === 200
+      && JSON.stringify(c32Of('customer demand')?.steps) === JSON.stringify([{ value: 220, at: 2.5 }])))
+  fail('car 32', `customer demand steps 200 -> 220 at t=2.5, got ${JSON.stringify(c32Of('customer demand'))}`);
+if (!(c32Of('perception delay')?.value === 0.5
+      && c32Of('response delay')?.value === 0.3 && c32Of('delivery delay')?.value === 0.5))
+  fail('car 32', 'the three delay constants scale the book: 0.5/0.3/0.5');
+if (c32Of('coverage') !== undefined)
+  fail('car 32', 'no coverage node — ten days of sales is one unit\'s worth, so desired inventory reads perceived sales directly (the figure 31 diagram has no such element)');
+if (JSON.parse(M.go(EX_CAR35)).nodes.find(n => n.label === 'response delay')?.value !== 0.2
+    || JSON.parse(M.go(EX_CAR36)).nodes.find(n => n.label === 'response delay')?.value !== 0.6)
+  fail('car 35/36', 'the variants differ from 31 & 32 only in the response delay (0.2 / 0.6)');
 
 console.log(failures ? `${failures} FAILURE(S)` : 'ALL CHECKS PASSED');
 process.exit(failures ? 1 : 0);

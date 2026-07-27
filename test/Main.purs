@@ -18,7 +18,7 @@ import Effect.Console (log)
 import Effect.Exception (throw)
 import Evaluator (Graph, Link, NodeType(..), RFormula(..), evaluate)
 import Lexer (LoopKind(..), Operator(..), Token(..), tokenize)
-import Parser (Annot(..), Formula(..), FormOp(..), Tree(..), parse)
+import Parser (Annot(..), FnKind(..), Formula(..), FormOp(..), Tree(..), parse)
 import Parsing (Position(..))
 
 -- | Nothing = pass; Just = failure report.
@@ -149,6 +149,11 @@ tests =
   , expectEq "@ lexes as its own token"
       (Right (TokIdent "f" : TokColon : TokNumber 0.0 : TokAt : TokNumber 5.0 : TokColon : TokNumber 5.0 : Nil))
       (toksOf "f: 0 @5: 5")
+  , expectEq "^ lexes as its own token"
+      (Right (TokIdent "x" : TokCaret : TokNumber 2.0 : Nil))
+      (toksOf "x^2")
+  , expectErrorAt "',' is no longer part of the language"
+      "line 1, column 2" (toksOf "a, b")
   , expectEq "a leading '-' signs a number literal"
       (Right (TokIdent "a" : TokColon : TokNumber (-5.0) : Nil))
       (toksOf "a: -5")
@@ -283,6 +288,20 @@ tests =
       (Right (NodeExpr 2 "a"
         (Just (FormulaAnnot (FBin FDiv (FBin FAdd (FRef 0 "x") (FNum 1.0)) (FRef 1 "y")))) : Nil))
       (parseAll "a: ((x + 1) / y)")
+  , expectEq "formula: ^ binds tighter than juxtaposition and +: (2x^2) + 3"
+      (Right (NodeExpr 1 "a"
+        (Just (FormulaAnnot (FBin FAdd
+          (FBin FMul (FNum 2.0) (FBin FPow (FRef 0 "x") (FNum 2.0)))
+          (FNum 3.0)))) : Nil))
+      (parseAll "a: ((2x^2) + 3)")
+  , expectEq "formula: ^ is right-associative"
+      (Right (NodeExpr 1 "a"
+        (Just (FormulaAnnot (FBin FPow (FRef 0 "x") (FBin FPow (FNum 2.0) (FNum 3.0))))) : Nil))
+      (parseAll "a: (x^2^3)")
+  , expectEq "formula: x^2y is (x^2) * y, the paper convention"
+      (Right (NodeExpr 2 "a"
+        (Just (FormulaAnnot (FBin FMul (FBin FPow (FRef 0 "x") (FNum 2.0)) (FRef 1 "y")))) : Nil))
+      (parseAll "a: (x^2y)")
   , expectEq "formula on a faucet"
       (Right (FaucetRExpr 2 "f"
         (Just (FormulaAnnot (FRef 1 "x"))) (NodeExpr 0 "a" Nothing) Nothing : Nil))
@@ -295,6 +314,45 @@ tests =
       "line 1, column 7" (parseAll "a: (x 5)")
   , expectErrorAt "stocks take a number, never a formula"
       "line 1, column 5" (parseAll "[a: (x)]")
+  -- Parser: time shifts — after a name or a group, the exact token pair
+  -- `(t` reads the signal at a shifted time: x(t - T) the value T ago,
+  -- x(t ~ T) the value about T ago (exponential smoothing). Any other '('
+  -- stays juxtaposed multiplication; shifts mint no id of their own.
+  , expectEq "a smooth shift parses (ids: input ref 0, owner 1 — no shift id)"
+      (Right (NodeExpr 1 "a" (Just (FormulaAnnot (FCall FnSmooth (FRef 0 "x") (FNum 0.5)))) : Nil))
+      (parseAll "a: (x(t ~ 0.5))")
+  , expectEq "a delay shift takes a named time (ids: input 0, time 1, owner 2)"
+      (Right (NodeExpr 2 "a" (Just (FormulaAnnot (FCall FnDelay (FRef 0 "x") (FRef 1 "d")))) : Nil))
+      (parseAll "a: (x(t - d))")
+  , expectEq "shifts chain left to right (the input's refs mint first)"
+      (Right (NodeExpr 2 "a" (Just (FormulaAnnot
+        (FCall FnDelay (FCall FnSmooth (FRef 0 "x") (FNum 1.0)) (FRef 1 "d")))) : Nil))
+      (parseAll "a: (x(t ~ 1)(t - d))")
+  , expectEq "a paren group takes a shift"
+      (Right (NodeExpr 2 "a" (Just (FormulaAnnot
+        (FCall FnDelay (FBin FAdd (FRef 0 "x") (FRef 1 "y")) (FNum 1.0)))) : Nil))
+      (parseAll "a: ((x + y)(t - 1))")
+  , expectEq "x(t) is just x"
+      (Right (NodeExpr 1 "a" (Just (FormulaAnnot (FRef 0 "x"))) : Nil))
+      (parseAll "a: (x(t))")
+  , expectEq "a signed literal folds into a delay: x(t -3) is x(t - 3)"
+      (Right (NodeExpr 1 "a" (Just (FormulaAnnot (FCall FnDelay (FRef 0 "x") (FNum 3.0)))) : Nil))
+      (parseAll "a: (x(t -3))")
+  , expectEq "a paren not opening with t stays juxtaposed multiplication"
+      (Right (NodeExpr 2 "a" (Just (FormulaAnnot
+        (FBin FMul (FRef 0 "x") (FBin FAdd (FRef 1 "y") (FNum 1.0))))) : Nil))
+      (parseAll "a: (x(y + 1))")
+  , expectEq "smooth and delay are ordinary names now"
+      (Right (NodeExpr 2 "a" (Just (FormulaAnnot (FBin FMul (FRef 0 "smooth") (FRef 1 "delay")))) : Nil))
+      (parseAll "a: (smooth * delay)")
+  , expectErrorAt "t is reserved: a bare reference to it is an error"
+      "time variable" (parseAll "a: (t)")
+  , expectErrorAt "the t guard is positioned at the t"
+      "line 1, column 5" (parseAll "a: (t)")
+  , expectErrorAt "only - and ~ shift time"
+      "line 1, column 9" (parseAll "a: (x(t + 1))")
+  , expectErrorAt "a compound time needs its own parens"
+      "line 1, column 13" (parseAll "a: (x(t - 3 - d))")
   -- Parser: values are positioned errors anywhere else
   , expectErrorAt "a colon needs a number"
       "line 1, column 4" (parseAll "[a:]")
@@ -457,6 +515,28 @@ tests =
       "cycle" (graphOf "a: (b)\nb: (a)")
   , expectErrorAt "a formula cannot depend on itself"
       "cycle" (graphOf "a: (a + 1)")
+  -- Evaluator: time shifts resolve like any formula (refs through the
+  -- registry, arrows from BOTH the input and the time), may read faucets
+  -- as their input, and break dependency cycles (their value is state,
+  -- not a recursion into the input).
+  , expectEq "a shift serializes with input and time resolved"
+      (Right [ Tuple "a" (Just (RCall "smooth" (RRef "dot#0") (RNum 1.0))), Tuple "x" Nothing ])
+      (labelExprs "x\na: (x(t ~ 1))")
+  , expectEq "a shift draws the arrows its input and time imply"
+      (Right [ { type: "arrow", source: "dot#1", target: "dot#3" }
+             , { type: "arrow", source: "dot#0", target: "dot#3" } ])
+      (linksOf "d: 2\na: (x(t - d))")
+  , expectEq "a shift's input may read a faucet (the perceived flow)"
+      (Right [ Tuple "a" (Just (RCall "smooth" (RRef "faucet#1") (RNum 1.0)))
+             , Tuple "f" Nothing, Tuple "s" Nothing ])
+      (labelExprs "s=>f\na: (f(t ~ 1))")
+  , expectErrorAt "a shift's time may not read a faucet"
+      "is a faucet" (graphOf "s=>f\na: (x(t - f))")
+  , expectEq "a loop through a shift is legal (state breaks the cycle)"
+      (Right [ Tuple "a" (Just (RCall "smooth" (RRef "dot#1") (RNum 1.0))) ])
+      (labelExprs "a: (a(t ~ 1))")
+  , expectErrorAt "an eager cycle beside a shift is still rejected"
+      "cycle" (graphOf "a: (b + x(t ~ 1))\nb: (a)")
   -- Evaluator: band groups
   , expectEq "a flow band with a reservoir gets a group"
       (Right [ Tuple "a" (Just 0), Tuple "fill" (Just 0) ])

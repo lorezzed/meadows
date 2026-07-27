@@ -15,6 +15,12 @@
 //   consumed by the run below) — and the greedy run consumption reproduces
 //   the lexer's precedence, where a trailing one-letter word joins a
 //   preceding identifier first (`foo R(` is the name "foo R", then `(`);
+// - a lone `t` whose previous token is `(` is the reserved time variable
+//   opening a time shift (`sales(t ~ perception delay)`), so it stays
+//   plain — approximated by the nearest non-blank character, which is
+//   exact for formula shifts (and claims the `t` in a statement-level
+//   `R(t -> b)` too, an accepted corner: `t` can't be referenced from
+//   formulas anyway);
 // - everything else — operators, numbers, brackets, clouds, newlines — is
 //   plain. (A digit only joins a name after a leading letter: `a2` is one
 //   name, but in `2x` the digit stays plain and `x` is the name, matching
@@ -71,8 +77,21 @@ export function nameSpans(input: string): Span[] {
         j = k;
       } else break;
     }
+    const name = words.join(" ");
+    if (name === "t") {
+      // The time variable? The previous TOKEN must be "(" — skip blanks
+      // backwards the way the lexer would (they separate tokens without
+      // meaning anything).
+      let k = i - 1;
+      while (k >= 0 && (input[k] === " " || input[k] === "\t")) k--;
+      if (k >= 0 && input[k] === "(") {
+        plain += raw;
+        i = j;
+        continue;
+      }
+    }
     flushPlain();
-    spans.push({ text: raw, name: words.join(" ") });
+    spans.push({ text: raw, name });
     i = j;
   }
   flushPlain();

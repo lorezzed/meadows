@@ -5,7 +5,7 @@ import type { Expr, Node, Link, System } from "./type";
 import faucetSvg from './shape/faucet.svg'
 import cloudSvg from './shape/cloud.svg'
 import { exampleList } from "./example";
-import { T_END, goalRefs, hasNumbers, simulate } from "./simulate";
+import { T_END, flowSeries, goalRefs, hasDelays, hasNumbers, simulate } from "./simulate";
 import { createChart, STOCK_PALETTE } from "./chart";
 import { nameSpans } from "./highlight";
 
@@ -113,11 +113,13 @@ const css = `
     outline: 2px solid var(--faint);
     outline-offset: 2px;
   }
-  /* The chart's horizon field: a footer row tucked under the panel's right
-     corner, right where the time axis it edits ends. */
+  /* The chart's footer row, tucked under the panel's right corner: the
+     flows toggle (shown only when the model has smooth/delay calls) and the
+     t= horizon field, right where the time axis they affect ends. */
   .horizon {
     display: flex;
     justify-content: flex-end;
+    gap: 14px;
     margin-top: -4px;
   }
   .horizon label {
@@ -127,7 +129,7 @@ const css = `
     font-size: 12px;
     color: var(--secondary);
   }
-  .horizon input {
+  .horizon input[type="number"] {
     width: 62px;
     padding: 3px 8px;
     font-family: var(--sans);
@@ -138,7 +140,11 @@ const css = `
     border: 1px solid var(--line);
     border-radius: 6px;
   }
-  .horizon input:focus { outline: none; border-color: var(--faint); }
+  .horizon input[type="number"]:focus { outline: none; border-color: var(--faint); }
+  .horizon input[type="checkbox"] {
+    margin: 0;
+    accent-color: var(--secondary);
+  }
   .text-input:focus {
     outline: none;
     border-color: var(--faint);
@@ -279,11 +285,10 @@ const pre = side
   .style('order', 3)
   .style('display', 'none')
 exampleList.map(x => {
-  const { label, content } = x
   examples.append('button')
-    .text(label)
+    .text(x.label)
     .on('click', function () {
-      loadExample(content);
+      loadExample(x);
     });
 })
 
@@ -340,19 +345,39 @@ const chart = createChart(side)
 // lastChart holds what a horizon change must re-run: the last successfully
 // compiled system with its stock accent assignment, and whether it plots.
 let tEnd = T_END;
+// The flows toggle (figure 33's view): when on, the chart overlays each
+// smooth/delay call's input and output as thin lines — sales against
+// perceived sales, orders against deliveries. Off by default so the plain
+// stock charts (figures 32, 34, 35) stay exactly the book's.
+let showFlows = false;
 let lastChart: { system: System; colorOf: (id: string) => string; plottable: boolean } | null = null;
 function refreshChart(): void {
   if (lastChart?.plottable) {
     const { system, colorOf } = lastChart;
-    chart.render(simulate(system, tEnd), colorOf, goalRefs(system), tEnd);
+    chart.render(simulate(system, tEnd), colorOf, goalRefs(system), tEnd,
+      showFlows ? flowSeries(system, tEnd) : []);
   } else {
     chart.empty(tEnd);
   }
+  // The toggle appears only when the model has a delay to unfold.
+  if (lastChart?.plottable && hasDelays(lastChart.system)) flowsLabel.style('display', null);
+  else flowsLabel.style('display', 'none');
 }
 const horizonRow = side
   .append('div')
   .attr('class', 'horizon')
   .style('order', 10)
+const flowsLabel = horizonRow
+  .append('label')
+  .attr('title', "plot each delay's input (solid) and output (dashed) — the figure 33 view")
+  .style('display', 'none')
+const flowsInput = flowsLabel.append('input')
+  .attr('type', 'checkbox')
+  .on('change', function () {
+    showFlows = (this as HTMLInputElement).checked;
+    refreshChart();
+  });
+flowsLabel.append('span').text('flows')
 const horizonLabel = horizonRow
   .append('label')
   .attr('title', 'simulated time horizon')
@@ -562,12 +587,25 @@ const renderExpr = (e: Expr): string => {
   switch (e.kind) {
     case "num": return `${e.value}`;
     case "ref": return labelById.get(e.id) ?? e.id;
+    case "smooth": case "delay": {
+      // A shift prints as the source reads: input(t ~ T) / input(t - T),
+      // the input parenthesized unless it is a bare reference and the
+      // time unless it is one term — exactly the re-parseable spelling.
+      const input = e.input.kind === "ref" ? renderExpr(e.input) : `(${renderExpr(e.input)})`;
+      const time = e.time.kind === "num" || e.time.kind === "ref"
+        ? renderExpr(e.time) : `(${renderExpr(e.time)})`;
+      return `${input}(t ${e.kind === "smooth" ? "~" : "-"} ${time})`;
+    }
     default: {
+      // Parenthesize a child that binds looser than this operator; shifts
+      // and atoms bind tightest and never need wrapping.
+      const rank = (k: Expr["kind"]) =>
+        k === "+" || k === "-" ? 0 : k === "*" || k === "/" ? 1 : 2;
       const wrap = (c: Expr) =>
-        (c.kind === "+" || c.kind === "-") && (e.kind === "*" || e.kind === "/")
-          ? `(${renderExpr(c)})`
-          : renderExpr(c);
-      return `${wrap(e.left)} ${e.kind} ${wrap(e.right)}`;
+        rank(c.kind) < rank(e.kind) ? `(${renderExpr(c)})` : renderExpr(c);
+      return e.kind === "^"
+        ? `${wrap(e.left)}^${wrap(e.right)}`
+        : `${wrap(e.left)} ${e.kind} ${wrap(e.right)}`;
     }
   }
 };
@@ -1513,13 +1551,19 @@ function click(event: MouseEvent) {
   update({ ...system });
 }
 
-function loadExample(text: string) {
+function loadExample(ex: { content: string; flows?: boolean }) {
   // A button load replaces the whole diagram, so don't recycle the previous
   // example's positions (ids like "stock#2" recur across examples, and nodes
   // migrating across the canvas jam on each other's collision discs) — start
   // every node fresh at its layout slot. Typing edits still recycle.
   simulation.nodes([]);
-  textInput.property('value', text);
+  // Each button lands on the view its figure shows: the flows toggle resets
+  // to the entry's declared flag ("figure 31 & 33" presets it on, everything
+  // else off — figure 32's chart is the bare inventory line). The horizon,
+  // by contrast, is the user's and survives loads.
+  showFlows = ex.flows ?? false;
+  flowsInput.property('checked', showFlows);
+  textInput.property('value', ex.content);
   textInput.node()?.dispatchEvent(new Event('input'));
 }
 

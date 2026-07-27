@@ -23,7 +23,7 @@ import Data.Tuple (Tuple(..), fst)
 import Control.Alt ((<|>))
 import Control.Monad.State (State, runState, gets, modify_)
 import Lexer (loopLetter)
-import Parser (Annot(..), Formula(..), Tree(..), Id, Sched, Step, opString)
+import Parser (Annot(..), Formula(..), Tree(..), Id, Sched, Step, fnName, opString)
 import Simple.JSON (class WriteForeign, writeImpl)
 
 data NodeType = Dot | Stock | Faucet | Cloud | Port
@@ -40,23 +40,40 @@ instance writeForeignNodeType :: WriteForeign NodeType where
 -- | A formula with its references resolved to node ids (identity, not
 -- | spelling -- the same seam rule as links). Serializes as nested objects:
 -- | {kind: "num", value}, {kind: "ref", id}, {kind: "+"|"-"|"*"|"/", left,
--- | right} -- directly evaluable by the simulator with no re-parsing.
-data RFormula = RNum Number | RRef String | RBin String RFormula RFormula
+-- | right}, {kind: "smooth"|"delay", input, time} -- directly evaluable by
+-- | the simulator with no re-parsing.
+data RFormula = RNum Number | RRef String | RBin String RFormula RFormula | RCall String RFormula RFormula
 derive instance eqRFormula :: Eq RFormula
 instance showRFormula :: Show RFormula where
   show (RNum n) = "RNum " <> show n
   show (RRef id) = "RRef " <> id
   show (RBin op l r) = "(" <> show l <> " " <> op <> " " <> show r <> ")"
+  show (RCall k input time) = show input <> "(t " <> (if k == "smooth" then "~" else "-") <> " " <> show time <> ")"
 instance writeForeignRFormula :: WriteForeign RFormula where
   writeImpl (RNum n) = writeImpl { kind: "num", value: n }
   writeImpl (RRef id) = writeImpl { kind: "ref", id }
   writeImpl (RBin op l r) = writeImpl { kind: op, left: l, right: r }
+  writeImpl (RCall k input time) = writeImpl { kind: k, input, time }
 
--- | The ids a formula references, in reference order, deduplicated.
+-- | The ids a formula references, in reference order, deduplicated. Time
+-- | shifts count both sides: `sales(t ~ perception delay)` implies arrows
+-- | from the perceived flow and the delay constant (figure 31 draws both).
 refIds :: RFormula -> Array String
 refIds (RNum _) = []
 refIds (RRef id) = [ id ]
 refIds (RBin _ l r) = Array.nub (refIds l <> refIds r)
+refIds (RCall _ input time) = Array.nub (refIds input <> refIds time)
+
+-- | The ids whose CURRENT value a formula reads when evaluated -- the edges
+-- | that matter for cycle detection. A time shift reads its own state (last
+-- | step's smoothing level, the delay buffer), never its input's current
+-- | value, so shifts break dependency cycles: `deliveries: (orders to
+-- | factory(t - ...))` may sit on a loop that winds back to deliveries.
+eagerRefIds :: RFormula -> Array String
+eagerRefIds (RNum _) = []
+eagerRefIds (RRef id) = [ id ]
+eagerRefIds (RBin _ l r) = Array.nub (eagerRefIds l <> eagerRefIds r)
+eagerRefIds (RCall _ _ _) = []
 
 type NodeRec = { ty :: NodeType, label :: String, value :: Maybe Number, steps :: Maybe (Array Step), smooth :: Maybe Boolean, expr :: Maybe RFormula, parent :: Maybe String }
 
@@ -205,15 +222,22 @@ drawArrow source target = do
 
 -- | Resolve a formula's references through the registry (minting dots for
 -- | unseen names, exactly like a bare mention). A reference must land on a
--- | stock or a dot -- a faucet has no value to read (v1).
-resolveFormula :: Formula -> Evaluator RFormula
-resolveFormula (FNum n) = pure (RNum n)
-resolveFormula (FBin op l r) = RBin (opString op) <$> resolveFormula l <*> resolveFormula r
-resolveFormula (FRef i name) = do
+-- | stock or a dot -- a faucet has no value to read (v1) -- EXCEPT as a
+-- | time shift's input, where a faucet reference reads the flow's rate:
+-- | that is how `sales(t ~ ...)` perceives a flow. The flag rides down
+-- | through arithmetic; a shift's time resets it (a delay time is a value,
+-- | not a flow).
+resolveFormula :: Boolean -> Formula -> Evaluator RFormula
+resolveFormula _ (FNum n) = pure (RNum n)
+resolveFormula inShift (FBin op l r) = RBin (opString op) <$> resolveFormula inShift l <*> resolveFormula inShift r
+resolveFormula _ (FCall kind input time) =
+  RCall (fnName kind) <$> resolveFormula true input <*> resolveFormula false time
+resolveFormula inShift (FRef i name) = do
   id <- resolveNamed Dot i name
   tyM <- gets \s -> map _.ty (Map.lookup id s.nodes)
   case tyM of
-    Just Faucet -> setErr ("a formula may only reference stocks and dots; '" <> name <> "' is a faucet")
+    Just Faucet | not inShift ->
+      setErr ("a formula may only reference stocks and dots; '" <> name <> "' is a faucet (a time shift like " <> name <> "(t ~ T) may read one)")
     _ -> pure unit
   pure (RRef id)
 
@@ -227,7 +251,7 @@ setFormula id f = do
   already <- gets \s -> maybe false annotated (Map.lookup id s.nodes)
   if already then pure unit
   else do
-    rf <- resolveFormula f
+    rf <- resolveFormula false f
     modify_ \s -> s { nodes = Map.update (\rec -> Just rec { expr = Just rf }) id s.nodes }
     traverse_ (\src -> drawArrow src id) (refIds rf)
 
@@ -401,12 +425,14 @@ computeGroups st =
 -- | Formulas may chain through other computed dots, but a cycle
 -- | (`a: (b + 1)` with `b: (a + 1)`) has no evaluation order -- reject the
 -- | model. Stocks break chains (their levels are integrated state, not
--- | formulas), so only expr-to-expr references count as edges.
+-- | formulas), so only expr-to-expr references count as edges -- and only
+-- | EAGER ones: a time shift reads history, not current values, so a loop
+-- | closed through one is legal (eagerRefIds skips shift bodies).
 formulaCycleError :: Map.Map String NodeRec -> Maybe String
 formulaCycleError nodes =
   let hasExpr id = maybe false (isJust <<< _.expr) (Map.lookup id nodes)
       succs id = case Map.lookup id nodes of
-        Just { expr: Just rf } -> Array.filter hasExpr (refIds rf)
+        Just { expr: Just rf } -> Array.filter hasExpr (eagerRefIds rf)
         _ -> []
       cyclic start =
         let go frontier seen = case Array.uncons frontier of

@@ -4,7 +4,7 @@
 // can run it directly (erasable-syntax type stripping, node >= 22.18).
 // Run with:   node test/simulate.mjs
 import * as M from '../output/Main/index.js';
-import { simulate, hasNumbers, goalRefs, scheduleFn, T_END, DT } from '../ui/simulate.ts';
+import { simulate, flowSeries, hasDelays, hasNumbers, goalRefs, scheduleFn, T_END, DT } from '../ui/simulate.ts';
 
 let failures = 0;
 const fail = (label, msg) => { failures++; console.log(`FAIL ${label}: ${msg}`); };
@@ -599,6 +599,268 @@ adjustment: 10`;
     fail('figure 30', 'the ideal (no-delay) adjustment is monotone — no overshoot, no oscillation');
   if (goalRefs(system).length !== 0)
     fail('figure 30', 'the formula faucets register no goal rules — figure 30 draws no dashed line');
+}
+
+// Time shifts x(t ~ T) and x(t - T) (the figures 31–35 machinery), pinned
+// float-exactly against hand-rolled state recurrences in the engine's op
+// order: a shift's value is its START-of-step state (the delay ring serves
+// before it overwrites, the smoothing reads before it steps), states
+// advance on start-of-step inputs after the rates and rations are known,
+// and both prime to their input's value at t=0.
+{
+  // x(t - T): a pure pipeline. x steps 0→10 at t=1; the delayed faucet
+  // echoes it exactly 0.5 (ten samples) later, so the sink stock first
+  // moves on the step after t=1.5.
+  const system = sys('x: 0 @1: 10\n|=>f: (x(t - 0.5))[s: 0]');
+  const s = simulate(system)[0];
+  const xFn = scheduleFn({ value: 0, steps: [{ at: 1, value: 10 }] });
+  const buf = new Array(10).fill(0);
+  let ptr = 0, L = 0;
+  const want = [L];
+  for (let n = 0; n < Math.round(T_END / DT); n++) {
+    const rate = Math.max(0, buf[ptr]);
+    buf[ptr] = xFn(n * DT);
+    ptr = (ptr + 1) % 10;
+    L = Math.max(0, L + rate * DT * 1);
+    want.push(L);
+  }
+  if (!s.levels.every((v, i) => v === want[i]))
+    fail('delay pipeline', 'levels must match the ring-buffer mirror sample-for-sample');
+  const first = s.levels.findIndex(v => v > 0);
+  if (first !== Math.round(1.5 / DT) + 1)
+    fail('delay pipeline', `stock must first move the step after t=1.5, moved at sample ${first}`);
+  if (!hasDelays(system)) fail('delay pipeline', 'hasDelays must see the shift');
+  if (hasDelays(sys('a: (x + 1)'))) fail('delay pipeline', 'a plain formula has no delays');
+}
+
+{
+  // x(t ~ T): a first-order lag. The faucet's rate IS the lag's
+  // start-of-step state; the state then steps toward x by min(1, DT/T).
+  // Priming makes S(0) = x(0).
+  const system = sys('x: 0 @1: 10\n|=>f: (x(t ~ 1))[s: 0]');
+  const s = simulate(system)[0];
+  const xFn = scheduleFn({ value: 0, steps: [{ at: 1, value: 10 }] });
+  let S = 0, L = 0;
+  const want = [L];
+  for (let n = 0; n < Math.round(T_END / DT); n++) {
+    const rate = Math.max(0, S);
+    S = S + Math.min(1, DT / 1) * (xFn(n * DT) - S);
+    L = Math.max(0, L + rate * DT * 1);
+    want.push(L);
+  }
+  if (!s.levels.every((v, i) => v === want[i]))
+    fail('smooth lag', 'levels must match the lag mirror sample-for-sample');
+  // T = 0 degenerates to tracking the input exactly (the snap guard, the
+  // same min(1, ·) cap the goal-seek gain uses).
+  const snap = simulate(sys('x: 3\n|=>f: (x(t ~ 0))[s: 0]'))[0];
+  if (!snap.levels.every((v, i) => Math.abs(v - 3 * i * DT) < 1e-9))
+    fail('smooth snap', 'T=0 must track the input exactly');
+}
+
+{
+  // A smoothing may perceive a FLOW: its input is the faucet's rate as
+  // APPLIED — rationed down as the source stock empties — while the t=0
+  // priming reads the raw clamped rate (nothing has flowed yet): here the
+  // drain asks 5 but holds only 0.1, so the lag starts at 5 and chases the
+  // rationed trickle down from its first step.
+  const system = sys('[a: 0.1]=>drain: 5|\n|=>inflow: (drain(t ~ 1))[b: 0]');
+  const b = simulate(system).find(x => x.label === 'b');
+  let A = 0.1, B = 0, S = 5;
+  const wantB = [B];
+  for (let n = 0; n < Math.round(T_END / DT); n++) {
+    const drainRate = 5;
+    const inflowRate = Math.max(0, S);
+    const demandA = drainRate * DT;
+    const rationA = demandA > A ? A / demandA : 1;
+    const applied = drainRate * rationA;
+    S = S + Math.min(1, DT / 1) * (applied - S);
+    A = Math.max(0, A + -(drainRate * DT * rationA));
+    B = Math.max(0, B + inflowRate * DT * 1);
+    wantB.push(B);
+  }
+  if (!b.levels.every((v, i) => v === wantB[i]))
+    fail('smoothed flow', 'the lag must chase the applied (post-ration) rate, primed raw');
+}
+
+// figures 31 & 32 (whose inventory chart is the book's figure 34), 35,
+// and 36: the delayed car dealership. Sales step up 10%
+// at t=2.5 (day 25); perceived sales smooths the sales flow
+// (`sales(t ~ perception delay)`, 0.5 = 5 days), deliveries pipeline the
+// orders (`(t - delivery delay)`, 0.5), and orders anchor on perceived
+// sales plus the inventory discrepancy made up over the response delay. The delivery
+// pipeline vs response-time ratio decides everything: 0.5/0.3 (the book's
+// base) oscillates with growing swings, 0.5/0.2 (reacting faster, figure
+// 35) blows up harder, 0.5/0.6 (reacting slower, figure 36) damps onto
+// the new 220. Mirrored sample-for-sample in the engine's float-op order.
+{
+  const car = (rd) => `| =>deliveries [inventory of cars on the lot: 200] =>sales |
+B(deliveries <- orders to factory <- discrepancy <- inventory of cars on the lot)
+orders to factory: (perceived sales + discrepancy / response delay)
+deliveries: (orders to factory(t - delivery delay))
+discrepancy: (desired inventory - inventory of cars on the lot)
+desired inventory: (perceived sales)
+perceived sales: (sales(t ~ perception delay))
+sales: (customer demand)
+customer demand: 200 @2.5: 220
+perception delay: 0.5
+response delay: ${rd}
+delivery delay: 0.5`;
+  const demandFn = scheduleFn({ value: 200, steps: [{ at: 2.5, value: 220 }] });
+  const mirror = (rd) => {
+    let I = 200, S = 200;                 // the smooth primes to sales' raw rate at t=0
+    const buf = new Array(10).fill(200);  // the pipeline primes to orders(0) = S + 0/rd
+    let ptr = 0;
+    const levels = [I];
+    for (let n = 0; n < Math.round(T_END / DT); n++) {
+      const t = n * DT;
+      const deliveries = Math.max(0, buf[ptr]);   // the delay's start-of-step state
+      const sales = Math.max(0, demandFn(t));     // inventory stays ample: ration 1
+      const desired = S;                          // ten days of sales = one unit's worth
+      const disc = desired - I;
+      const orders = S + disc / rd;               // gathered before any state commits
+      buf[ptr] = orders;
+      ptr = (ptr + 1) % 10;
+      S = S + Math.min(1, DT / 0.5) * (sales * 1 - S);
+      I = Math.max(0, I + (deliveries * DT * 1 - sales * DT * 1));
+      levels.push(I);
+    }
+    return levels;
+  };
+  const at = (arr, t) => arr[Math.round(t / DT)];
+  const win = (arr, t0, t1, f) => f(...arr.slice(Math.round(t0 / DT), Math.round(t1 / DT) + 1));
+  const measured = new Map();
+  for (const [fig, rdStr, rd] of [['figure 32', '0.3', 0.3], ['figure 35', '0.2', 0.2], ['figure 36', '0.6', 0.6]]) {
+    const system = sys(car(rdStr));
+    const inv = simulate(system).find(s => s.label === 'inventory of cars on the lot');
+    const want = mirror(rd);
+    if (!inv.levels.every((v, i) => v === want[i]))
+      fail(fig, 'inventory must match the delayed-loop mirror sample-for-sample');
+    if (!inv.levels.slice(0, Math.round(2.5 / DT) + 1).every(v => v === 200))
+      fail(fig, 'inventory holds exactly at 200 until the demand step at t=2.5');
+    if (goalRefs(system).length !== 0)
+      fail(fig, 'formula faucets register no goal rules');
+    measured.set(fig, inv.levels);
+  }
+  // figure 32 (the book's delays): a dip as sales outrun the pipeline, then
+  // GROWING oscillation — peaks climbing the book's ~248/265/290 ladder
+  // about 21 days apart, troughs deepening in step.
+  const L32 = measured.get('figure 32');
+  const dip32 = win(L32, 2.5, 3.8, Math.min);
+  if (!(dip32 > 185 && dip32 < 192)) fail('figure 32', `first dip should bottom near 188, got ${dip32}`);
+  const p1 = win(L32, 3.8, 5, Math.max), p2 = win(L32, 5.5, 7, Math.max), p3 = win(L32, 7.5, 9, Math.max);
+  if (!(p1 > 240 && p1 < 252 && p2 > 250 && p2 < 262 && p3 > 262 && p3 < 275))
+    fail('figure 32', `peaks should climb the book's ladder, got ${p1}/${p2}/${p3}`);
+  if (!(p1 < p2 && p2 < p3)) fail('figure 32', 'the oscillation must grow — the delays sit past the stability margin');
+  const w1 = win(L32, 4.8, 5.8, Math.min), w2 = win(L32, 6.8, 7.8, Math.min), w3 = win(L32, 8.8, 9.8, Math.min);
+  if (!(w1 > w2 && w2 > w3)) fail('figure 32', 'troughs must deepen as the oscillation grows');
+  // figure 35: shortening the response delay makes it WORSE — the book's
+  // counterintuitive peaks past 380 with troughs cut toward 120.
+  const L35 = measured.get('figure 35');
+  if (!(win(L35, 5, 7, Math.max) > 370 && win(L35, 7.5, 9, Math.max) > 385))
+    fail('figure 35', `reacting faster must blow the peaks past 380, got ${win(L35, 5, 7, Math.max)}/${win(L35, 7.5, 9, Math.max)}`);
+  if (!(win(L35, 4.5, 5.5, Math.min) < 140)) fail('figure 35', 'and cut the troughs deeper');
+  if (win(L35, 0, 10, Math.min) < 0) fail('figure 35', 'levels stay nonnegative throughout');
+  // figure 36: lengthening it damps the oscillation onto the new target —
+  // the pasted chart's one shallow dip (~188 bottoming near day 32), one
+  // overshoot (~227 near day 47), then flat on 220.
+  const L36 = measured.get('figure 36');
+  const dip36 = win(L36, 2.5, 4.5, Math.min);
+  if (!(dip36 > 184 && dip36 < 192)) fail('figure 36', `the single dip bottoms near 188, got ${dip36}`);
+  const over = win(L36, 4, 5.5, Math.max);
+  if (!(over > 224 && over < 230)) fail('figure 36', `slower response overshoots only to ~227, got ${over}`);
+  if (!(win(L36, 7, 10, Math.max) - win(L36, 7, 10, Math.min) < 2))
+    fail('figure 36', 'the oscillation must be damped away by the last third');
+  const end36 = L36[L36.length - 1];
+  if (!(end36 > 219 && end36 < 221)) fail('figure 36', `must settle on the new 220 equilibrium, got ${end36}`);
+  // figure 33: the flow view of the base run — each delay's input against
+  // its output. The pipeline is EXACT (deliveries echoes orders ten samples
+  // later, clamped at the tap, primed at the 200 equilibrium); perceived
+  // sales lags the sales step exponentially (~63% closed in one delay).
+  const system32 = sys(car('0.3'));
+  const flows = flowSeries(system32);
+  if (flows.map(f => `${f.label}${f.dashed ? '~' : ''}`).join() !== 'deliveries~,sales,orders to factory,perceived sales~')
+    fail('figure 33', `flow series should be the two call pairs in id order, got ${flows.map(f => `${f.label}${f.dashed ? '~' : ''}`)}`);
+  const fOf = (label) => flows.find(f => f.label === label);
+  const orders = fOf('orders to factory'), deliveries = fOf('deliveries');
+  const sales = fOf('sales'), perceived = fOf('perceived sales');
+  if (!deliveries.values.every((v, i) => v === (i < 10 ? 200 : Math.max(0, orders.values[i - 10]))))
+    fail('figure 33', 'deliveries must be orders shifted exactly ten samples (primed at 200)');
+  if (!sales.values.every((v, i) => v === Math.max(0, demandFn(i * DT))))
+    fail('figure 33', 'sales must track customer demand sample-for-sample');
+  if (!(at(perceived.values, 2.5) === 200
+        && at(perceived.values, 3) > 210 && at(perceived.values, 3) < 216
+        && at(perceived.values, 4) > 218 && at(perceived.values, 4) < 220))
+    fail('figure 33', `perceived sales must lag the step exponentially, got ${at(perceived.values, 3)} at t=3`);
+  if (sales.values.length !== L32.length)
+    fail('figure 33', 'flow series align with the stock series sample count');
+  if (!hasDelays(system32))
+    fail('figure 33', 'the dealership has delays for the chart toggle to unfold');
+}
+
+// The showcase buttons (ui/example.ts, not book figures): pin each one's
+// headline behavior — the shape the button exists to show — without a full
+// float mirror.
+{
+  // epidemic: the nonlinear rate law sweeps the population along crossing
+  // S-curves; one faucet moves people, so the two stocks conserve exactly.
+  const s = simulate(sys(`[susceptible: 990] =>infection [infected: 10]
+infection: (0.001 susceptible * infected)`));
+  const inf = s.find(x => x.label === 'infected'), sus = s.find(x => x.label === 'susceptible');
+  if (!(last(inf) > 990 && last(sus) < 10))
+    fail('epidemic', `should sweep the population, got ${last(inf)} infected`);
+  if (!inf.levels.every((v, i) => Math.abs(v + sus.levels[i] - 1000) < 1e-9))
+    fail('epidemic', 'susceptible + infected must conserve the 1000 throughout');
+  if (!inf.levels.every((v, i) => i === 0 || v >= inf.levels[i - 1]))
+    fail('epidemic', 'infections only grow');
+}
+{
+  // caffeine: two @ pulses against a proportional decay — nothing before
+  // the first shot, a visible sag between shots, and the afternoon shot
+  // stacking well above the morning peak.
+  const c = simulate(sys(`| =>espresso: 0 @1: 240 @1.5: 0 @6: 240 @6.5: 0 [caffeine in blood: 0] =>metabolism |
+metabolism: (0.14 caffeine in blood)`))[0];
+  const at = (t) => c.levels[Math.round(t / DT)];
+  if (at(1) !== 0) fail('caffeine', 'nothing in the blood before the first shot');
+  const peak1 = Math.max(...c.levels.slice(0, Math.round(5 / DT)));
+  const peak2 = Math.max(...c.levels);
+  if (!(peak1 > 100 && peak1 < 120)) fail('caffeine', `morning peak ~108, got ${peak1}`);
+  if (!(peak2 > peak1 + 50)) fail('caffeine', 'the afternoon shot stacks on the morning residue');
+  if (!(at(5.9) < peak1 * 0.65)) fail('caffeine', 'decay sags visibly between shots');
+}
+{
+  // boom & bust: breeding on price(t - 2) closes a loop through the
+  // pipeline shift, so the level orbits its 400/3 equilibrium instead of
+  // settling — repeated crossings are the oscillation.
+  const system = sys(`| =>breeding [pigs at market: 90] =>sales |
+breeding: (price(t - 2))
+price: (200 - pigs at market)
+sales: (0.5 pigs at market)`);
+  if (!hasDelays(system)) fail('boom & bust', 'the shift must register (the flows toggle appears)');
+  const p = simulate(system)[0];
+  const eq = 400 / 3;
+  let crossings = 0;
+  for (let i = 1; i < p.levels.length; i++)
+    if ((p.levels[i] - eq) * (p.levels[i - 1] - eq) < 0) crossings++;
+  if (crossings < 3)
+    fail('boom & bust', `should cross its equilibrium repeatedly, got ${crossings} crossings`);
+}
+{
+  // skydiver: speed^2 drag flattens speed onto the √500 terminal velocity;
+  // altitude drains at the other band's speed and the outflow ration parks
+  // it at exactly 0 on landing, just before the horizon.
+  const s = simulate(sys(`| =>gravity [speed: 0] =>air drag |
+gravity: 10
+air drag: (0.02 speed^2)
+[altitude: 180] =>falling |
+falling: (speed)`));
+  const v = s.find(x => x.label === 'speed'), alt = s.find(x => x.label === 'altitude');
+  if (!(Math.abs(last(v) - Math.sqrt(500)) < 0.1))
+    fail('skydiver', `terminal velocity should be √500, got ${last(v)}`);
+  if (!v.levels.every((x, i) => i === 0 || x >= v.levels[i - 1]))
+    fail('skydiver', 'speed only rises toward terminal');
+  if (last(alt) !== 0) fail('skydiver', `must land at exactly 0, got ${last(alt)}`);
+  if (!(alt.levels[Math.round(9.5 / DT)] > 0)) fail('skydiver', 'still airborne at t=9.5');
+  if (!alt.levels.every(x => x >= 0)) fail('skydiver', 'altitude never goes underground');
 }
 
 console.log(failures ? `${failures} FAILURE(S)` : 'SIMULATE CHECKS PASSED');

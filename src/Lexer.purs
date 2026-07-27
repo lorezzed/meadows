@@ -65,6 +65,7 @@ data Token
   | TokColon
   | TokAt
   | TokTilde
+  | TokCaret
   | TokPlus
   | TokMinus
   | TokStar
@@ -186,6 +187,7 @@ token
   <|> (TokColon <$ char ':')
   <|> (TokAt <$ char '@')
   <|> (TokTilde <$ char '~')
+  <|> (TokCaret <$ char '^')
   <|> (TokPlus <$ char '+')
   <|> (TokStar <$ char '*')
   <|> (TokSlash <$ char '/')
@@ -243,6 +245,7 @@ describeToken TokRBracket = "']'"
 describeToken TokColon = "':'"
 describeToken TokAt = "'@'"
 describeToken TokTilde = "'~'"
+describeToken TokCaret = "'^'"
 describeToken TokPlus = "'+'"
 describeToken TokMinus = "'-'"
 describeToken TokStar = "'*'"

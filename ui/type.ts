@@ -1,10 +1,14 @@
 // A compiled formula from the JSON seam: numbers, node references (by id),
-// and binary arithmetic — the evaluator resolved names to ids and drew the
-// implied info arrows; the simulator evaluates the tree each step.
+// binary arithmetic, and time shifts — the evaluator resolved names to ids
+// and drew the implied info arrows; the simulator evaluates the tree each
+// step. A shift node (`x(t ~ T)` first-order lag, `x(t - T)` pipeline)
+// carries per-run state in the simulator, keyed by its owner and
+// position — it is not itself a node.
 export type Expr =
   | { kind: "num"; value: number }
   | { kind: "ref"; id: string }
-  | { kind: "+" | "-" | "*" | "/"; left: Expr; right: Expr };
+  | { kind: "+" | "-" | "*" | "/" | "^"; left: Expr; right: Expr }
+  | { kind: "smooth" | "delay"; input: Expr; time: Expr };
 
 type NodeBase = {
   type: string;

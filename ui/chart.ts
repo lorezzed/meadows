@@ -10,7 +10,7 @@
 // there in one tooltip — it only reads the already-rendered series, so the
 // render-once contract holds.
 import * as d3 from "d3";
-import { DT, T_END, scheduleFn, type GoalRef, type StockSeries } from "./simulate";
+import { DT, T_END, scheduleFn, type FlowSeries, type GoalRef, type StockSeries } from "./simulate";
 
 // Fixed-order categorical accents: the base palette for the ONE per-node
 // color assignment app.ts's update() builds for every view — stocks take
@@ -71,7 +71,7 @@ function dodgeLabels(desired: number[], lo: number, hi: number): number[] {
 }
 
 export type Chart = {
-  render(series: StockSeries[], colorOf: (id: string) => string, goals?: GoalRef[], tEnd?: number): void;
+  render(series: StockSeries[], colorOf: (id: string) => string, goals?: GoalRef[], tEnd?: number, flows?: FlowSeries[]): void;
   /** Clear to the value-less placeholder: axes only, nothing plotted. */
   empty(tEnd?: number): void;
 };
@@ -87,7 +87,10 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
     .attr('viewBox', `0 0 ${chartWidth} ${chartHeight}`);
 
   // Goal rules render under the series lines (a reference, never a subject).
+  // Flow lines (the figure-33 view: each delay's input and output) sit
+  // between — thinner than the stock lines they annotate, above the rules.
   const gGoals = svg.append("g");
+  const gFlows = svg.append("g");
   const gLines = svg.append("g");
   const gLabels = svg.append("g");
   const gxAxis = svg.append("g").attr("transform", `translate(0,${chartHeight - margin.bottom})`);
@@ -128,17 +131,19 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
   const gTipRows = gTipContent.append("g");
   const rowH = 15; // vertical rhythm of tooltip rows
 
-  // What the hover layer reads: the scales and series of the last render.
+  // What the hover layer reads: the scales and rows of the last render —
+  // the stock series plus any flow-view lines, one readout row each.
   // Null while the chart is hidden; hoverIdx is the shown sample or null.
+  type Row = { id: string; label: string; levels: number[] };
   let cur: {
-    series: StockSeries[];
+    rows: Row[];
     colorOf: (id: string) => string;
     x: d3.ScaleLinear<number, number>;
     y: d3.ScaleLinear<number, number>;
   } | null = null;
   let hoverIdx: number | null = null;
 
-  const maxIdx = () => (cur?.series[0]?.levels.length ?? 1) - 1;
+  const maxIdx = () => (cur?.rows[0]?.levels.length ?? 1) - 1;
   const clampIdx = (i: number) => Math.max(0, Math.min(maxIdx(), i));
 
   function hideHover(): void {
@@ -150,8 +155,8 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
   // user space) vertically follows the cursor; null (keyboard) parks the
   // tooltip at the top of the plot.
   function showAt(idx: number, pointerY: number | null): void {
-    if (!cur || cur.series.length === 0) return;
-    const { series, colorOf, x, y } = cur;
+    if (!cur || cur.rows.length === 0) return;
+    const { rows: series, colorOf, x, y } = cur;
     hoverIdx = idx;
     gHover.style("display", null);
 
@@ -161,7 +166,7 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
 
     // A marker on every line at the snapped time, ringed in surface white so
     // it reads against its own line.
-    gMarkers.selectAll<SVGCircleElement, StockSeries>("circle")
+    gMarkers.selectAll<SVGCircleElement, Row>("circle")
       .data(series, d => d.id)
       .join("circle")
       .attr("r", 3.5)
@@ -175,7 +180,7 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
     // (secondary), each row keyed by a short stroke of its line's color.
     // All text lands via .text() → textContent, never markup.
     tipHead.text(`t = ${fmt(t)}`);
-    const rows = gTipRows.selectAll<SVGGElement, StockSeries>("g")
+    const rows = gTipRows.selectAll<SVGGElement, Row>("g")
       .data(series, d => d.id)
       .join(enter => {
         const g = enter.append("g");
@@ -255,18 +260,25 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
     });
 
   // tEnd is the horizon the series were simulated over — the x-domain and
-  // every goal path/label extends exactly that far.
-  function render(series: StockSeries[], colorOf: (id: string) => string, goals: GoalRef[] = [], tEnd: number = T_END): void {
+  // every goal path/label extends exactly that far. `flows` is the optional
+  // figure-33 view: each delay's input (solid thin) and output (dashed
+  // thin) in the nodes' own accents, joining the domain, labels, and hover
+  // readout like any series.
+  function render(series: StockSeries[], colorOf: (id: string) => string, goals: GoalRef[] = [], tEnd: number = T_END, flows: FlowSeries[] = []): void {
     const x = d3.scaleLinear([0, tEnd], [margin.left, chartWidth - margin.right]);
     // The domain covers the goal rules too — every scheduled value of every
     // goal: a goal above every curve must not clip off the top, and figure
     // 19's outside temperature dips below zero, so the floor follows the
-    // goals down (stock levels themselves never go negative).
+    // goals down (stock levels themselves never go negative) — and, when
+    // the flow view is on, the flow lines' full range (an order backlog can
+    // dip below zero even though rates clamp).
     const goalValues = goals.flatMap(g => [g.value, ...(g.steps ?? []).map(s => s.value)]);
     const maxLevel = Math.max(
       d3.max(series, s => d3.max(s.levels)) ?? 0,
-      d3.max(goalValues) ?? 0);
-    const minLevel = Math.min(0, d3.min(goalValues) ?? 0);
+      d3.max(goalValues) ?? 0,
+      d3.max(flows, f => d3.max(f.values)) ?? 0);
+    const minLevel = Math.min(0, d3.min(goalValues) ?? 0,
+      d3.min(flows, f => d3.min(f.values)) ?? 0);
     // max(1, ·) keeps an all-zero model from collapsing the scale.
     const y = d3.scaleLinear([minLevel, Math.max(1, maxLevel)], [chartHeight - margin.bottom, margin.top]).nice();
 
@@ -286,6 +298,18 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
       .attr("stroke", d => colorOf(d.id))
       .attr("stroke-width", 2)
       .attr("d", d => line(d.levels));
+
+    // Flow-view lines: thin, the call's OUTPUT dashed against its solid
+    // input (figure 33's convention), each in its node's accent. The dash
+    // is shorter than the goals' so the two dashed families stay distinct.
+    gFlows.selectAll<SVGPathElement, FlowSeries>("path")
+      .data(flows, d => d.id)
+      .join("path")
+      .attr("fill", "none")
+      .attr("stroke", d => colorOf(d.id))
+      .attr("stroke-width", 1.25)
+      .attr("stroke-dasharray", d => (d.dashed ? "5 3" : null))
+      .attr("d", d => line(d.values));
 
     // One dashed rule per goal constant (the book's "room temperature = 18°C"
     // line), full plot width, in its goal dot's accent — the same color the
@@ -325,12 +349,14 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
       .attr("stroke-dasharray", "7 5")
       .attr("d", d => (d.smooth && d.steps?.length ? smoothLine : stepLine)(goalPts(d)));
 
-    // Right-margin labels — series ends and goal rules together — dodge
-    // vertically so converging lines stay individually named. A scheduled
-    // goal's label anchors to its final value, where its path ends.
+    // Right-margin labels — series ends, goal rules, and flow lines
+    // together — dodge vertically so converging lines stay individually
+    // named. A scheduled goal's label anchors to its final value, where its
+    // path ends.
     const placed = dodgeLabels(
       [...series.map(s => y(s.levels[s.levels.length - 1] ?? 0)),
-       ...goals.map(g => y(goalEndValue(g)))],
+       ...goals.map(g => y(goalEndValue(g))),
+       ...flows.map(f => y(f.values[f.values.length - 1] ?? 0))],
       margin.top, chartHeight - margin.bottom);
 
     gLabels.selectAll<SVGTextElement, StockSeries>("text")
@@ -351,10 +377,22 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
       .attr("fill", d => colorOf(d.id))
       .style("font", `11px ${font}`)
       .text(d => d.label);
+    gFlows.selectAll<SVGTextElement, FlowSeries>("text")
+      .data(flows, d => d.id)
+      .join("text")
+      .attr("x", x(tEnd) + 8)
+      .attr("y", (_, i) => placed[series.length + goals.length + i] ?? 0)
+      .attr("dy", "0.32em")
+      .attr("fill", d => colorOf(d.id))
+      .style("font", `10px ${font}`)
+      .text(d => d.label);
 
-    // Hand the fresh scales/series to the hover layer and drop any readout
+    // Hand the fresh scales/rows to the hover layer and drop any readout
     // from the previous model (its sample index no longer means anything).
-    cur = { series, colorOf, x, y };
+    cur = {
+      rows: [...series, ...flows.map(f => ({ id: f.id, label: f.label, levels: f.values }))],
+      colorOf, x, y,
+    };
     hideHover();
   }
 
@@ -373,6 +411,8 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
     gLines.selectAll("path").remove();
     gGoals.selectAll("path").remove();
     gGoals.selectAll("text").remove();
+    gFlows.selectAll("path").remove();
+    gFlows.selectAll("text").remove();
     gLabels.selectAll("text").remove();
     cur = null;
     hideHover();

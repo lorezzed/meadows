@@ -55,7 +55,13 @@ expect('newline separates', 'a\nb', ['a', 'b']);
 expect('stock annotation', '[tub: 50]', ['tub']);
 expect('trailing space stays plain', 'sales |', ['sales']);
 expect('schedule keeps only the name', 'inflow: 0 @5: 5', ['inflow']);
+expect('a smooth schedule stays plain too', 'out: 10 ~2: -5', ['out']);
 expect('formula refs are names', 'output: (capital / 3)', ['output', 'capital']);
+expect('the time variable stays plain', 'a: (x(t ~ 1))', ['a', 'x']);
+expect('a shift time name still colors', 'a: (x(t - response delay))', ['a', 'x', 'response delay']);
+expect('t away from a paren is a name', 't -> b', ['t', 'b']);
+expect('the shift reading tolerates a space before t', 'a: (x( t ~ 1))', ['a', 'x']);
+expect('smooth and delay are ordinary names', 'a: (smooth * delay)', ['a', 'smooth', 'delay']);
 
 // The raw slice is preserved even though the NAME normalizes its spaces.
 {

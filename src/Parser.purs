@@ -2,6 +2,8 @@ module Parser
   ( Annot(..)
   , Formula(..)
   , FormOp(..)
+  , FnKind(..)
+  , fnName
   , opString
   , Tree(..)
   , Id
@@ -35,27 +37,48 @@ type Step = { at :: Number, value :: Number }
 -- | uses one marker: the first step decides, and a later step with the
 -- | other marker is a positioned error.
 type Sched = { initial :: Number, steps :: Array Step, smooth :: Boolean }
--- | Formula operators, usual precedence (`*`/`/` bind tighter than `+`/`-`).
-data FormOp = FAdd | FSub | FMul | FDiv
+-- | Formula operators, usual precedence (`^` binds tightest, then `*`/`/`,
+-- | then `+`/`-`).
+data FormOp = FAdd | FSub | FMul | FDiv | FPow
 derive instance eqFormOp :: Eq FormOp
 opString :: FormOp -> String
 opString FAdd = "+"
 opString FSub = "-"
 opString FMul = "*"
 opString FDiv = "/"
+opString FPow = "^"
+-- | The two time-shifted readings a formula may take of another signal
+-- | (the book's perception and delivery delays), written as function
+-- | notation over the reserved time variable `t`: `x(t - T)` is the value
+-- | x had exactly T ago (a pipeline delay), and `x(t ~ T)` the value x had
+-- | *about* T ago -- a first-order exponential smoothing whose mean lag is
+-- | T. A shift opens with the exact token pair `(t`, so `x(a + b)` stays
+-- | juxtaposed multiplication; `smooth` and `delay` are ordinary names.
+data FnKind = FnSmooth | FnDelay
+derive instance eqFnKind :: Eq FnKind
+fnName :: FnKind -> String
+fnName FnSmooth = "smooth"
+fnName FnDelay = "delay"
+shiftMark :: FnKind -> String
+shiftMark FnSmooth = "~"
+shiftMark FnDelay = "-"
 -- | A value formula (`investment: (output * fraction of output invested)`):
 -- | arithmetic over numbers and named nodes. Each reference mints a parser
 -- | id like any other name mention, so the evaluator resolves it through
--- | the registry -- identity, not spelling.
+-- | the registry -- identity, not spelling. A time shift mints nothing of
+-- | its own: it creates no graph node, and the simulator keys its state by
+-- | the owning node and position instead.
 data Formula
   = FNum Number
   | FRef Id String
   | FBin FormOp Formula Formula
+  | FCall FnKind Formula Formula
 derive instance eqFormula :: Eq Formula
 instance showFormula :: Show Formula where
   show (FNum n) = show n
   show (FRef i s) = s <> "#" <> show i
   show (FBin op l r) = "(" <> show l <> " " <> opString op <> " " <> show r <> ")"
+  show (FCall k input time) = show input <> "(t " <> shiftMark k <> " " <> show time <> ")"
 -- | A node's annotation: a schedule (a constant, `@` steps, or a `~` curve)
 -- | or a parenthesized formula.
 data Annot = SchedAnnot Sched | FormulaAnnot Formula
@@ -243,50 +266,122 @@ fAddTail left = defer \_ -> choice
     r <- fMultTail (FNum n)
     fAddTail (FBin FAdd left r)
 
--- | multiplicative := factor (('*' | '/') factor | juxtaposed factor)*.
+-- | multiplicative := power (('*' | '/') power | juxtaposed power)*.
 -- | Juxtaposition is implicit multiplication and only a name or a '('
--- | group may juxtapose (`2x`, `2(a + b)`); a juxtaposed positive number
--- | stays an error, and negative ones belong to the additive level. Note
--- | the lexer joins space-separated words into ONE multi-word name, so
--- | `output fraction` is a single reference -- write `output * fraction`
--- | to multiply two names.
+-- | group may open a juxtaposed factor (`2x`, `2(a + b)`, `2x^2` is
+-- | 2 * (x^2)); a juxtaposed positive number stays an error, and negative
+-- | ones belong to the additive level. Note the lexer joins
+-- | space-separated words into ONE multi-word name, so `output fraction`
+-- | is a single reference -- write `output * fraction` to multiply two
+-- | names.
 fMult :: P Formula
 fMult = defer \_ -> do
-  first <- fFactor
+  first <- fPow
   fMultTail first
 
 fMultTail :: Formula -> P Formula
 fMultTail left = defer \_ -> choice
-  [ tk TokStar *> (fFactor >>= \r -> fMultTail (FBin FMul left r))
-  , tk TokSlash *> (fFactor >>= \r -> fMultTail (FBin FDiv left r))
+  [ tk TokStar *> (fPow >>= \r -> fMultTail (FBin FMul left r))
+  , tk TokSlash *> (fPow >>= \r -> fMultTail (FBin FDiv left r))
   , juxt
   , pure left
   ]
   where
   juxt = do
-    r <- choice [ fRef, fParen ]
+    base <- choice [ fAtom, fParen ]
+    r <- powTail base
     fMultTail (FBin FMul left r)
 
--- | factor := NUMBER | NAME | '(' formula ')'
-fFactor :: P Formula
-fFactor = defer \_ -> choice
-  [ FNum <$> numberTok
-  , fRef
-  , fParen
-  ] <?> "a number, a name, or '(' in the formula"
+-- | power := factor ('^' power)? -- right-associative (`x^2^3` is
+-- | x^(2^3)) and tighter than multiplication and juxtaposition (`x^2y` is
+-- | (x^2) * y, the paper convention).
+fPow :: P Formula
+fPow = defer \_ -> do
+  base <- fFactor
+  powTail base
 
-fRef :: P Formula
-fRef = do
+powTail :: Formula -> P Formula
+powTail base = defer \_ -> choice
+  [ tk TokCaret *> (FBin FPow base <$> fPow)
+  , pure base
+  ]
+
+-- | factor := NUMBER | atom | '(' formula ')'
+-- | The `t` guard runs before the labeled choice so its message survives
+-- | the `<?>` (which would otherwise mask any non-consuming failure).
+fFactor :: P Formula
+fFactor = defer \_ -> guardNotT *> (choice
+  [ FNum <$> numberTok
+  , fAtom
+  , fParen
+  ] <?> "a number, a name, or '(' in the formula")
+
+-- | atom := NAME shift*
+-- | A reference to another node by name, minting a parser id as every name
+-- | mention does -- except the single word `t`, the reserved time
+-- | variable, which may only open a time shift (see fShiftTail) and is
+-- | rejected here with a positioned error before anything is consumed.
+fAtom :: P Formula
+fAtom = defer \_ -> do
+  guardNotT
   name <- identTok
   i <- fresh
-  pure (FRef i name)
+  fShiftTail (FRef i name)
+
+-- | Inside a formula the name `t` is the time variable, not a reference --
+-- | a node named `t` is simply not reachable from formulas.
+guardNotT :: P Unit
+guardNotT = do
+  ParseState input _ _ <- getParserT
+  case input of
+    { tok: TokIdent "t", pos } : _ ->
+      failWithPosition "'t' is the time variable -- it only opens a time shift like x(t - 1)" pos
+    _ -> pure unit
+
+-- | shift := '(' 't' ('-' time | '~' time | NEGNUMBER)? ')'
+-- | Postfix time shifts, chaining left to right: after a name or a paren
+-- | group, the exact token pair `(t` opens a shift -- `x(t - T)` reads the
+-- | value x had T ago (FnDelay), `x(t ~ T)` the value x had *about* T ago
+-- | (FnSmooth), and `x(t)` is just x. Any other '(' is left alone (it is
+-- | juxtaposed multiplication), decided by `peekShift`'s pure two-token
+-- | peek, so the grammar stays `try`-free. The time is one multiplicative
+-- | term: `x(t - 3 - d)` is a positioned error -- parenthesize the
+-- | compound time, `x(t - (3 + d))`. A signed literal folds exactly like
+-- | the additive level's negative juxtaposition: `x(t -3)` is `x(t - 3)`.
+-- | A shift mints no id of its own (see FCall).
+fShiftTail :: Formula -> P Formula
+fShiftTail base = defer \_ -> peekShift >>=
+  if _ then do
+    tk TokLParen
+    _ <- identTok -- the peeked `t`
+    shifted <- choice
+      [ tk TokTilde *> (FCall FnSmooth base <$> fMult)
+      , tk TokMinus *> (FCall FnDelay base <$> fMult)
+      , negLiteral <#> \n -> FCall FnDelay base (FNum (negate n))
+      , pure base -- `x(t)`: the signal right now
+      ]
+    tk TokRParen <?> "a closing ')' after the time shift (parenthesize a compound time: x(t - (3 + d)))"
+    fShiftTail shifted
+  else pure base
+  where
+  negLiteral = satisfyMap case _ of
+    TokNumber n | n < 0.0 -> Just n
+    _ -> Nothing
+
+-- | Peek: does a time shift `(t` start here? Consumes nothing either way.
+peekShift :: P Boolean
+peekShift = do
+  ParseState input _ _ <- getParserT
+  pure case input of
+    { tok: TokLParen } : { tok: TokIdent "t" } : _ -> true
+    _ -> false
 
 fParen :: P Formula
 fParen = defer \_ -> do
   tk TokLParen
   f <- formula
   tk TokRParen <?> "a closing ')' in the formula"
-  pure f
+  fShiftTail f
 -- | program := sep? (statement sepEndBy sep) eof
 -- | The lexer collapses every newline run into a single TokSep, so one
 -- | optional leading separator plus sepEndBy covers blank leading, interior,
@@ -386,11 +481,11 @@ cloudTerm = do
   i <- fresh
   pure (CloudExpr i)
 -- | A bare name takes a full annotation, exactly like a faucet: `: N` is
--- | an auxiliary constant (`room temperature: 18`), `@`/`~` steps make it a
--- | driving variable (figure 19's cold day), and `: (expr)` a computed
--- | auxiliary (`output: (capital / 3)`). annotTail consumes nothing when no
--- | ':' follows, and the id still mints after the whole term, so value-less
--- | minting order is untouched.
+-- | an auxiliary constant (`room temperature: 18`), `@`/`~` steps make it
+-- | a driving variable (figure 19's cold day), and `: (expr)` a computed
+-- | auxiliary (`output: (capital / 3)`). annotTail consumes nothing when
+-- | no ':' follows, and the id still mints after the whole term, so
+-- | value-less minting order is untouched.
 identTerm :: P Tree
 identTerm = do
   name <- identTok
