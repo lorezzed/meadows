@@ -347,6 +347,193 @@ response delay: 0.6
 delivery delay: 0.5`
     },
     {
+        // The oil economy: renewable capital constrained by a NONRENEWABLE
+        // resource — figure 42's capital band, but the resource band has no
+        // regeneration (extraction drains to a cloud, figure 2's shape).
+        // Structure only, value-less; extraction -> profit runs an info
+        // arrow off a faucet (the figure 29 precedent).
+        label: 'figure 37',
+        content: `| =>investment [capital] =>depreciation |
+[resource] =>extraction |
+capital -> growth goal -> investment
+R(investment <- profit <- capital)
+B(depreciation <- capital)
+capital lifetime -> depreciation
+B(profit <- capital -> extraction)
+extraction -> profit
+profit <- price <- yield per unit capital -> extraction
+resource -> yield per unit capital`
+    },
+    {
+        // Figure 38's depletion story on the figure-37 structure (1 unit =
+        // 10 years): capital compounds ~5%/yr while profit covers the 10%
+        // growth goal, peaks near year 55 as the resource thins, then
+        // decays at the depreciation rate; the resource S-curves 1000 -> 0.
+        // The book's investment = min(profit, goal) is a hard min the DSL
+        // lacks — the cube-norm soft-min profit*goal/((profit^3+goal^3)^(1/3))
+        // holds the goal while profit is ample and releases to profit as it
+        // collapses. Price stays constant in this scenario, and profit reads
+        // yield per unit capital in place of the extraction faucet (a
+        // formula cannot read a faucet's rate).
+        label: 'figure 37 & 38',
+        content: `| =>investment [capital: 5] =>depreciation |
+[resource: 1000] =>extraction |
+R(investment <- profit <- capital)
+B(depreciation <- capital)
+B(profit <- capital -> extraction)
+investment: (profit * growth goal / ((profit^3 + growth goal^3)^(1 / 3)))
+growth goal: (capital)
+depreciation: (capital / capital lifetime)
+capital lifetime: 2
+extraction: (14 capital * yield per unit capital)
+profit: (4 price * capital * yield per unit capital)
+price: 1
+yield per unit capital: (resource / 1000)`
+    },
+    {
+        // Figure 39's endowment comparison: the 37 & 38 economy three times
+        // over with the resource at 1000 / 2000 / 4000 — each copy's yield
+        // reads its OWN endowment (resource / R0), so the three runs start
+        // identically and each doubling buys only ~14 years, peaking about
+        // twice as high and crashing harder. Every constant is per-copy
+        // (the figures 12 & 13 / 25 / 27 & 28 convention) so the three
+        // subsystems stay disconnected and settle as separate clusters.
+        // The book plots extraction (a faucet, so no chart series here);
+        // the capital humps and resource S-curves carry the same lesson.
+        // Raise t = to ~12 to watch the quadrupled crash complete.
+        label: 'figure 37 & 39',
+        content: `| =>investment base [capital base: 5] =>depreciation base |
+[resource base: 1000] =>extraction base |
+R(investment base <- profit base <- capital base)
+B(depreciation base <- capital base)
+B(profit base <- capital base -> extraction base)
+investment base: (profit base * growth goal base / ((profit base^3 + growth goal base^3)^(1 / 3)))
+growth goal base: (capital base)
+depreciation base: (capital base / capital lifetime base)
+capital lifetime base: 2
+extraction base: (14 capital base * yield per unit capital base)
+profit base: (4 price base * capital base * yield per unit capital base)
+price base: 1
+yield per unit capital base: (resource base / 1000)
+| =>investment doubled [capital doubled: 5] =>depreciation doubled |
+[resource doubled: 2000] =>extraction doubled |
+R(investment doubled <- profit doubled <- capital doubled)
+B(depreciation doubled <- capital doubled)
+B(profit doubled <- capital doubled -> extraction doubled)
+investment doubled: (profit doubled * growth goal doubled / ((profit doubled^3 + growth goal doubled^3)^(1 / 3)))
+growth goal doubled: (capital doubled)
+depreciation doubled: (capital doubled / capital lifetime doubled)
+capital lifetime doubled: 2
+extraction doubled: (14 capital doubled * yield per unit capital doubled)
+profit doubled: (4 price doubled * capital doubled * yield per unit capital doubled)
+price doubled: 1
+yield per unit capital doubled: (resource doubled / 2000)
+| =>investment quadrupled [capital quadrupled: 5] =>depreciation quadrupled |
+[resource quadrupled: 4000] =>extraction quadrupled |
+R(investment quadrupled <- profit quadrupled <- capital quadrupled)
+B(depreciation quadrupled <- capital quadrupled)
+B(profit quadrupled <- capital quadrupled -> extraction quadrupled)
+investment quadrupled: (profit quadrupled * growth goal quadrupled / ((profit quadrupled^3 + growth goal quadrupled^3)^(1 / 3)))
+growth goal quadrupled: (capital quadrupled)
+depreciation quadrupled: (capital quadrupled / capital lifetime quadrupled)
+capital lifetime quadrupled: 2
+extraction quadrupled: (14 capital quadrupled * yield per unit capital quadrupled)
+profit quadrupled: (4 price quadrupled * capital quadrupled * yield per unit capital quadrupled)
+price quadrupled: 1
+yield per unit capital quadrupled: (resource quadrupled / 4000)`
+    },
+    {
+        // Figure 40's growth-goal comparison: the 37 & 38 economy four
+        // times over, differing only in the desired capital growth — net
+        // 7 / 5 / 3 / 1 %/yr = gross goal coefficients 1.2 / 1 / 0.8 / 0.6
+        // over the 5%/yr depreciation. The faster the growth, the sooner
+        // and harder the crash (extraction peaks ~year 33 / 39 / 48); at
+        // 1% the economy is still alive at year 100 with a third of the
+        // resource left. Fully per-copy constants keep the four
+        // subsystems disconnected. The book plots extraction (a faucet,
+        // no series); the capital humps and resource S-curves carry the
+        // same lesson.
+        label: 'figure 37 & 40',
+        content: `| =>investment at seven [capital at seven: 5] =>depreciation at seven |
+[resource at seven: 1000] =>extraction at seven |
+R(investment at seven <- profit at seven <- capital at seven)
+B(depreciation at seven <- capital at seven)
+B(profit at seven <- capital at seven -> extraction at seven)
+investment at seven: (profit at seven * growth goal at seven / ((profit at seven^3 + growth goal at seven^3)^(1 / 3)))
+growth goal at seven: (1.2 capital at seven)
+depreciation at seven: (capital at seven / capital lifetime at seven)
+capital lifetime at seven: 2
+extraction at seven: (14 capital at seven * yield per unit capital at seven)
+profit at seven: (4 price at seven * capital at seven * yield per unit capital at seven)
+price at seven: 1
+yield per unit capital at seven: (resource at seven / 1000)
+| =>investment at five [capital at five: 5] =>depreciation at five |
+[resource at five: 1000] =>extraction at five |
+R(investment at five <- profit at five <- capital at five)
+B(depreciation at five <- capital at five)
+B(profit at five <- capital at five -> extraction at five)
+investment at five: (profit at five * growth goal at five / ((profit at five^3 + growth goal at five^3)^(1 / 3)))
+growth goal at five: (capital at five)
+depreciation at five: (capital at five / capital lifetime at five)
+capital lifetime at five: 2
+extraction at five: (14 capital at five * yield per unit capital at five)
+profit at five: (4 price at five * capital at five * yield per unit capital at five)
+price at five: 1
+yield per unit capital at five: (resource at five / 1000)
+| =>investment at three [capital at three: 5] =>depreciation at three |
+[resource at three: 1000] =>extraction at three |
+R(investment at three <- profit at three <- capital at three)
+B(depreciation at three <- capital at three)
+B(profit at three <- capital at three -> extraction at three)
+investment at three: (profit at three * growth goal at three / ((profit at three^3 + growth goal at three^3)^(1 / 3)))
+growth goal at three: (0.8 capital at three)
+depreciation at three: (capital at three / capital lifetime at three)
+capital lifetime at three: 2
+extraction at three: (14 capital at three * yield per unit capital at three)
+profit at three: (4 price at three * capital at three * yield per unit capital at three)
+price at three: 1
+yield per unit capital at three: (resource at three / 1000)
+| =>investment at one [capital at one: 5] =>depreciation at one |
+[resource at one: 1000] =>extraction at one |
+R(investment at one <- profit at one <- capital at one)
+B(depreciation at one <- capital at one)
+B(profit at one <- capital at one -> extraction at one)
+investment at one: (profit at one * growth goal at one / ((profit at one^3 + growth goal at one^3)^(1 / 3)))
+growth goal at one: (0.6 capital at one)
+depreciation at one: (capital at one / capital lifetime at one)
+capital lifetime at one: 2
+extraction at one: (14 capital at one * yield per unit capital at one)
+profit at one: (4 price at one * capital at one * yield per unit capital at one)
+price at one: 1
+yield per unit capital at one: (resource at one / 1000)`
+    },
+    {
+        // Figure 41's scarcity-pricing run: the 37 & 38 economy, but price
+        // is no longer constant — it starts at 1 and saturates toward 6 as
+        // the ore thins (price: (6 / (1 + 5 yield^2))), making the
+        // structure figure's yield -> price arrow LIVE, and profit nets a
+        // 0.5 capital operating cost so it crosses zero after the peak
+        // (investment shuts off and capital decays at the full
+        // depreciation rate). Result: the same extraction curve as 38
+        // (~21/yr peaking near year 40 — the oil is what it is) but
+        // capital keeps growing a decade longer and peaks near 102 at
+        // year ~65, twice the base run — more rigs chasing less oil.
+        label: 'figure 37 & 41',
+        content: `| =>investment [capital: 5] =>depreciation |
+[resource: 1000] =>extraction |
+R(investment <- profit <- capital)
+B(depreciation <- capital)
+B(profit <- capital -> extraction)
+investment: (profit * growth goal / ((profit^3 + growth goal^3)^(1 / 3)))
+growth goal: (capital)
+depreciation: (capital / capital lifetime)
+capital lifetime: 2
+extraction: (14 capital * yield per unit capital)
+profit: (4 price * capital * yield per unit capital - 0.5 capital)
+price: (6 / (1 + 5 yield per unit capital^2))
+yield per unit capital: (resource / 1000)`
+    },
+    {
         label: 'figure 42',
         content: `| =>investment [capital] =>depreciation |
 | =>regeneration [resource] =>harvest |
@@ -355,9 +542,169 @@ R(investment <- profit <- capital)
 B(depreciation <- capital)
 capital lifetime -> depreciation
 B(profit <- capital -> harvest)
+harvest -> profit
 profit <- price <- yield per unit capital -> harvest
 resource -> yield per unit capital
 regeneration <- regeneration rate <- resource -> regeneration`
+    },
+    {
+        // Figure 43, all three panels in one button (1 unit = 15 years,
+        // the 150-year axis): the renewable sibling of the oil economy,
+        // ringing once before it settles the way the book's panels do.
+        // Three pieces make the dip: growth goal 1.5 capital is the
+        // book's 5%/yr desired growth (net of the 0.75/unit depreciation
+        // drain); profit is income read off the catch a season late
+        // (price * harvest(t ~ 0.1), minus a 1.75/unit operating cost of
+        // capital) — reading the FAUCET through the shift, figure 31's
+        // perceiving-a-flow form; and per-fish regeneration is a
+        // depensation hump (112 (x(1 - x))^2, x = resource/1000: crowded
+        // fish and scarce fish both breed poorly), so total regeneration
+        // peaks at R = 600, ABOVE the settle point, and its +7/unit
+        // slope at equilibrium barely damps the loop. The button opens
+        // preset to the flows view its profit lag unlocks, showing every
+        // panel at once. The solid harvest rate is panel A: riding the
+        // goal-blind ramp over the hump to ~4070 (~272/yr — per-unit
+        // rates are 15x the book's per-year axis) at year ~110, dipping
+        // to ~3364 (~224/yr), settling at ~3500 (~233/yr). Capital's
+        // blue line is panel B: an S-curve cresting ~1450 before easing
+        // onto ~1398. The resource's green line is panel C: sliding to
+        // ~485 and recovering onto the flat 500, where regeneration
+        // balances the catch and profit meets depreciation. The dashed
+        // profit line is the lagged income read whose overshoot causes
+        // the dip. Figure 44 swaps in the technology yield curve and
+        // never settles — this one does.
+        label: 'figure 42 & 43',
+        flows: true,
+        content: `| =>investment [capital: 5] =>depreciation |
+| =>regeneration [resource: 1000] =>harvest |
+R(investment <- profit <- capital)
+B(depreciation <- capital)
+B(profit <- capital -> harvest)
+investment: (profit * growth goal / ((profit^6 + growth goal^6)^(1 / 6)))
+growth goal: (1.5 capital)
+depreciation: (capital / capital lifetime)
+capital lifetime: (4 / 3)
+harvest: (10 capital * yield per unit capital)
+profit: (price * harvest(t ~ 0.1) - 1.75 capital)
+price: 1
+yield per unit capital: ((resource / 1000)^2)
+regeneration: (resource * regeneration rate)
+regeneration rate: (112 (resource / 1000 * (1 - resource / 1000))^2)`
+    },
+    {
+        // Figure 44, all three panels in one button: the same fishery as
+        // 42 & 43 with ONE line changed — better fishing technology. The
+        // squared yield curve becomes a saturating one (the Hill form
+        // 1.27 x^2.8 / (x^2.8 + 0.27), x = resource/1000, still exactly
+        // 1 at carrying capacity): sonar-era boats keep catching near
+        // full efficiency down past half density, then the curve cliffs.
+        // Efficiency no longer signals depletion, so the bind
+        // (10 y = 2.5) slides from R = 500 down the regeneration hump's
+        // unstable left side to R ~380 — and there the season-late
+        // profit read overpowers what little damping is left: instead of
+        // ringing once and settling, the fishery orbits its
+        // never-reached equilibrium forever, period ~21 years. The
+        // button opens preset to the flows view its profit lag unlocks,
+        // which shows every panel at once. The solid harvest rate is
+        // panel A: cresting ~4150 (~277/yr — per-unit rates are 15x the
+        // book's per-year axis) at year ~100, then cycling ~1500-3470
+        // (~100-231/yr), the rebound peaks sitting clearly BELOW the
+        // crest. Capital's blue line is panel B: topping out ~1113 —
+        // nowhere near 43's 1400 — then cycling ~765-1093, first peak
+        // level with the rest. The resource's green line is panel C:
+        // bottoming ~310 and cycling ~310-475, never regaining halfway.
+        // The dashed profit line swings a beat behind each cycle — the
+        // delay driving the dance. Nothing collapses and nothing
+        // settles: the book's sustained oscillation (push the technology
+        // harder — a lower half-yield point — and the swings deepen
+        // toward figure 45's collapse).
+        label: 'figure 42 & 44',
+        flows: true,
+        content: `| =>investment [capital: 5] =>depreciation |
+| =>regeneration [resource: 1000] =>harvest |
+R(investment <- profit <- capital)
+B(depreciation <- capital)
+B(profit <- capital -> harvest)
+investment: (profit * growth goal / ((profit^6 + growth goal^6)^(1 / 6)))
+growth goal: (1.5 capital)
+depreciation: (capital / capital lifetime)
+capital lifetime: (4 / 3)
+harvest: (10 capital * yield per unit capital)
+profit: (price * harvest(t ~ 0.1) - 1.75 capital)
+price: 1
+yield per unit capital: ((1.27 (resource / 1000)^2.8) / ((resource / 1000)^2.8 + 0.27))
+regeneration: (resource * regeneration rate)
+regeneration rate: (112 (resource / 1000 * (1 - resource / 1000))^2)`
+    },
+    {
+        // Figure 45, all three panels in one button: the same fishery
+        // again, technology pushed to its endgame — ONE constant moves
+        // from figure 44's line. The Hill curve's half-yield point drops
+        // 0.27 -> 0.01 (yield above half strength until the fish fall
+        // below ~a fifth of carrying capacity: sonar, spotter planes,
+        // factory ships — catch efficiency no longer sags as the stock
+        // thins). Below the bind harvest falls like x^2.8 while
+        // depensation regeneration falls like x^3, so once the plunge
+        // starts nothing turns it: the resource is stripped to ~2% and
+        // STAYS there (the t = 20 horizon shows no comeback — scarce
+        // fish can't find mates), profit dies with the catch, and
+        // capital rots at its bare 20-year lifetime. The button opens
+        // preset to the flows view. The solid harvest rate is panel A:
+        // cresting ~4830 (~322/yr — per-unit rates are 15x the book's
+        // per-year axis) at year ~95, then cliffing to ZERO by year
+        // ~108, flat forever. Capital's blue line is panel B: the 5%/yr
+        // ramp to a pointed tent ~630 at year ~99 — half of 43's
+        // sustainable fleet — then pure-depreciation exponential decay
+        // (~47 by year 150). The resource's green line is panel C: the
+        // gentle glide (~830 at year 75), the plunge through year ~100,
+        // and the dead-flat ~0 tail. The dashed profit line spikes and
+        // dies with the catch. Figure 43 settles, 44 oscillates — 45 is
+        // the one-way trip.
+        label: 'figure 42 & 45',
+        flows: true,
+        content: `| =>investment [capital: 5] =>depreciation |
+| =>regeneration [resource: 1000] =>harvest |
+R(investment <- profit <- capital)
+B(depreciation <- capital)
+B(profit <- capital -> harvest)
+investment: (profit * growth goal / ((profit^6 + growth goal^6)^(1 / 6)))
+growth goal: (1.5 capital)
+depreciation: (capital / capital lifetime)
+capital lifetime: (4 / 3)
+harvest: (10 capital * yield per unit capital)
+profit: (price * harvest(t ~ 0.1) - 1.75 capital)
+price: 1
+yield per unit capital: ((1.01 (resource / 1000)^2.8) / ((resource / 1000)^2.8 + 0.01))
+regeneration: (resource * regeneration rate)
+regeneration rate: (112 (resource / 1000 * (1 - resource / 1000))^2)`
+    },
+
+    {
+        // Figure 47's materials economy: one straight cloud-to-cloud chain
+        // through three stocks — the figure 1/4 shape at full length.
+        // Structure only, value-less. The book's "consumers' home stocks"
+        // drops its apostrophe (not an identifier character).
+        label: 'figure 47',
+        content: `| =>raw materials processing [raw materials] =>production [inventory] =>sales [consumers home stocks] =>depreciation or discard |`
+    },
+    {
+        // Figure 48's bare population stock: births in, deaths out —
+        // figure 21's skeleton with no loops, no values, no fertility or
+        // mortality web. Structure only.
+        label: 'figure 48',
+        content: `| =>births [population] =>deaths |`
+    },
+    {
+        // Figure 49's three everyday stocks, each its own band: criminals
+        // in jail, fuel rods in plants, and the registered unemployed —
+        // whose SECOND outflow (registration lapses) leaves the band and
+        // elbows down to its own cloud, figure 3's branch rule. Structure
+        // only.
+        label: 'figure 49',
+        content: `| =>new sentences [criminals in jail] =>sentence completion |
+| =>new fuel rods [fuel rods in nuclear power plants] =>fuel rod replacements |
+| =>layoff rate [registered unemployed] =>hiring rate |
+[registered unemployed] =>registration lapses |`
     },
 
     // Showcase models (not from the book): each button flexes a language

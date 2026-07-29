@@ -863,5 +863,570 @@ falling: (speed)`));
   if (!alt.levels.every(x => x >= 0)) fail('skydiver', 'altitude never goes underground');
 }
 
+// figures 37 & 38: the oil economy (1 unit = 10 years). Capital compounds
+// while the cube-norm soft-min lets investment track its 10%/yr growth
+// goal, peaks as falling yield pinches profit, then decays at the
+// depreciation rate; the resource S-curves from 1000 toward 0 (its
+// outflow ration guards the very end). Mirrored float-exactly in the
+// engine's op order, then the book's landmarks pinned as windows.
+{
+  const OIL = `| =>investment [capital: 5] =>depreciation |
+[resource: 1000] =>extraction |
+R(investment <- profit <- capital)
+B(depreciation <- capital)
+B(profit <- capital -> extraction)
+investment: (profit * growth goal / ((profit^3 + growth goal^3)^(1 / 3)))
+growth goal: (capital)
+depreciation: (capital / capital lifetime)
+capital lifetime: 2
+extraction: (14 capital * yield per unit capital)
+profit: (4 price * capital * yield per unit capital)
+price: 1
+yield per unit capital: (resource / 1000)`;
+  const system = sys(OIL);
+  const series = simulate(system);
+  const Ks = series.find(s => s.label === 'capital');
+  const Rs = series.find(s => s.label === 'resource');
+  let K = 5, R = 1000;
+  const wantK = [K], wantR = [R];
+  for (let n = 0; n < Math.round(T_END / DT); n++) {
+    const y = R / 1000;
+    const G = K;
+    const P = ((4 * 1) * K) * y;
+    const inv = Math.max(0, (P * G) / ((P ** 3 + G ** 3) ** (1 / 3)));
+    const dep = Math.max(0, K / 2);
+    const ext = Math.max(0, (14 * K) * y);
+    const demandK = dep * DT, rationK = demandK > K ? K / demandK : 1;
+    const demandR = ext * DT, rationR = demandR > R ? R / demandR : 1;
+    let dK = 0;
+    dK += inv * DT * 1;
+    dK -= dep * DT * rationK;
+    K = Math.max(0, K + dK);
+    R = Math.max(0, R + -(ext * DT * rationR));
+    wantK.push(K); wantR.push(R);
+  }
+  if (!Ks.levels.every((v, i) => v === wantK[i]))
+    fail('figure 38', 'capital must match the soft-min mirror sample-for-sample');
+  if (!Rs.levels.every((v, i) => v === wantR[i]))
+    fail('figure 38', 'the resource must match the mirror sample-for-sample');
+  const peakK = Math.max(...Ks.levels), tPeak = Ks.levels.indexOf(peakK) * DT;
+  if (!(peakK > 52 && peakK < 58)) fail('figure 38', `capital peaks near the book's ~55-60, got ${peakK}`);
+  if (!(tPeak > 5.5 && tPeak < 6.1)) fail('figure 38', `the peak lands near year 58, got year ${tPeak * 10}`);
+  const atR = (t) => Rs.levels[Math.round(t / DT)];
+  if (!(atR(5.2) > 195 && atR(5.2) < 215))
+    fail('figure 38', `the resource passes ~205 at year 52 (the book's ~200), got ${atR(5.2)}`);
+  if (!Rs.levels.every((v, i) => i === 0 || v <= Rs.levels[i - 1]))
+    fail('figure 38', 'the resource only depletes — no inflow exists');
+  if (!(atR(10) < 40)) fail('figure 38', `the resource is nearly gone by year 100, got ${atR(10)}`);
+  const endK = Ks.levels[Ks.levels.length - 1];
+  if (!(endK > 10 && endK < 18 && endK < peakK / 3))
+    fail('figure 38', `capital decays well below its peak by year 100, got ${endK}`);
+  if (goalRefs(system).length !== 0)
+    fail('figure 38', 'formula faucets register no goal rules — no dashed lines');
+  if (hasDelays(system)) fail('figure 38', 'no time shifts here — no flows toggle');
+
+  // figures 37 & 39: three endowments side by side (resource 1000 / 2000 /
+  // 4000, each copy's yield reading its own R0, every constant per-copy so
+  // the three subsystems stay disconnected). Mirrored float-exactly per
+  // copy; the base copy must reproduce the standalone 37 & 38 run
+  // bit-for-bit (the figure-25 composite-equals-standalone rule), and the
+  // book's lesson pins as windows: each doubling delays the peak only
+  // ~14 years and roughly doubles it.
+  const oil39 = (s, r0) => `| =>investment ${s} [capital ${s}: 5] =>depreciation ${s} |
+[resource ${s}: ${r0}] =>extraction ${s} |
+R(investment ${s} <- profit ${s} <- capital ${s})
+B(depreciation ${s} <- capital ${s})
+B(profit ${s} <- capital ${s} -> extraction ${s})
+investment ${s}: (profit ${s} * growth goal ${s} / ((profit ${s}^3 + growth goal ${s}^3)^(1 / 3)))
+growth goal ${s}: (capital ${s})
+depreciation ${s}: (capital ${s} / capital lifetime ${s})
+capital lifetime ${s}: 2
+extraction ${s}: (14 capital ${s} * yield per unit capital ${s})
+profit ${s}: (4 price ${s} * capital ${s} * yield per unit capital ${s})
+price ${s}: 1
+yield per unit capital ${s}: (resource ${s} / ${r0})`;
+  const series39 = simulate(sys([oil39('base', 1000), oil39('doubled', 2000), oil39('quadrupled', 4000)].join('\n')));
+  const peaks = new Map();
+  for (const [s, r0] of [['base', 1000], ['doubled', 2000], ['quadrupled', 4000]]) {
+    const Kv = series39.find(x => x.label === `capital ${s}`);
+    const Rv = series39.find(x => x.label === `resource ${s}`);
+    let K = 5, R = r0;
+    const wantK = [K], wantR = [R];
+    for (let n = 0; n < Math.round(T_END / DT); n++) {
+      const y = R / r0;
+      const G = K;
+      const P = ((4 * 1) * K) * y;
+      const inv = Math.max(0, (P * G) / ((P ** 3 + G ** 3) ** (1 / 3)));
+      const dep = Math.max(0, K / 2);
+      const ext = Math.max(0, (14 * K) * y);
+      const demandK = dep * DT, rationK = demandK > K ? K / demandK : 1;
+      const demandR = ext * DT, rationR = demandR > R ? R / demandR : 1;
+      let dK = 0;
+      dK += inv * DT * 1;
+      dK -= dep * DT * rationK;
+      K = Math.max(0, K + dK);
+      R = Math.max(0, R + -(ext * DT * rationR));
+      wantK.push(K); wantR.push(R);
+    }
+    if (!Kv.levels.every((v, i) => v === wantK[i]) || !Rv.levels.every((v, i) => v === wantR[i]))
+      fail('figure 39', `${s}: must match its mirror sample-for-sample`);
+    const peakK = Math.max(...Kv.levels);
+    peaks.set(s, { peak: peakK, t: Kv.levels.indexOf(peakK) * DT });
+  }
+  const K38 = Ks.levels, K39base = series39.find(x => x.label === 'capital base').levels;
+  if (!K39base.every((v, i) => v === K38[i]))
+    fail('figure 39', 'the base copy must reproduce the standalone 37 & 38 run bit-for-bit');
+  const dT1 = peaks.get('doubled').t - peaks.get('base').t;
+  const dT2 = peaks.get('quadrupled').t - peaks.get('doubled').t;
+  if (!(dT1 > 1.2 && dT1 < 1.6 && dT2 > 1.2 && dT2 < 1.6))
+    fail('figure 39', `each doubling buys only ~14 years, got +${dT1 * 10}/+${dT2 * 10}`);
+  const q1 = peaks.get('doubled').peak / peaks.get('base').peak;
+  const q2 = peaks.get('quadrupled').peak / peaks.get('doubled').peak;
+  if (!(q1 > 1.7 && q1 < 2.2 && q2 > 1.7 && q2 < 2.2))
+    fail('figure 39', `each doubling roughly doubles the peak, got x${q1.toFixed(2)}/x${q2.toFixed(2)}`);
+  const at2 = (s) => series39.find(x => x.label === `capital ${s}`).levels[Math.round(2 / DT)];
+  if (!(Math.abs(at2('doubled') - at2('base')) < 0.5 && Math.abs(at2('quadrupled') - at2('base')) < 0.5))
+    fail('figure 39', 'the three runs overlap through the early years, as the book draws');
+
+  // figures 37 & 40: the growth-goal comparison — four copies differing
+  // only in the goal coefficient (gross 1.2/1/0.8/0.6 = net 7/5/3/1 %/yr).
+  // Mirrored float-exactly per copy (the five copy's goal is the bare
+  // capital reference — no multiply — and must reproduce the standalone
+  // 37 & 38 run bit-for-bit). The book's lesson pins as orderings: the
+  // faster the growth, the earlier and taller the peak and the harder the
+  // crash; at 1% the economy outlives the chart.
+  const oil40 = (s, goal) => `| =>investment ${s} [capital ${s}: 5] =>depreciation ${s} |
+[resource ${s}: 1000] =>extraction ${s} |
+R(investment ${s} <- profit ${s} <- capital ${s})
+B(depreciation ${s} <- capital ${s})
+B(profit ${s} <- capital ${s} -> extraction ${s})
+investment ${s}: (profit ${s} * growth goal ${s} / ((profit ${s}^3 + growth goal ${s}^3)^(1 / 3)))
+growth goal ${s}: (${goal})
+depreciation ${s}: (capital ${s} / capital lifetime ${s})
+capital lifetime ${s}: 2
+extraction ${s}: (14 capital ${s} * yield per unit capital ${s})
+profit ${s}: (4 price ${s} * capital ${s} * yield per unit capital ${s})
+price ${s}: 1
+yield per unit capital ${s}: (resource ${s} / 1000)`;
+  const series40 = simulate(sys([
+    oil40('at seven', '1.2 capital at seven'),
+    oil40('at five', 'capital at five'),
+    oil40('at three', '0.8 capital at three'),
+    oil40('at one', '0.6 capital at one'),
+  ].join('\n')));
+  const marks40 = new Map();
+  for (const [s, c] of [['at seven', 1.2], ['at five', 1], ['at three', 0.8], ['at one', 0.6]]) {
+    const Kv = series40.find(x => x.label === `capital ${s}`);
+    const Rv = series40.find(x => x.label === `resource ${s}`);
+    let K = 5, R = 1000;
+    const wantK = [K], wantR = [R];
+    for (let n = 0; n < Math.round(T_END / DT); n++) {
+      const y = R / 1000;
+      const G = c === 1 ? K : c * K;
+      const P = ((4 * 1) * K) * y;
+      const inv = Math.max(0, (P * G) / ((P ** 3 + G ** 3) ** (1 / 3)));
+      const dep = Math.max(0, K / 2);
+      const ext = Math.max(0, (14 * K) * y);
+      const demandK = dep * DT, rationK = demandK > K ? K / demandK : 1;
+      const demandR = ext * DT, rationR = demandR > R ? R / demandR : 1;
+      let dK = 0;
+      dK += inv * DT * 1;
+      dK -= dep * DT * rationK;
+      K = Math.max(0, K + dK);
+      R = Math.max(0, R + -(ext * DT * rationR));
+      wantK.push(K); wantR.push(R);
+    }
+    if (!Kv.levels.every((v, i) => v === wantK[i]) || !Rv.levels.every((v, i) => v === wantR[i]))
+      fail('figure 40', `${s}: must match its mirror sample-for-sample`);
+    const peakK = Math.max(...Kv.levels);
+    marks40.set(s, { peak: peakK, t: Kv.levels.indexOf(peakK) * DT, endR: Rv.levels[Rv.levels.length - 1] });
+  }
+  const K40five = series40.find(x => x.label === 'capital at five').levels;
+  if (!K40five.every((v, i) => v === K38[i]))
+    fail('figure 40', 'the 5% copy must reproduce the standalone 37 & 38 run bit-for-bit');
+  const m7 = marks40.get('at seven'), m5 = marks40.get('at five'), m3 = marks40.get('at three'), m1 = marks40.get('at one');
+  if (!(m7.peak > m5.peak && m5.peak > m3.peak && m3.peak > m1.peak))
+    fail('figure 40', `faster growth peaks taller: ${m7.peak}/${m5.peak}/${m3.peak}/${m1.peak}`);
+  if (!(m7.t < m5.t && m5.t < m3.t && m3.t < m1.t))
+    fail('figure 40', `faster growth peaks sooner: years ${m7.t * 10}/${m5.t * 10}/${m3.t * 10}/${m1.t * 10}`);
+  if (!(m7.endR < m5.endR && m5.endR < m3.endR && m3.endR < m1.endR))
+    fail('figure 40', 'faster growth leaves less resource behind');
+  if (!(m1.endR > 250 && m1.t > 9.5))
+    fail('figure 40', `the 1% economy outlives the chart with resource to spare, got R ${m1.endR} peak year ${m1.t * 10}`);
+
+  // figures 37 & 41: scarcity pricing — price saturates from 1 toward 6 as
+  // yield falls (the yield -> price arrow live) and profit nets a 0.5
+  // capital operating cost, crossing ZERO after the peak: the cube-norm's
+  // negative-base root goes NaN and the per-op guard plus the faucet clamp
+  // hold investment at exactly 0, so capital decays at full depreciation.
+  // Mirrored float-exactly including those guards; the book's landmarks:
+  // the same extraction curve as 38, but capital peaking ~2x higher a
+  // decade later.
+  const OIL41 = `| =>investment [capital: 5] =>depreciation |
+[resource: 1000] =>extraction |
+R(investment <- profit <- capital)
+B(depreciation <- capital)
+B(profit <- capital -> extraction)
+investment: (profit * growth goal / ((profit^3 + growth goal^3)^(1 / 3)))
+growth goal: (capital)
+depreciation: (capital / capital lifetime)
+capital lifetime: 2
+extraction: (14 capital * yield per unit capital)
+profit: (4 price * capital * yield per unit capital - 0.5 capital)
+price: (6 / (1 + 5 yield per unit capital^2))
+yield per unit capital: (resource / 1000)`;
+  const system41 = sys(OIL41);
+  const series41 = simulate(system41);
+  const K41 = series41.find(s => s.label === 'capital');
+  const R41 = series41.find(s => s.label === 'resource');
+  {
+    let K = 5, R = 1000;
+    const wantK = [K], wantR = [R];
+    const guard = (v) => Number.isFinite(v) ? v : 0;
+    for (let n = 0; n < Math.round(T_END / DT); n++) {
+      const y = R / 1000;
+      const price = guard(6 / (1 + 5 * y ** 2));
+      const G = K;
+      const P = ((4 * price) * K) * y - 0.5 * K;
+      const root = guard((P ** 3 + G ** 3) ** (1 / 3));
+      const inv = Math.max(0, guard((P * G) / root));
+      const dep = Math.max(0, K / 2);
+      const ext = Math.max(0, (14 * K) * y);
+      const demandK = dep * DT, rationK = demandK > K ? K / demandK : 1;
+      const demandR = ext * DT, rationR = demandR > R ? R / demandR : 1;
+      let dK = 0;
+      dK += inv * DT * 1;
+      dK -= dep * DT * rationK;
+      K = Math.max(0, K + dK);
+      R = Math.max(0, R + -(ext * DT * rationR));
+      wantK.push(K); wantR.push(R);
+    }
+    if (!K41.levels.every((v, i) => v === wantK[i]))
+      fail('figure 41', 'capital must match the scarcity-pricing mirror sample-for-sample');
+    if (!R41.levels.every((v, i) => v === wantR[i]))
+      fail('figure 41', 'the resource must match the mirror sample-for-sample');
+  }
+  const peakK41 = Math.max(...K41.levels), tPeak41 = K41.levels.indexOf(peakK41) * DT;
+  if (!(peakK41 > 95 && peakK41 < 108)) fail('figure 41', `capital peaks near the book's ~110, got ${peakK41}`);
+  if (!(tPeak41 > 6.2 && tPeak41 < 6.8)) fail('figure 41', `the peak lands near year 65, got year ${tPeak41 * 10}`);
+  if (!(peakK41 > 1.7 * peakK)) fail('figure 41', 'scarcity pricing roughly doubles the base peak');
+  const endK41 = K41.levels[K41.levels.length - 1];
+  if (!(endK41 > 15 && endK41 < 23)) fail('figure 41', `capital decays to the book's ~20 by year 100, got ${endK41}`);
+  let peakE41 = 0, tE41 = 0, peakE38 = 0;
+  for (let i = 0; i < K41.levels.length; i++) {
+    const e41 = 14 * K41.levels[i] * (R41.levels[i] / 1000);
+    if (e41 > peakE41) { peakE41 = e41; tE41 = i * DT; }
+    const e38 = 14 * Ks.levels[i] * (Rs.levels[i] / 1000);
+    if (e38 > peakE38) peakE38 = e38;
+  }
+  if (!(Math.abs(peakE41 - peakE38) / peakE38 < 0.15 && tE41 > 3.7 && tE41 < 4.4))
+    fail('figure 41', `the extraction curve barely moves — the oil is what it is (got ${peakE41 / 10}/yr @ year ${tE41 * 10} vs base ${peakE38 / 10}/yr)`);
+  if (!(R41.levels[Math.round(7 / DT)] < 25))
+    fail('figure 41', 'the resource is spent by year ~70');
+  if (goalRefs(system41).length !== 0 || hasDelays(system41))
+    fail('figure 41', 'no goal rules, no flows toggle');
+}
+
+// figures 42 & 43 (panels A, B, C): the sustainable fishery
+// (1 unit = 15 years), overshooting once and settling the way the book's
+// three panels do. The goal is the book's 5%/yr desired growth
+// (1.5 capital against the 0.75/unit depreciation drain), profit is
+// income perceived a season late (price * harvest(t ~ 0.1) minus a
+// 1.75/unit operating cost — a FAUCET read through a shift, so the smooth
+// tracks the APPLIED harvest rate), and per-fish regeneration is the
+// depensation hump 112 (x(1 - x))^2, peaking at R = 600 ABOVE the settle
+// point — its +7/unit equilibrium slope barely damps the loop, and the
+// lagged profit carries capital past the turn. Mirrored float-exactly
+// (soft-min, the smooth stepping DT/0.1 toward the applied rate before
+// levels move, both rations), then the book's shapes pinned as windows.
+{
+  const FISH = `| =>investment [capital: 5] =>depreciation |
+| =>regeneration [resource: 1000] =>harvest |
+R(investment <- profit <- capital)
+B(depreciation <- capital)
+B(profit <- capital -> harvest)
+investment: (profit * growth goal / ((profit^6 + growth goal^6)^(1 / 6)))
+growth goal: (1.5 capital)
+depreciation: (capital / capital lifetime)
+capital lifetime: (4 / 3)
+harvest: (10 capital * yield per unit capital)
+profit: (price * harvest(t ~ 0.1) - 1.75 capital)
+price: 1
+yield per unit capital: ((resource / 1000)^2)
+regeneration: (resource * regeneration rate)
+regeneration rate: (112 (resource / 1000 * (1 - resource / 1000))^2)`;
+  const system = sys(FISH);
+  const series = simulate(system);
+  const Kf = series.find(s => s.label === 'capital');
+  const Rf = series.find(s => s.label === 'resource');
+  let K = 5, R = 1000;
+  let S = Math.max(0, (10 * K) * ((R / 1000) ** 2)); // primed: raw clamped rate at t=0
+  const wantK = [K], wantR = [R];
+  for (let n = 0; n < Math.round(T_END / DT); n++) {
+    const y = (R / 1000) ** 2;
+    const rate = 112 * ((R / 1000 * (1 - R / 1000)) ** 2);
+    const regen = Math.max(0, R * rate);
+    const G = 1.5 * K;
+    const P = (1 * S) - (1.75 * K);
+    const inv = Math.max(0, (P * G) / ((P ** 6 + G ** 6) ** (1 / 6)));
+    const dep = Math.max(0, K / (4 / 3));
+    const harv = Math.max(0, (10 * K) * y);
+    const demandK = dep * DT, rationK = demandK > K ? K / demandK : 1;
+    const demandR = harv * DT, rationR = demandR > R ? R / demandR : 1;
+    S = S + Math.min(1, DT / 0.1) * ((harv * rationR) - S);
+    let dK = 0;
+    dK += inv * DT * 1;
+    dK -= dep * DT * rationK;
+    K = Math.max(0, K + dK);
+    let dR = 0;
+    dR += regen * DT * 1;
+    dR -= harv * DT * rationR;
+    R = Math.max(0, R + dR);
+    wantK.push(K); wantR.push(R);
+  }
+  if (!Kf.levels.every((v, i) => v === wantK[i]))
+    fail('figure 43', 'capital must match the fishery mirror sample-for-sample');
+  if (!Rf.levels.every((v, i) => v === wantR[i]))
+    fail('figure 43', 'the resource must match the mirror sample-for-sample');
+  const at = (L, t) => L[Math.round(t / DT)];
+  const endK = at(Kf.levels, 10), endR = at(Rf.levels, 10);
+  // Panel B: capital's S-curve crests ~1450 near year 120, eases to ~1398.
+  const peakK = Math.max(...Kf.levels), tPeakK = Kf.levels.indexOf(peakK) * DT;
+  if (!(endK > 1385 && endK < 1410)) fail('figure 43', `capital settles near the book's ~1400, got ${endK}`);
+  if (!(peakK > 1435 && peakK < 1470 && tPeakK > 7.6 && tPeakK < 8.5))
+    fail('figure 43', `capital crests ~1450 near year 120, got ${peakK} @ year ${tPeakK * 15}`);
+  if (!(peakK - endK > 35 && peakK - endK < 70))
+    fail('figure 43', 'the book\'s small overshoot bump — visible, not a collapse');
+  if (!(Math.abs(endK - at(Kf.levels, 9.5)) < 10 && Math.abs(endR - at(Rf.levels, 9.5)) < 3))
+    fail('figure 43', 'the tail is flat by the horizon — the sustainable state holds');
+  // Panel C: the resource glides down monotonically, undershoots to ~485,
+  // recovers onto 500.
+  const minR = Math.min(...Rf.levels);
+  if (!(endR > 495 && endR < 510)) fail('figure 43', `the resource settles at ~500, got ${endR}`);
+  if (!(minR > 475 && minR < 495 && endR - minR > 8))
+    fail('figure 43', `the slight undershoot below 500, got min ${minR}`);
+  if (!(at(Rf.levels, 3) > at(Rf.levels, 5) && at(Rf.levels, 5) > at(Rf.levels, 7) && at(Rf.levels, 7) > minR))
+    fail('figure 43', 'the resource glides DOWN onto its equilibrium');
+  if (!(at(Rf.levels, 5) > 840 && at(Rf.levels, 5) < 880))
+    fail('figure 43', `the gentle first-half glide (book ~800s at year 75), got ${at(Rf.levels, 5)}`);
+  // Panel A: the flows view the perception lag unlocks — no watcher dot.
+  // Applied harvest (solid) rises from ~3.3/yr, crests ~272/yr near year
+  // 110, dips BELOW the settle to ~224/yr, then holds ~233/yr; profit
+  // (dashed, the shift's owner) closes on depreciation at equilibrium.
+  if (!hasDelays(system) || goalRefs(system).length !== 0)
+    fail('figure 43', 'the profit lag unlocks the flows toggle; no goal rules');
+  const flows = flowSeries(system);
+  if (flows.map(f => `${f.label}${f.dashed ? '~' : ''}`).join() !== 'harvest,profit~')
+    fail('figure 43', `the flow view is harvest (solid) + profit (dashed), got ${flows.map(f => f.label)}`);
+  const hv = flows.find(f => !f.dashed).values;
+  if (hv.length !== Kf.levels.length) fail('figure 43', 'flow samples align with the stock series');
+  if (hv[0] !== 50) fail('figure 43', `harvest opens at 50/unit (~3.3/yr), got ${hv[0]}`);
+  const hvEnd = hv[hv.length - 1];
+  if (!(hvEnd / 15 > 225 && hvEnd / 15 < 245))
+    fail('figure 43', `harvest settles near the book's ~240/yr, got ${hvEnd / 15}`);
+  let peakH = -Infinity, iPeakH = 0;
+  hv.forEach((v, i) => { if (v > peakH) { peakH = v; iPeakH = i; } });
+  const troughH = Math.min(...hv.slice(iPeakH));
+  if (!(peakH / 15 > 260 && peakH / 15 < 285 && iPeakH * DT > 7 && iPeakH * DT < 7.8))
+    fail('figure 43', `harvest crests near the book's ~300/yr around year 105-115, got ${peakH / 15}/yr @ year ${iPeakH * DT * 15}`);
+  if (!(troughH < hvEnd && troughH / 15 > 215 && troughH / 15 < 232))
+    fail('figure 43', `the dip bottoms below the settle (~224/yr), got ${troughH / 15}`);
+  const pv = flows.find(f => f.dashed).values;
+  const pvEnd = pv[pv.length - 1];
+  if (!(Math.abs(pvEnd - endK / (4 / 3)) / pvEnd < 0.01))
+    fail('figure 43', 'at equilibrium perceived profit closes on depreciation');
+
+  // figures 42 & 44 (panels A, B, C): the same fishery with ONE line
+  // changed — the squared yield curve becomes the saturating technology
+  // curve 1.27 x^2.8 / (x^2.8 + 0.27) (exactly 1 at carrying capacity):
+  // near-full catch efficiency down past half density, then a cliff.
+  // Efficiency no longer signals depletion, so the bind slides to
+  // R ~380 on the regeneration hump's unstable left side, and the
+  // season-late profit read overpowers the little damping left — 43's
+  // single ring becomes a sustained cycle orbiting a never-reached
+  // equilibrium: the book's oscillating fishery. Same float-exact
+  // mirror, then the book's panel shapes pinned: a crest standing above
+  // the rebound peaks, capital's first peak level with its later ones
+  // and nowhere near 43's 1400, the resource never regaining halfway,
+  // and no collapse.
+  const FISH44 = FISH.replace(
+    'yield per unit capital: ((resource / 1000)^2)',
+    'yield per unit capital: ((1.27 (resource / 1000)^2.8) / ((resource / 1000)^2.8 + 0.27))');
+  const system44 = sys(FISH44);
+  const series44 = simulate(system44);
+  const K44 = series44.find(s => s.label === 'capital');
+  const R44 = series44.find(s => s.label === 'resource');
+  {
+    let K = 5, R = 1000;
+    const yOf = (R_) => {
+      const xr = R_ / 1000;
+      return (1.27 * xr ** 2.8) / (xr ** 2.8 + 0.27);
+    };
+    let S = Math.max(0, (10 * K) * yOf(R));
+    const wantK = [K], wantR = [R];
+    for (let n = 0; n < Math.round(T_END / DT); n++) {
+      const y = yOf(R);
+      const rate = 112 * ((R / 1000 * (1 - R / 1000)) ** 2);
+      const regen = Math.max(0, R * rate);
+      const G = 1.5 * K;
+      const P = (1 * S) - (1.75 * K);
+      const inv = Math.max(0, (P * G) / ((P ** 6 + G ** 6) ** (1 / 6)));
+      const dep = Math.max(0, K / (4 / 3));
+      const harv = Math.max(0, (10 * K) * y);
+      const demandK = dep * DT, rationK = demandK > K ? K / demandK : 1;
+      const demandR = harv * DT, rationR = demandR > R ? R / demandR : 1;
+      S = S + Math.min(1, DT / 0.1) * ((harv * rationR) - S);
+      let dK = 0;
+      dK += inv * DT * 1;
+      dK -= dep * DT * rationK;
+      K = Math.max(0, K + dK);
+      let dR = 0;
+      dR += regen * DT * 1;
+      dR -= harv * DT * rationR;
+      R = Math.max(0, R + dR);
+      wantK.push(K); wantR.push(R);
+    }
+    if (!K44.levels.every((v, i) => v === wantK[i]))
+      fail('figure 44', 'capital must match the technology-curve mirror sample-for-sample');
+    if (!R44.levels.every((v, i) => v === wantR[i]))
+      fail('figure 44', 'the resource must match the mirror sample-for-sample');
+  }
+  const win = (a, t0, t1) => a.slice(Math.round(t0 / DT), Math.round(t1 / DT) + 1);
+  const flows44 = flowSeries(system44);
+  if (flows44.map(f => `${f.label}${f.dashed ? '~' : ''}`).join() !== 'harvest,profit~')
+    fail('figure 44', `the flow view is still the harvest/profit pair, got ${flows44.map(f => f.label)}`);
+  const hv44 = flows44.find(f => !f.dashed).values;
+  if (hv44[0] !== 50) fail('figure 44', `harvest opens at 50/unit like 43 (y(1) = 1 exactly), got ${hv44[0]}`);
+  if (!(at(R44.levels, 5) > 830 && at(R44.levels, 5) < 855 && at(R44.levels, 5) < at(Rf.levels, 5)))
+    fail('figure 44', 'the resource declines a touch faster than 43 once technology bites');
+  // Panel A: the crest ~277/yr near year 100 stands clearly ABOVE the
+  // cycle it drops into — troughs ~100-105/yr, rebound peaks ~225-231/yr.
+  let crest44 = -Infinity, iCrest44 = 0;
+  hv44.forEach((v, i) => { if (v > crest44) { crest44 = v; iCrest44 = i; } });
+  if (!(crest44 / 15 > 268 && crest44 / 15 < 286 && iCrest44 * DT > 6.5 && iCrest44 * DT < 7.1))
+    fail('figure 44', `harvest crests ~277/yr near year 100, got ${crest44 / 15}/yr @ year ${iCrest44 * DT * 15}`);
+  const trough1 = Math.min(...win(hv44, 7.1, 8.1)), rebound1 = Math.max(...win(hv44, 8.1, 8.8)),
+    trough2 = Math.min(...win(hv44, 8.8, 9.5)), rebound2 = Math.max(...win(hv44, 9.5, 10));
+  if (!(trough1 / 15 > 92 && trough1 / 15 < 112 && trough2 / 15 > 92 && trough2 / 15 < 115))
+    fail('figure 44', `both troughs near the book's ~120/yr band, got ${trough1 / 15} and ${trough2 / 15}`);
+  if (!(rebound1 / 15 > 218 && rebound1 / 15 < 242 && rebound2 / 15 > 210 && rebound2 / 15 < 238))
+    fail('figure 44', `rebound peaks ~225-231/yr, got ${rebound1 / 15} and ${rebound2 / 15}`);
+  if (!(crest44 > rebound1 + 400))
+    fail('figure 44', 'the crest stands clearly above the cycle, the book\'s panel A morphology');
+  // Panel B: capital tops out ~1113 — nowhere near 43's 1400 — and its
+  // first peak is level with the later ones: 1113 / 1093, valleys ~765-780.
+  const kPeak1 = Math.max(...win(K44.levels, 7.1, 7.8)), kValley1 = Math.min(...win(K44.levels, 7.8, 8.5)),
+    kPeak2 = Math.max(...win(K44.levels, 8.5, 9.2)), kValley2 = Math.min(...win(K44.levels, 9.2, 9.9));
+  if (!(kPeak1 > 1080 && kPeak1 < 1150 && kPeak2 > 1060 && kPeak2 < 1130 && Math.abs(kPeak1 - kPeak2) < 40))
+    fail('figure 44', `capital peaks ~1113 then ~1093, level like the book's, got ${kPeak1} / ${kPeak2}`);
+  if (!(kValley1 > 730 && kValley1 < 800 && kValley2 > 740 && kValley2 < 820))
+    fail('figure 44', `capital's valleys ~765-780 (book ~800), got ${kValley1} / ${kValley2}`);
+  if (Math.max(...K44.levels) > 1150)
+    fail('figure 44', 'capital never approaches 43\'s 1400 — the book\'s 0-2000 axis stays half empty');
+  if (!(Math.max(...win(K44.levels, 8.5, 10)) - Math.min(...win(K44.levels, 8.5, 10)) > 250))
+    fail('figure 44', 'the tail still swings hard where 43 lies flat — no settling');
+  // Panel C: the resource bottoms ~310 and cycles ~310-475 without
+  // collapsing or ever regaining the halfway line.
+  const minR44 = Math.min(...R44.levels), maxRLate = Math.max(...win(R44.levels, 7.5, 10));
+  if (!(minR44 > 295 && minR44 < 325))
+    fail('figure 44', `the resource bottoms ~310 (book ~320), got ${minR44}`);
+  if (!(maxRLate > 450 && maxRLate < 500))
+    fail('figure 44', `the resource's rebounds stay below halfway (~475), got ${maxRLate}`);
+  if (minR44 < 250) fail('figure 44', 'oscillation, not figure 45\'s collapse');
+  if (!hasDelays(system44) || goalRefs(system44).length !== 0)
+    fail('figure 44', 'same delay unlock, no goal rules');
+
+  // figure 42 & 45 (panels A, B, C): technology's endgame — figure 44's
+  // Hill curve with ONE constant moved, the half-yield point 0.27 ->
+  // 0.01, so yield holds above half strength until the fish fall below
+  // ~a fifth of carrying capacity. Below the bind harvest falls like
+  // x^2.8 while depensation regeneration falls like x^3 — harvest wins
+  // the race down, and the collapse is absorbing: the book's
+  // overshoot-and-collapse. Same float-exact mirror, then the panels
+  // pinned: a single crest cliffing to zero, capital's pointed tent
+  // rotting at pure depreciation, the resource stripped and never
+  // recovering (checked past the window at t = 20).
+  const FISH45 = FISH44.replace(
+    'yield per unit capital: ((1.27 (resource / 1000)^2.8) / ((resource / 1000)^2.8 + 0.27))',
+    'yield per unit capital: ((1.01 (resource / 1000)^2.8) / ((resource / 1000)^2.8 + 0.01))');
+  const system45 = sys(FISH45);
+  const series45 = simulate(system45);
+  const K45 = series45.find(s => s.label === 'capital');
+  const R45 = series45.find(s => s.label === 'resource');
+  {
+    let K = 5, R = 1000;
+    const yOf = (R_) => {
+      const xr = R_ / 1000;
+      return (1.01 * xr ** 2.8) / (xr ** 2.8 + 0.01);
+    };
+    let S = Math.max(0, (10 * K) * yOf(R));
+    const wantK = [K], wantR = [R];
+    for (let n = 0; n < Math.round(T_END / DT); n++) {
+      const y = yOf(R);
+      const rate = 112 * ((R / 1000 * (1 - R / 1000)) ** 2);
+      const regen = Math.max(0, R * rate);
+      const G = 1.5 * K;
+      const P = (1 * S) - (1.75 * K);
+      const inv = Math.max(0, (P * G) / ((P ** 6 + G ** 6) ** (1 / 6)));
+      const dep = Math.max(0, K / (4 / 3));
+      const harv = Math.max(0, (10 * K) * y);
+      const demandK = dep * DT, rationK = demandK > K ? K / demandK : 1;
+      const demandR = harv * DT, rationR = demandR > R ? R / demandR : 1;
+      S = S + Math.min(1, DT / 0.1) * ((harv * rationR) - S);
+      let dK = 0;
+      dK += inv * DT * 1;
+      dK -= dep * DT * rationK;
+      K = Math.max(0, K + dK);
+      let dR = 0;
+      dR += regen * DT * 1;
+      dR -= harv * DT * rationR;
+      R = Math.max(0, R + dR);
+      wantK.push(K); wantR.push(R);
+    }
+    if (!K45.levels.every((v, i) => v === wantK[i]))
+      fail('figure 45', 'capital must match the endgame mirror sample-for-sample');
+    if (!R45.levels.every((v, i) => v === wantR[i]))
+      fail('figure 45', 'the resource must match the mirror sample-for-sample');
+  }
+  const flows45 = flowSeries(system45);
+  if (flows45.map(f => `${f.label}${f.dashed ? '~' : ''}`).join() !== 'harvest,profit~')
+    fail('figure 45', `the flow view is still the harvest/profit pair, got ${flows45.map(f => f.label)}`);
+  const hv45 = flows45.find(f => !f.dashed).values;
+  if (hv45[0] !== 50) fail('figure 45', `harvest opens at 50/unit (y(1) = 1 exactly), got ${hv45[0]}`);
+  // Panel A: one crest ~322/yr near year 95, then the cliff — zero by
+  // year ~108 and dead flat after.
+  let crest45 = -Infinity, iCrest45 = 0;
+  hv45.forEach((v, i) => { if (v > crest45) { crest45 = v; iCrest45 = i; } });
+  if (!(crest45 / 15 > 310 && crest45 / 15 < 334 && iCrest45 * DT > 6.1 && iCrest45 * DT < 6.5))
+    fail('figure 45', `harvest crests ~322/yr near year 95, got ${crest45 / 15}/yr @ year ${iCrest45 * DT * 15}`);
+  if (!(Math.max(...win(hv45, 8, 10)) / 15 < 0.5))
+    fail('figure 45', 'the catch is DEAD after year 120 — no oscillation, no recovery');
+  // Panel B: the pointed tent ~630 at year ~99, then bare 20-year-lifetime
+  // rot — the decay HAS the pure-depreciation e-fold, and capital lands
+  // ~47 by year 150 (nothing like 43's 1398 settle or 44's cycling 1113).
+  let kPeak45 = -Infinity, iKPeak45 = 0;
+  K45.levels.forEach((v, i) => { if (v > kPeak45) { kPeak45 = v; iKPeak45 = i; } });
+  if (!(kPeak45 > 610 && kPeak45 < 650 && iKPeak45 * DT > 6.4 && iKPeak45 * DT < 6.8))
+    fail('figure 45', `capital tents ~630 near year 99, got ${kPeak45} @ year ${iKPeak45 * DT * 15}`);
+  const dep45 = at(K45.levels, 9.5) / at(K45.levels, 10);
+  if (!(Math.abs(dep45 - Math.exp(0.375)) < 0.02))
+    fail('figure 45', `the downslope is pure depreciation (e^0.375 per half unit), got ${dep45}`);
+  if (!(at(K45.levels, 10) > 40 && at(K45.levels, 10) < 55))
+    fail('figure 45', `capital rots to ~47 by year 150, got ${at(K45.levels, 10)}`);
+  // Panel C: the glide (~830 at year 75), the plunge, the dead-flat tail —
+  // and no comeback even past the window.
+  if (!(at(R45.levels, 5) > 815 && at(R45.levels, 5) < 840))
+    fail('figure 45', `the glide passes ~830 at year 75, got ${at(R45.levels, 5)}`);
+  if (!(at(R45.levels, 8) < 25 && at(R45.levels, 10) < 20 && at(R45.levels, 10) > 5))
+    fail('figure 45', `the resource is stripped to ~2% and pinned, got ${at(R45.levels, 8)} / ${at(R45.levels, 10)}`);
+  if (!(at(R45.levels, 10) <= at(R45.levels, 8)))
+    fail('figure 45', 'still no rebound inside the window');
+  const R45long = simulate(system45, 20).find(s => s.label === 'resource').levels;
+  if (!(at(R45long, 20) < 30))
+    fail('figure 45', `the collapse is absorbing — no comeback by t = 20, got ${at(R45long, 20)}`);
+  if (!hasDelays(system45) || goalRefs(system45).length !== 0)
+    fail('figure 45', 'same delay unlock, no goal rules');
+}
+
 console.log(failures ? `${failures} FAILURE(S)` : 'SIMULATE CHECKS PASSED');
 process.exit(failures ? 1 : 0);

@@ -255,6 +255,186 @@ air drag: (0.02 speed^2)
 falling: (speed)
 B(air drag <- speed)`;
 
+// figure 37: the oil economy — figure 42's capital machinery constrained
+// by a NONRENEWABLE resource (no regeneration; extraction drains to a
+// cloud). Twelve info arrows including extraction -> profit (an arrow off
+// a faucet) and four ports on the capital stock.
+const EX_OIL37 = `| =>investment [capital] =>depreciation |
+[resource] =>extraction |
+capital -> growth goal -> investment
+R(investment <- profit <- capital)
+B(depreciation <- capital)
+capital lifetime -> depreciation
+B(profit <- capital -> extraction)
+extraction -> profit
+profit <- price <- yield per unit capital -> extraction
+resource -> yield per unit capital`;
+
+// figures 37 & 38: the oil economy valued (1 unit = 10 years). Investment
+// chases a 10%/yr growth goal through a cube-norm soft-min against profit;
+// yield falls linearly with the resource; price constant. Profit reads
+// yield per unit capital in place of the extraction faucet (formulas
+// cannot read faucet rates), and this scenario's constant price drops the
+// structure figure's yield -> price arrow.
+const EX_OIL38 = `| =>investment [capital: 5] =>depreciation |
+[resource: 1000] =>extraction |
+R(investment <- profit <- capital)
+B(depreciation <- capital)
+B(profit <- capital -> extraction)
+investment: (profit * growth goal / ((profit^3 + growth goal^3)^(1 / 3)))
+growth goal: (capital)
+depreciation: (capital / capital lifetime)
+capital lifetime: 2
+extraction: (14 capital * yield per unit capital)
+profit: (4 price * capital * yield per unit capital)
+price: 1
+yield per unit capital: (resource / 1000)`;
+
+// figures 37 & 39: the endowment comparison — three copies of the 37 & 38
+// economy (resource 1000 / 2000 / 4000), each copy's yield reading its own
+// endowment so the runs start identically. EVERY constant is per-copy (the
+// figures 12 & 13 / 25 / 27 & 28 convention), keeping the three
+// subsystems disconnected so they settle as separate clusters.
+const oil39 = (s, r0) => `| =>investment ${s} [capital ${s}: 5] =>depreciation ${s} |
+[resource ${s}: ${r0}] =>extraction ${s} |
+R(investment ${s} <- profit ${s} <- capital ${s})
+B(depreciation ${s} <- capital ${s})
+B(profit ${s} <- capital ${s} -> extraction ${s})
+investment ${s}: (profit ${s} * growth goal ${s} / ((profit ${s}^3 + growth goal ${s}^3)^(1 / 3)))
+growth goal ${s}: (capital ${s})
+depreciation ${s}: (capital ${s} / capital lifetime ${s})
+capital lifetime ${s}: 2
+extraction ${s}: (14 capital ${s} * yield per unit capital ${s})
+profit ${s}: (4 price ${s} * capital ${s} * yield per unit capital ${s})
+price ${s}: 1
+yield per unit capital ${s}: (resource ${s} / ${r0})`;
+const EX_OIL39 = [oil39('base', 1000), oil39('doubled', 2000), oil39('quadrupled', 4000)].join('\n');
+
+// figures 37 & 40: the growth-goal comparison — four copies of the 37 & 38
+// economy differing only in the desired capital growth (net 7/5/3/1 %/yr =
+// gross goal coefficients 1.2/1/0.8/0.6 over 5%/yr depreciation), fully
+// per-copy so the subsystems stay disconnected.
+const oil40 = (s, goal) => `| =>investment ${s} [capital ${s}: 5] =>depreciation ${s} |
+[resource ${s}: 1000] =>extraction ${s} |
+R(investment ${s} <- profit ${s} <- capital ${s})
+B(depreciation ${s} <- capital ${s})
+B(profit ${s} <- capital ${s} -> extraction ${s})
+investment ${s}: (profit ${s} * growth goal ${s} / ((profit ${s}^3 + growth goal ${s}^3)^(1 / 3)))
+growth goal ${s}: (${goal})
+depreciation ${s}: (capital ${s} / capital lifetime ${s})
+capital lifetime ${s}: 2
+extraction ${s}: (14 capital ${s} * yield per unit capital ${s})
+profit ${s}: (4 price ${s} * capital ${s} * yield per unit capital ${s})
+price ${s}: 1
+yield per unit capital ${s}: (resource ${s} / 1000)`;
+const EX_OIL40 = [
+  oil40('at seven', '1.2 capital at seven'),
+  oil40('at five', 'capital at five'),
+  oil40('at three', '0.8 capital at three'),
+  oil40('at one', '0.6 capital at one'),
+].join('\n');
+
+// figures 37 & 41: scarcity pricing — the 37 & 38 economy with price
+// rising from 1 toward a ceiling of 6 as yield falls (the structure
+// figure's yield -> price arrow made live) and profit netting a 0.5
+// capital operating cost so it crosses zero after the peak.
+const EX_OIL41 = `| =>investment [capital: 5] =>depreciation |
+[resource: 1000] =>extraction |
+R(investment <- profit <- capital)
+B(depreciation <- capital)
+B(profit <- capital -> extraction)
+investment: (profit * growth goal / ((profit^3 + growth goal^3)^(1 / 3)))
+growth goal: (capital)
+depreciation: (capital / capital lifetime)
+capital lifetime: 2
+extraction: (14 capital * yield per unit capital)
+profit: (4 price * capital * yield per unit capital - 0.5 capital)
+price: (6 / (1 + 5 yield per unit capital^2))
+yield per unit capital: (resource / 1000)`;
+
+// figure 42 (corrected 2026-07-28): the renewable fishery structure — the
+// re-supplied book scan shows a harvest -> profit arrow (the tail circle
+// on the harvest tap, exactly like figure 37's extraction -> profit),
+// which the original button lacked. Fifteen arrows now.
+const EX_FISH42 = `| =>investment [capital] =>depreciation |
+| =>regeneration [resource] =>harvest |
+capital -> growth goal -> investment
+R(investment <- profit <- capital)
+B(depreciation <- capital)
+capital lifetime -> depreciation
+B(profit <- capital -> harvest)
+harvest -> profit
+profit <- price <- yield per unit capital -> harvest
+resource -> yield per unit capital
+regeneration <- regeneration rate <- resource -> regeneration`;
+
+// figures 42 & 43: the sustainable fishery (1 unit = 15 years), with the
+// book's overshoot-and-settle. The 5%/yr growth goal (1.5 capital), profit
+// as income perceived a season late (price * harvest(t ~ 0.1) - 1.75
+// capital — a faucet read through a shift, which restores the book's
+// harvest -> profit arrow), and the depensation regeneration hump
+// 112 (x(1 - x))^2 peaking above the settle point: harvest crests ~272/yr
+// then settles ~233/yr, capital ~1450 -> ~1398, the resource 1000 -> ~485
+// -> 500. ONE button, opening in the flows view — all three panels at
+// once.
+const EX_FISH43 = `| =>investment [capital: 5] =>depreciation |
+| =>regeneration [resource: 1000] =>harvest |
+R(investment <- profit <- capital)
+B(depreciation <- capital)
+B(profit <- capital -> harvest)
+investment: (profit * growth goal / ((profit^6 + growth goal^6)^(1 / 6)))
+growth goal: (1.5 capital)
+depreciation: (capital / capital lifetime)
+capital lifetime: (4 / 3)
+harvest: (10 capital * yield per unit capital)
+profit: (price * harvest(t ~ 0.1) - 1.75 capital)
+price: 1
+yield per unit capital: ((resource / 1000)^2)
+regeneration: (resource * regeneration rate)
+regeneration rate: (112 (resource / 1000 * (1 - resource / 1000))^2)`;
+
+// figures 42 & 44: the same fishery with ONE line changed — the squared
+// yield curve becomes the saturating technology curve (Hill form
+// 1.27 x^2.8 / (x^2.8 + 0.27), exactly 1 at carrying capacity): boats
+// catch near full efficiency down past half density, then the curve
+// cliffs. The bind slides to R ~380 and the perception lag turns 43's
+// single ring into a sustained cycle: harvest ~100-231/yr under a
+// ~277/yr crest, capital 765-1113, resource 309-477, period ~21 years.
+// ONE button, opening in the flows view — all three panels at once.
+const EX_FISH44 = EX_FISH43.replace(
+  'yield per unit capital: ((resource / 1000)^2)',
+  'yield per unit capital: ((1.27 (resource / 1000)^2.8) / ((resource / 1000)^2.8 + 0.27))');
+
+// figure 42 & 45: technology's endgame — figure 44's Hill curve with ONE
+// constant moved, the half-yield point 0.27 -> 0.01 (yield holds above
+// half strength until the fish fall below ~a fifth of carrying
+// capacity). Harvest crests ~322/yr then cliffs to zero, capital tents
+// at ~630 and rots at pure depreciation, the resource is stripped to ~2%
+// and never comes back: the book's overshoot-and-collapse. ONE button,
+// opening in the flows view.
+const EX_FISH45 = EX_FISH44.replace(
+  'yield per unit capital: ((1.27 (resource / 1000)^2.8) / ((resource / 1000)^2.8 + 0.27))',
+  'yield per unit capital: ((1.01 (resource / 1000)^2.8) / ((resource / 1000)^2.8 + 0.01))');
+
+// figure 47: the materials economy — one straight cloud-to-cloud chain
+// through three stocks (the figure 1/4 shape at full length). No info
+// arrows, so no ports; one band; value-less. The book's "consumers' home
+// stocks" drops its apostrophe (not an identifier character).
+const EX_CHAIN47 = `| =>raw materials processing [raw materials] =>production [inventory] =>sales [consumers home stocks] =>depreciation or discard |`;
+
+// figure 48: the bare population stock — births in, deaths out. Figure
+// 21's skeleton with no loops, no values, no fertility/mortality web:
+// the one-stock cloud-to-cloud chain (figure 1 with the book's names).
+const EX_POP48 = `| =>births [population] =>deaths |`;
+
+// figure 49: three everyday stocks, each its own disconnected band —
+// and the third has TWO outflows (hiring rate keeps the band,
+// registration lapses is the figure-3 branch onto a row below).
+const EX_TRIO49 = `| =>new sentences [criminals in jail] =>sentence completion |
+| =>new fuel rods [fuel rods in nuclear power plants] =>fuel rod replacements |
+| =>layoff rate [registered unemployed] =>hiring rate |
+[registered unemployed] =>registration lapses |`;
+
 const EX_LOOPS = `|=>investment[capital]=>depreciation|
 |=>regeneration[resource]=>harvest|
 capital->growth goal->investment
@@ -386,6 +566,18 @@ const goldenInputs = [
                   // inventory chart — one model, three book figures)
   EX_CAR35,       // figure 35 — react faster, oscillate harder
   EX_CAR36,       // figure 36 — react slower, damp out
+  EX_OIL37,       // figure 37 — the nonrenewable oil economy, structure only
+  EX_OIL38,       // figures 37 & 38 — the oil economy valued: grow, peak, collapse
+  EX_OIL39,       // figures 37 & 39 — the endowment comparison, three copies
+  EX_OIL40,       // figures 37 & 40 — the growth-goal comparison, four copies
+  EX_OIL41,       // figures 37 & 41 — scarcity pricing: same oil, twice the capital
+  EX_FISH42,      // figure 42 — the renewable fishery structure (harvest -> profit restored)
+  EX_FISH43,      // figures 42 & 43 — the fishery's overshoot-and-settle, one flows-preset button
+  EX_FISH44,      // figures 42 & 44 — the technology yield curve's limit cycle, one flows-preset button
+  EX_FISH45,      // figure 42 & 45 — the half-yield point at 0.01: overshoot and collapse
+  EX_CHAIN47,     // figure 47 — the materials-economy chain, structure only
+  EX_POP48,       // figure 48 — the bare population stock, structure only
+  EX_TRIO49,      // figure 49 — three everyday stocks, one with a branch outflow
   EX_EPIDEMIC,    // showcase: nonlinear rate law over two stocks
   EX_CAFFEINE,    // showcase: @ pulse schedule + proportional decay
   EX_HOGS,        // showcase: loop closed through price(t - 2)
@@ -667,6 +859,182 @@ if (c32Of('coverage') !== undefined)
 if (JSON.parse(M.go(EX_CAR35)).nodes.find(n => n.label === 'response delay')?.value !== 0.2
     || JSON.parse(M.go(EX_CAR36)).nodes.find(n => n.label === 'response delay')?.value !== 0.6)
   fail('car 35/36', 'the variants differ from 31 & 32 only in the response delay (0.2 / 0.6)');
+const oil37 = JSON.parse(M.go(EX_OIL37));
+const o37Of = label => oil37.nodes.find(n => n.label === label);
+if (oil37.nodes.length !== 18)   // 3 clouds, 3 faucets, 2 stocks, 5 dots, 5 ports
+  fail('oil 37', `18 nodes expected, got ${oil37.nodes.length}`);
+if (oil37.links.filter(l => l.type === 'flow').length !== 6 || oil37.links.length !== 18)
+  fail('oil 37', '6 flows + 12 arrows expected (the B2 capital->profit dedups against the R0 one)');
+if (new Set(oil37.nodes.map(n => n.group).filter(g => g != null)).size !== 2)
+  fail('oil 37', '2 bands expected — capital above, the nonrenewable resource below');
+if (JSON.stringify(o37Of('capital')?.loop) !== JSON.stringify(['R0', 'B1', 'B2'])
+    || JSON.stringify(o37Of('profit')?.loop) !== JSON.stringify(['R0', 'B2'])
+    || JSON.stringify(o37Of('extraction')?.loop) !== JSON.stringify(['B2']))
+  fail('oil 37', `capital R0/B1/B2, profit R0/B2, extraction B2 — got ${JSON.stringify([o37Of('capital')?.loop, o37Of('profit')?.loop, o37Of('extraction')?.loop])}`);
+for (const d of ['growth goal', 'capital lifetime', 'price', 'yield per unit capital'])
+  if (o37Of(d)?.loop !== undefined) fail('oil 37', `${d} feeds the loops without joining them`);
+const o37Ports = oil37.nodes.filter(n => n.type === 'port');
+if (o37Ports.filter(p => p.parent === o37Of('capital').id).length !== 4
+    || o37Ports.filter(p => p.parent === o37Of('resource').id).length !== 1)
+  fail('oil 37', 'capital sprouts four ports (growth goal, profit, extraction, depreciation), resource one');
+if (oil37.nodes.some(n => n.value !== undefined || n.expr !== undefined))
+  fail('oil 37', 'the structure figure carries no numbers');
+const oil38 = JSON.parse(M.go(EX_OIL38));
+const o38Of = label => oil38.nodes.find(n => n.label === label);
+if (oil38.nodes.length !== 18)   // same census as figure 37
+  fail('oil 38', `18 nodes expected, got ${oil38.nodes.length}`);
+if (oil38.links.filter(l => l.type === 'flow').length !== 6 || oil38.links.length !== 17)
+  fail('oil 38', '6 flows + 11 arrows expected (constant price drops yield->price; profit reads yield, not extraction)');
+if (!(o38Of('investment')?.expr?.kind === '/' && o38Of('extraction')?.expr?.kind === '*'
+      && o38Of('depreciation')?.expr?.kind === '/' && o38Of('growth goal')?.expr?.kind === 'ref'))
+  fail('oil 38', 'the three faucets and the goal carry their rate laws');
+if (!(o38Of('capital')?.value === 5 && o38Of('resource')?.value === 1000
+      && o38Of('price')?.value === 1 && o38Of('capital lifetime')?.value === 2))
+  fail('oil 38', 'initial levels and constants: capital 5, resource 1000, price 1, lifetime 2');
+if (JSON.stringify(o38Of('capital')?.loop) !== JSON.stringify(['R0', 'B1', 'B2']))
+  fail('oil 38', 'capital keeps its three loop tags');
+const oil39g = JSON.parse(M.go(EX_OIL39));
+const o39Of = label => oil39g.nodes.find(n => n.label === label);
+if (oil39g.nodes.length !== 54)   // 3 copies x 18 (the figure 37 & 38 census)
+  fail('oil 39', `54 nodes expected, got ${oil39g.nodes.length}`);
+if (oil39g.links.filter(l => l.type === 'flow').length !== 18 || oil39g.links.length !== 51)
+  fail('oil 39', '18 flows + 33 arrows expected (11 per copy, fully per-copy wiring)');
+if (new Set(oil39g.nodes.map(n => n.group).filter(g => g != null)).size !== 6)
+  fail('oil 39', '6 bands expected — a capital and a resource band per copy');
+for (const [stock, tags] of [['capital base', ['R0', 'B1', 'B2']], ['capital doubled', ['R3', 'B4', 'B5']], ['capital quadrupled', ['R6', 'B7', 'B8']]])
+  if (JSON.stringify(o39Of(stock)?.loop) !== JSON.stringify(tags))
+    fail('oil 39', `${stock} should be in ${tags}, got ${JSON.stringify(o39Of(stock)?.loop)}`);
+if (!(o39Of('resource base')?.value === 1000 && o39Of('resource doubled')?.value === 2000
+      && o39Of('resource quadrupled')?.value === 4000))
+  fail('oil 39', 'the three endowments read 1000 / 2000 / 4000');
+for (const s of ['base', 'doubled', 'quadrupled'])
+  if (!(o39Of(`price ${s}`)?.value === 1 && o39Of(`capital lifetime ${s}`)?.value === 2))
+    fail('oil 39', `${s}: per-copy price 1 and lifetime 2 — no cross-copy dots`);
+if (oil39g.nodes.some(n => n.label === 'price' || n.label === 'capital lifetime'))
+  fail('oil 39', 'no shared constants remain — the copies stay disconnected');
+const oil40g = JSON.parse(M.go(EX_OIL40));
+const o40Of = label => oil40g.nodes.find(n => n.label === label);
+if (oil40g.nodes.length !== 72)   // 4 copies x 18, the 37 & 38 census
+  fail('oil 40', `72 nodes expected, got ${oil40g.nodes.length}`);
+if (oil40g.links.filter(l => l.type === 'flow').length !== 24 || oil40g.links.length !== 68)
+  fail('oil 40', '24 flows + 44 arrows expected (11 per copy, fully per-copy wiring)');
+if (new Set(oil40g.nodes.map(n => n.group).filter(g => g != null)).size !== 8)
+  fail('oil 40', '8 bands expected — a capital and a resource band per copy');
+for (const [stock, tags] of [['capital at seven', ['R0', 'B1', 'B2']], ['capital at five', ['R3', 'B4', 'B5']],
+                             ['capital at three', ['R6', 'B7', 'B8']], ['capital at one', ['R9', 'B10', 'B11']]])
+  if (JSON.stringify(o40Of(stock)?.loop) !== JSON.stringify(tags))
+    fail('oil 40', `${stock} should be in ${tags}, got ${JSON.stringify(o40Of(stock)?.loop)}`);
+if (!(o40Of('growth goal at seven')?.expr?.kind === '*' && o40Of('growth goal at five')?.expr?.kind === 'ref'
+      && o40Of('growth goal at three')?.expr?.kind === '*' && o40Of('growth goal at one')?.expr?.kind === '*'))
+  fail('oil 40', 'the goals differ only in their coefficient (the five copy reads capital bare)');
+const oil41g = JSON.parse(M.go(EX_OIL41));
+const o41Of = label => oil41g.nodes.find(n => n.label === label);
+if (oil41g.nodes.length !== 18)   // the 37 & 38 census
+  fail('oil 41', `18 nodes expected, got ${oil41g.nodes.length}`);
+if (oil41g.links.filter(l => l.type === 'flow').length !== 6 || oil41g.links.length !== 18)
+  fail('oil 41', '6 flows + 12 arrows expected — scarcity pricing restores the yield -> price arrow');
+if (!(o41Of('price')?.expr?.kind === '/' && o41Of('price')?.value === undefined))
+  fail('oil 41', 'price is the saturating scarcity formula, not a constant');
+if (o41Of('profit')?.expr?.kind !== '-')
+  fail('oil 41', 'profit nets the operating cost (a subtraction at the top)');
+if (JSON.stringify(o41Of('capital')?.loop) !== JSON.stringify(['R0', 'B1', 'B2']))
+  fail('oil 41', 'capital keeps its three loop tags');
+const fish42 = JSON.parse(M.go(EX_FISH42));
+const f42Of = label => fish42.nodes.find(n => n.label === label);
+if (fish42.nodes.length !== 23)   // 4 clouds, 4 faucets, 2 stocks, 6 dots, 7 ports
+  fail('fish 42', `23 nodes expected, got ${fish42.nodes.length}`);
+if (fish42.links.filter(l => l.type === 'flow').length !== 8 || fish42.links.length !== 23)
+  fail('fish 42', '8 flows + 15 arrows expected (harvest -> profit restored)');
+if (!fish42.links.some(l => l.source === f42Of('harvest')?.id && l.target === f42Of('profit')?.id))
+  fail('fish 42', 'the harvest -> profit arrow is drawn (the tail circle on the tap)');
+if (fish42.nodes.some(n => n.value !== undefined || n.expr !== undefined))
+  fail('fish 42', 'the structure figure carries no numbers');
+const fish43 = JSON.parse(M.go(EX_FISH43));
+const f43Of = label => fish43.nodes.find(n => n.label === label);
+if (fish43.nodes.length !== 23)   // same census as fish 42, formulas instead of hand arrows
+  fail('fish 43', `23 nodes expected, got ${fish43.nodes.length}`);
+if (fish43.links.filter(l => l.type === 'flow').length !== 8 || fish43.links.length !== 22)
+  fail('fish 43', '8 flows + 14 arrows expected (constant price drops yield -> price; the profit shift redraws harvest -> profit, its old yield -> profit ref gone)');
+if (!fish43.links.some(l => l.source === f43Of('harvest')?.id && l.target === f43Of('profit')?.id))
+  fail('fish 43', 'the shift input implies the book\'s harvest -> profit arrow');
+if (fish43.links.some(l => l.source === f43Of('yield per unit capital')?.id && l.target === f43Of('profit')?.id))
+  fail('fish 43', 'profit no longer reads the yield curve directly');
+const shift43 = f43Of('profit')?.expr?.left?.right;
+if (!(f43Of('profit')?.expr?.kind === '-' && shift43?.kind === 'smooth'
+      && shift43?.input?.id === f43Of('harvest')?.id && shift43?.time?.value === 0.1))
+  fail('fish 43', 'profit reads the harvest faucet through the 0.1 perception smooth');
+if (!(f43Of('yield per unit capital')?.expr?.kind === '^'))
+  fail('fish 43', 'the yield curve is the squared law — a ^-kind expr');
+if (!(f43Of('capital lifetime')?.expr?.kind === '/' && f43Of('regeneration rate')?.expr?.kind === '*'))
+  fail('fish 43', 'lifetime is the (4 / 3) formula and the rate the depensation hump');
+if (!(f43Of('capital')?.value === 5 && f43Of('resource')?.value === 1000 && f43Of('price')?.value === 1))
+  fail('fish 43', 'initial levels and the constant price');
+if (JSON.stringify(f43Of('capital')?.loop) !== JSON.stringify(['R0', 'B1', 'B2']))
+  fail('fish 43', 'capital keeps its three loop tags');
+const fish44 = JSON.parse(M.go(EX_FISH44));
+const f44Of = label => fish44.nodes.find(n => n.label === label);
+if (fish44.nodes.length !== 23 || fish44.links.length !== 22)
+  fail('fish 44', `the one-line diff keeps the 43 census, got ${fish44.nodes.length} nodes / ${fish44.links.length} links`);
+const yield44 = f44Of('yield per unit capital')?.expr;
+if (!(yield44?.kind === '/' && yield44?.left?.left?.value === 1.27
+      && yield44?.right?.right?.value === 0.27 && yield44?.left?.right?.right?.value === 2.8))
+  fail('fish 44', 'the saturating technology curve — 1.27 x^2.8 over x^2.8 + 0.27');
+const shift44 = f44Of('profit')?.expr?.left?.right;
+if (!(shift44?.kind === 'smooth' && shift44?.input?.id === f44Of('harvest')?.id))
+  fail('fish 44', 'the same season-late profit read as 43');
+const fish45 = JSON.parse(M.go(EX_FISH45));
+const f45Of = label => fish45.nodes.find(n => n.label === label);
+if (fish45.nodes.length !== 23 || fish45.links.length !== 22)
+  fail('fish 45', `the one-constant diff keeps the census, got ${fish45.nodes.length} nodes / ${fish45.links.length} links`);
+const yield45 = f45Of('yield per unit capital')?.expr;
+if (!(yield45?.kind === '/' && yield45?.left?.left?.value === 1.01
+      && yield45?.right?.right?.value === 0.01 && yield45?.left?.right?.right?.value === 2.8))
+  fail('fish 45', 'figure 44\'s Hill curve with the half-yield point at 0.01');
+const chain47 = JSON.parse(M.go(EX_CHAIN47));
+if (chain47.nodes.length !== 9)   // 2 clouds, 4 faucets, 3 stocks — no info arrows, so no ports
+  fail('chain 47', `9 nodes expected, got ${chain47.nodes.length}`);
+if (chain47.links.length !== 8 || !chain47.links.every(l => l.type === 'flow'))
+  fail('chain 47', 'one straight pipe: 8 flow links and not a single info arrow');
+if (!chain47.nodes.every(n => n.group === 0))
+  fail('chain 47', 'one band — the whole chain lies on a single line');
+const c47Source = chain47.nodes.find(n => n.type === 'cloud' && !chain47.links.some(l => l.target === n.id));
+const c47Path = [];
+for (let l = chain47.links.find(x => x.source === c47Source?.id); l; l = chain47.links.find(x => x.source === l.target))
+  c47Path.push(chain47.nodes.find(n => n.id === l.target)?.label);
+if (JSON.stringify(c47Path) !== JSON.stringify(['raw materials processing', 'raw materials', 'production',
+    'inventory', 'sales', 'consumers home stocks', 'depreciation or discard', '|']))
+  fail('chain 47', `cloud-to-cloud walk out of order: ${JSON.stringify(c47Path)}`);
+if (chain47.nodes.some(n => n.value !== undefined || n.expr !== undefined || n.loop !== undefined))
+  fail('chain 47', 'the structure figure carries no numbers and no loops');
+const pop48 = JSON.parse(M.go(EX_POP48));
+if (pop48.nodes.length !== 5 || pop48.links.length !== 4)   // 2 clouds, 2 faucets, 1 stock
+  fail('pop 48', `5 nodes / 4 links expected, got ${pop48.nodes.length} / ${pop48.links.length}`);
+if (!pop48.links.every(l => l.type === 'flow') || !pop48.nodes.every(n => n.group === 0))
+  fail('pop 48', 'one bare pipe on one band — no info arrows');
+const p48Stock = pop48.nodes.find(n => n.type === 'stock');
+if (!(p48Stock?.label === 'population'
+      && pop48.links.some(l => l.source === pop48.nodes.find(n => n.label === 'births')?.id && l.target === p48Stock?.id)
+      && pop48.links.some(l => l.source === p48Stock?.id && l.target === pop48.nodes.find(n => n.label === 'deaths')?.id)))
+  fail('pop 48', 'births fills population, deaths drains it');
+if (pop48.nodes.some(n => n.value !== undefined || n.loop !== undefined))
+  fail('pop 48', 'figure 21\'s skeleton stays value-less and loop-less');
+const trio49 = JSON.parse(M.go(EX_TRIO49));
+const t49Of = label => trio49.nodes.find(n => n.label === label);
+if (trio49.nodes.length !== 17)   // 7 clouds, 7 faucets, 3 stocks — no info arrows, so no ports
+  fail('trio 49', `17 nodes expected, got ${trio49.nodes.length}`);
+if (trio49.links.length !== 14 || !trio49.links.every(l => l.type === 'flow'))
+  fail('trio 49', '14 flow links and not a single info arrow');
+if (!(t49Of('criminals in jail')?.group === 0 && t49Of('fuel rods in nuclear power plants')?.group === 1
+      && t49Of('registered unemployed')?.group === 2))
+  fail('trio 49', 'three disconnected bands in statement order');
+const t49Out = trio49.links.filter(l => l.source === t49Of('registered unemployed')?.id)
+  .map(l => trio49.nodes.find(n => n.id === l.target)?.label);
+if (JSON.stringify(t49Out) !== JSON.stringify(['hiring rate', 'registration lapses']))
+  fail('trio 49', `unemployed drains through hiring rate (the band) then registration lapses (the branch), got ${JSON.stringify(t49Out)}`);
+if (trio49.links.filter(l => l.target === t49Of('registered unemployed')?.id).length !== 1)
+  fail('trio 49', 'one inflow — the layoff rate');
+if (trio49.nodes.some(n => n.value !== undefined || n.loop !== undefined))
+  fail('trio 49', 'the structure figure carries no numbers and no loops');
 
 console.log(failures ? `${failures} FAILURE(S)` : 'ALL CHECKS PASSED');
 process.exit(failures ? 1 : 0);
