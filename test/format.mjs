@@ -26,16 +26,16 @@ const expect = (label, input, want) => {
 };
 expect('schedule + stock value', '|=>inflow: 0 @5: 5[water in tub: 50]=>outflow: 5|',
   '| =>inflow: 0 @5: 5 [water in tub: 50] =>outflow: 5 |');
-expect('smooth schedule, negatives; the marker tilde hugs its time', 'outside temperature: 10 ~ 4.5: -5 -> discrepancy',
-  'outside temperature: 10 ~4.5: -5 -> discrepancy');
+expect('schedule negatives; the marker hugs its time', 'outside temperature: 10 @ 4.5: -5 -> discrepancy',
+  'outside temperature: 10 @4.5: -5 -> discrepancy');
 expect('loop arrows breathe', 'R(investment<-profit<-capital)',
   'R(investment <- profit <- capital)');
 expect('loop tail', 'B(heating <- discrepancy)<-thermostat setting',
   'B(heating <- discrepancy) <- thermostat setting');
 expect('formula ops breathe, juxtaposition stays tight', 'y: (capital/3 + 2x + 2(x + 1))',
   'y: (capital / 3 + 2x + 2(x + 1))');
-expect('shifts glue their paren, the shift tilde breathes', 'perceived sales: (sales(t~perception delay))',
-  'perceived sales: (sales(t ~ perception delay))');
+expect('shifts glue their paren, the shift minus breathes', 'deliveries: (orders(t-delivery delay))',
+  'deliveries: (orders(t - delivery delay))');
 expect('^ is tight on both sides', 'y: (2 x ^ 2 + 3)', 'y: (2x^2 + 3)');
 expect('name-group juxtaposition tightens in formulas', 'y: (x (a + 1))', 'y: (x(a + 1))');
 expect('bare = canonicalizes to =>', 'a=j', 'a =>j');

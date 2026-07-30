@@ -78,7 +78,7 @@ const EX_THERMO19 = `|=>heat from furnace: 1.2[room temperature: 10]=>heat to ou
 B(heat from furnace <- discrepancy between desired and actual room temperatures <- room temperature)
 thermostat setting: 18 -> discrepancy between desired and actual room temperatures
 B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
-outside temperature: 10 ~1: 7 ~2: 4 ~3: 0 ~4: -3 ~4.5: -5 ~5.5: -3 ~6: 0 ~7: 4 ~8: 7 ~9: 10 -> discrepancy between inside and outside temperatures`;
+outside temperature: 10 @0.5: 8.5 @1: 7 @1.5: 5.5 @2: 4 @2.5: 2 @3: 0 @3.5: -1.5 @4: -3 @4.5: -5 @5: -4 @5.5: -3 @6: 0 @6.5: 2 @7: 4 @7.5: 5.5 @8: 7 @8.5: 8.5 @9: 10 -> discrepancy between inside and outside temperatures`;
 
 // figures 21 & 22: the population system — one stock, a reinforcing births
 // loop and a balancing deaths loop, fertility and mortality as the valued
@@ -97,13 +97,13 @@ B(deaths <- population)
 fertility: 0.21 -> births
 mortality: 0.3 -> deaths`;
 
-// figures 21 & 24: fertility falls smoothly to meet mortality by t=2 — the
+// figures 21 & 24: fertility staircases down to meet mortality by t=2 — the
 // scheduled FACTOR dot (goal dots had schedules already; this pins one on a
 // reinforcing loop's constant).
 const EX_POP24 = `|=>births[population: 6.6]=>deaths|
 R(births <- population)
 B(deaths <- population)
-fertility: 0.21 ~2: 0.09 -> births
+fertility: 0.21 @0.5: 0.18 @1: 0.15 @1.5: 0.12 @2: 0.09 -> births
 mortality: 0.09 -> deaths`;
 
 // figures 21 & 26: shifting dominance — fertility above mortality, then
@@ -112,7 +112,7 @@ mortality: 0.09 -> deaths`;
 const EX_POP26 = `|=>births[population: 6.6]=>deaths|
 R(births <- population)
 B(deaths <- population)
-fertility: 0.21 ~2.5: 0.09 ~4.5: 0.09 ~7: 0.27 ~10: 0.36 -> births
+fertility: 0.21 @0.5: 0.182 @1: 0.15 @1.5: 0.121 @2: 0.099 @2.5: 0.09 @5: 0.105 @5.5: 0.143 @6: 0.191 @6.5: 0.238 @7: 0.27 @7.5: 0.289 @8: 0.306 @8.5: 0.32 @9: 0.333 @9.5: 0.346 @10: 0.36 -> births
 mortality: 0.09 -> deaths`;
 
 // figure 25: the three scenarios side by side — the same two-loop structure
@@ -130,7 +130,7 @@ mortality b: 0.3 -> deaths b
 |=>births c[stabilization: 6.6]=>deaths c|
 R(births c <- stabilization)
 B(deaths c <- stabilization)
-fertility c: 0.21 ~2: 0.09 -> births c
+fertility c: 0.21 @0.5: 0.18 @1: 0.15 @1.5: 0.12 @2: 0.09 -> births c
 mortality c: 0.09 -> deaths c`;
 
 // figure 27: the capital archetype as pure structure — the population
@@ -208,19 +208,20 @@ response delay -> orders to factory
 perception delay -> perceived sales`;
 
 // figures 31 & 32 (and 35/36 by the response delay alone): the dealership
-// with its delays LIVE — perceived sales reads the sales flow smoothed
-// (`sales(t ~ perception delay)`), deliveries the orders pipeline-delayed
-// (`(t - delivery delay)`), and the response delay divides the
-// discrepancy. One time unit = 10 days (the 29 & 30 scaling), rates in cars
-// per unit: demand 200 → 220 at t = 2.5, perception/delivery delays 0.5
-// (5 days), response delay 0.3 / 0.2 / 0.6 (3 / 2 / 6 days).
+// with its delays LIVE — perceived sales reads the sales flow as it was
+// half a unit ago (`sales(t - perception delay)`), deliveries the orders
+// pipeline-delayed (`(t - delivery delay)`), and the response delay
+// divides the discrepancy. Both shifts mint NO nodes, so the census stays
+// exactly figure 31's. One time unit = 10 days (the 29 & 30 scaling),
+// rates in cars per unit: demand 200 → 220 at t = 2.5, perception/delivery
+// delays 0.5 (5 days), response delay 0.3 / 0.2 / 0.6 (3 / 2 / 6 days).
 const car32 = (rd) => `| =>deliveries [inventory of cars on the lot: 200] =>sales |
 B(deliveries <- orders to factory <- discrepancy <- inventory of cars on the lot)
 orders to factory: (perceived sales + discrepancy / response delay)
 deliveries: (orders to factory(t - delivery delay))
 discrepancy: (desired inventory - inventory of cars on the lot)
 desired inventory: (perceived sales)
-perceived sales: (sales(t ~ perception delay))
+perceived sales: (sales(t - perception delay))
 sales: (customer demand)
 customer demand: 200 @2.5: 220
 perception delay: 0.5
@@ -370,13 +371,13 @@ regeneration <- regeneration rate <- resource -> regeneration`;
 
 // figures 42 & 43: the sustainable fishery (1 unit = 15 years), with the
 // book's overshoot-and-settle. The 5%/yr growth goal (1.5 capital), profit
-// as income perceived a season late (price * harvest(t ~ 0.1) - 1.75
-// capital — a faucet read through a shift, which restores the book's
-// harvest -> profit arrow), and the depensation regeneration hump
-// 112 (x(1 - x))^2 peaking above the settle point: harvest crests ~272/yr
-// then settles ~233/yr, capital ~1450 -> ~1398, the resource 1000 -> ~485
-// -> 500. ONE button, opening in the flows view — all three panels at
-// once.
+// as income read off the catch a season late (price * harvest(t - 0.1) -
+// 1.75 capital — a faucet read through the pipeline shift, which mints no
+// nodes and restores the book's harvest -> profit arrow), and the
+// depensation regeneration hump 112 (x(1 - x))^2 peaking above the settle
+// point: harvest crests ~271/yr then settles ~233/yr, capital ~1450 ->
+// ~1397, the resource 1000 -> ~484 -> 500. ONE button, opening in the
+// flows view — all three panels at once.
 const EX_FISH43 = `| =>investment [capital: 5] =>depreciation |
 | =>regeneration [resource: 1000] =>harvest |
 R(investment <- profit <- capital)
@@ -387,7 +388,7 @@ growth goal: (1.5 capital)
 depreciation: (capital / capital lifetime)
 capital lifetime: (4 / 3)
 harvest: (10 capital * yield per unit capital)
-profit: (price * harvest(t ~ 0.1) - 1.75 capital)
+profit: (price * harvest(t - 0.1) - 1.75 capital)
 price: 1
 yield per unit capital: ((resource / 1000)^2)
 regeneration: (resource * regeneration rate)
@@ -397,10 +398,10 @@ regeneration rate: (112 (resource / 1000 * (1 - resource / 1000))^2)`;
 // yield curve becomes the saturating technology curve (Hill form
 // 1.27 x^2.8 / (x^2.8 + 0.27), exactly 1 at carrying capacity): boats
 // catch near full efficiency down past half density, then the curve
-// cliffs. The bind slides to R ~380 and the perception lag turns 43's
-// single ring into a sustained cycle: harvest ~100-231/yr under a
-// ~277/yr crest, capital 765-1113, resource 309-477, period ~21 years.
-// ONE button, opening in the flows view — all three panels at once.
+// cliffs. The bind slides to R ~380 and the season-late profit read turns
+// 43's single ring into a sustained cycle: harvest cycling under a
+// ~277/yr crest, capital topping ~1115, resource bottoming ~308, period
+// ~21 years. ONE button, opening in the flows view.
 const EX_FISH44 = EX_FISH43.replace(
   'yield per unit capital: ((resource / 1000)^2)',
   'yield per unit capital: ((1.27 (resource / 1000)^2.8) / ((resource / 1000)^2.8 + 0.27))');
@@ -409,7 +410,7 @@ const EX_FISH44 = EX_FISH43.replace(
 // constant moved, the half-yield point 0.27 -> 0.01 (yield holds above
 // half strength until the fish fall below ~a fifth of carrying
 // capacity). Harvest crests ~322/yr then cliffs to zero, capital tents
-// at ~630 and rots at pure depreciation, the resource is stripped to ~2%
+// at ~634 and rots at pure depreciation, the resource is stripped to ~2%
 // and never comes back: the book's overshoot-and-collapse. ONE button,
 // opening in the flows view.
 const EX_FISH45 = EX_FISH44.replace(
@@ -520,10 +521,6 @@ const goldenInputs = [
   'a: 5\na: 9',   // the first dot constant wins
   'out: 10 @2: -5',
   '[a: -5]',
-  // Smooth (`~`) schedules: same shape, `smooth: true` in the JSON — the
-  // simulator interpolates a curve through the points instead of stepping.
-  'a=>f: 0 ~5: 5',
-  'out: 10 ~2: -5 ~4: 10',
   // Formulas: `: (expr)` — refs resolve to ids, serialized as a nested
   // `expr` tree, and each reference draws its implied info arrow (dedup'd
   // against hand-drawn ones).
@@ -531,15 +528,14 @@ const goldenInputs = [
   '[capital: 100]\noutput: (capital / 3)',
   'a -> b\nb: (a)',
   'a=>f: (a)|',
-  // Time shifts: {kind: "smooth"|"delay", input, time} in the expr tree —
-  // x(t ~ T) smooths, x(t - T) pipelines — arrows from both the input and
-  // the time, faucets readable as the input, and state-through-the-shift
-  // self-reference legal.
-  'a: (x(t ~ 0.5))',
+  // Time shifts: {kind: "delay", input, time} in the expr tree —
+  // x(t - T) pipelines — arrows from both the input and the time, faucets
+  // readable as the input, and state-through-the-shift self-reference
+  // legal.
   'd: 2\na: (x(t - d))',
-  'a: (a(t ~ 1))',
-  's=>f\na: (f(t ~ 1))',
-  'a: (x(t ~ 1)(t - 2))',   // shifts chain left to right
+  'a: (a(t - 1))',
+  's=>f\na: (f(t - 1))',
+  'a: (x(t - 1)(t - 2))',   // shifts chain left to right
   'a: (x(t))',              // the identity shift is just x
   'a: (x(t -3))',           // a signed literal folds into the delay
   'a: ((x + y)(t - 1))',    // a paren group takes a shift
@@ -623,9 +619,8 @@ const errorCases = [
   ['[a: 1 @2: 3]', /^Parsing error: line 1, column 7: /],   // stocks: single value only
   ['a @ b',        /^Parsing error: line 1, column 3: /],   // '@' lives inside annotations
   ['a, b',         /^Tokenization error: line 1, column 2: /],  // ',' left the language
-  ['a: 5 ~',       /^Parsing error: line 1, column 6: /],   // '~' step needs a time
-  ['a=>f: 0 @2: 1 ~3: 2', /^Parsing error: line 1, column 15: /],  // one schedule, one marker
-  ['a=>f: 0 ~2: 1 @3: 2', /^Parsing error: line 1, column 15: /],  // (either way round)
+  ['a: 5 ~',       /^Tokenization error: line 1, column 6: /],   // '~' left the language
+  ['a=>f: 0 @2: 1 ~3: 2', /^Tokenization error: line 1, column 15: /],  // (no smooth schedules)
   // Formulas
   ['a: ()',        /^Parsing error: line 1, column 5: /],   // an empty formula
   ['a: (x',        /^Parsing error: line 1, column 5: /],   // unclosed formula
@@ -633,10 +628,11 @@ const errorCases = [
   ['[a: (x)]',     /^Parsing error: line 1, column 5: /],   // stocks take numbers, not formulas
   ['x=>f\na: (f)', /^Model error: /],                       // a formula cannot read a faucet
   ['a: (b)\nb: (a)', /^Model error: /],                     // formula cycles have no order
-  // Time shifts: `(t` after a name or group, `-`/`~` the only shift
-  // operators, one term of time, and the time still may not read a faucet
+  // Time shifts: `(t` after a name or group, `-` the only shift operator,
+  // one term of time, and the time still may not read a faucet
   ['a: (t)',            /^Parsing error: line 1, column 5: /],   // t is the time variable, not a name
-  ['a: (x(t + 1))',     /^Parsing error: line 1, column 9: /],   // only - and ~ shift time
+  ['a: (x(t + 1))',     /^Parsing error: line 1, column 9: /],   // only - shifts time
+  ['a: (x(t ~ 1))',     /^Tokenization error: line 1, column 9: /],  // the smooth shift is gone
   ['a: (x(t - 3 - d))', /^Parsing error: line 1, column 13: /],  // a compound time needs parens
   ['s=>f\na: (x(t - f))', /^Model error: /],                     // a shift time is a value, not a flow
 ];
@@ -740,14 +736,15 @@ if (!(pOf('fertility')?.type === 'dot' && pOf('fertility')?.value === 0.21 && pO
   fail('population model', 'fertility should be an un-tagged dot valued 0.21');
 const pop24 = JSON.parse(M.go(EX_POP24));
 const fert24 = pop24.nodes.find(n => n.label === 'fertility');
-if (!(fert24?.value === 0.21 && fert24?.smooth === true
-      && JSON.stringify(fert24?.steps) === JSON.stringify([{ value: 0.09, at: 2 }])))
-  fail('population 24', `fertility should carry the smooth schedule, got ${JSON.stringify(fert24)}`);
+if (!(fert24?.value === 0.21 && fert24?.smooth === undefined
+      && JSON.stringify(fert24?.steps) === JSON.stringify(
+        [{ value: 0.18, at: 0.5 }, { value: 0.15, at: 1 }, { value: 0.12, at: 1.5 }, { value: 0.09, at: 2 }])))
+  fail('population 24', `fertility should carry the staircase down to replacement, got ${JSON.stringify(fert24)}`);
 const fert26 = JSON.parse(M.go(EX_POP26)).nodes.find(n => n.label === 'fertility');
-if (!(fert26?.value === 0.21 && fert26?.smooth === true
-      && JSON.stringify(fert26?.steps) === JSON.stringify(
-        [{ value: 0.09, at: 2.5 }, { value: 0.09, at: 4.5 }, { value: 0.27, at: 7 }, { value: 0.36, at: 10 }])))
-  fail('population 26', `fertility should carry the four-step smooth schedule, got ${JSON.stringify(fert26)}`);
+if (!(fert26?.value === 0.21 && fert26?.steps?.length === 16
+      && JSON.stringify(fert26?.steps?.[0]) === JSON.stringify({ value: 0.182, at: 0.5 })
+      && JSON.stringify(fert26?.steps?.[15]) === JSON.stringify({ value: 0.36, at: 10 })))
+  fail('population 26', `fertility should carry the 16-step rebound staircase, got ${JSON.stringify(fert26)}`);
 const pop25 = JSON.parse(M.go(EX_POP25));
 if (pop25.nodes.length !== 27) fail('population 25', `27 nodes expected (21 + 6 ports), got ${pop25.nodes.length}`);
 if (new Set(pop25.nodes.map(n => n.group).filter(g => g != null)).size !== 3)
@@ -834,7 +831,7 @@ if (car31.nodes.some(n => n.value !== undefined || n.expr !== undefined))
 const car32g = JSON.parse(M.go(EX_CAR3132));
 const c32Of = label => car32g.nodes.find(n => n.label === label);
 if (car32g.nodes.length !== 14)   // 2 clouds, 2 faucets, 1 stock, 8 dots, 1 port
-  fail('car 32', `14 nodes expected, got ${car32g.nodes.length}`);
+  fail('car 32', `14 nodes expected — the shifts mint nothing, figure 31's census — got ${car32g.nodes.length}`);
 if (car32g.links.filter(l => l.type === 'flow').length !== 4 || car32g.links.length !== 15)
   fail('car 32', '4 flows + 11 arrows expected (formula arrows dedup against the B chain)');
 if (!(c32Of('deliveries')?.expr?.kind === 'delay'
@@ -842,12 +839,12 @@ if (!(c32Of('deliveries')?.expr?.kind === 'delay'
       && c32Of('deliveries')?.expr?.input?.id === c32Of('orders to factory')?.id
       && c32Of('deliveries')?.expr?.time?.id === c32Of('delivery delay')?.id))
   fail('car 32', `deliveries should be delay(orders, delivery delay), got ${JSON.stringify(c32Of('deliveries')?.expr)}`);
-if (!(c32Of('perceived sales')?.expr?.kind === 'smooth'
+if (!(c32Of('perceived sales')?.expr?.kind === 'delay'
       && c32Of('perceived sales')?.expr?.input?.id === c32Of('sales')?.id
       && c32Of('perceived sales')?.expr?.time?.id === c32Of('perception delay')?.id))
-  fail('car 32', `perceived sales should be smooth(sales, perception delay), got ${JSON.stringify(c32Of('perceived sales')?.expr)}`);
+  fail('car 32', `perceived sales should be delay(sales, perception delay), got ${JSON.stringify(c32Of('perceived sales')?.expr)}`);
 if (c32Of('sales')?.type !== 'faucet')
-  fail('car 32', 'the smoothed input is the sales FAUCET — a perceived flow');
+  fail('car 32', 'the delayed input is the sales FAUCET — a perceived flow');
 if (!(c32Of('customer demand')?.value === 200
       && JSON.stringify(c32Of('customer demand')?.steps) === JSON.stringify([{ value: 220, at: 2.5 }])))
   fail('car 32', `customer demand steps 200 -> 220 at t=2.5, got ${JSON.stringify(c32Of('customer demand'))}`);
@@ -952,7 +949,7 @@ if (fish42.nodes.some(n => n.value !== undefined || n.expr !== undefined))
 const fish43 = JSON.parse(M.go(EX_FISH43));
 const f43Of = label => fish43.nodes.find(n => n.label === label);
 if (fish43.nodes.length !== 23)   // same census as fish 42, formulas instead of hand arrows
-  fail('fish 43', `23 nodes expected, got ${fish43.nodes.length}`);
+  fail('fish 43', `23 nodes expected — the shift mints nothing, figure 42's census — got ${fish43.nodes.length}`);
 if (fish43.links.filter(l => l.type === 'flow').length !== 8 || fish43.links.length !== 22)
   fail('fish 43', '8 flows + 14 arrows expected (constant price drops yield -> price; the profit shift redraws harvest -> profit, its old yield -> profit ref gone)');
 if (!fish43.links.some(l => l.source === f43Of('harvest')?.id && l.target === f43Of('profit')?.id))
@@ -960,9 +957,9 @@ if (!fish43.links.some(l => l.source === f43Of('harvest')?.id && l.target === f4
 if (fish43.links.some(l => l.source === f43Of('yield per unit capital')?.id && l.target === f43Of('profit')?.id))
   fail('fish 43', 'profit no longer reads the yield curve directly');
 const shift43 = f43Of('profit')?.expr?.left?.right;
-if (!(f43Of('profit')?.expr?.kind === '-' && shift43?.kind === 'smooth'
+if (!(f43Of('profit')?.expr?.kind === '-' && shift43?.kind === 'delay'
       && shift43?.input?.id === f43Of('harvest')?.id && shift43?.time?.value === 0.1))
-  fail('fish 43', 'profit reads the harvest faucet through the 0.1 perception smooth');
+  fail('fish 43', 'profit reads the harvest faucet through the 0.1 pipeline delay');
 if (!(f43Of('yield per unit capital')?.expr?.kind === '^'))
   fail('fish 43', 'the yield curve is the squared law — a ^-kind expr');
 if (!(f43Of('capital lifetime')?.expr?.kind === '/' && f43Of('regeneration rate')?.expr?.kind === '*'))
@@ -980,7 +977,7 @@ if (!(yield44?.kind === '/' && yield44?.left?.left?.value === 1.27
       && yield44?.right?.right?.value === 0.27 && yield44?.left?.right?.right?.value === 2.8))
   fail('fish 44', 'the saturating technology curve — 1.27 x^2.8 over x^2.8 + 0.27');
 const shift44 = f44Of('profit')?.expr?.left?.right;
-if (!(shift44?.kind === 'smooth' && shift44?.input?.id === f44Of('harvest')?.id))
+if (!(shift44?.kind === 'delay' && shift44?.input?.id === f44Of('harvest')?.id))
   fail('fish 44', 'the same season-late profit read as 43');
 const fish45 = JSON.parse(M.go(EX_FISH45));
 const f45Of = label => fish45.nodes.find(n => n.label === label);

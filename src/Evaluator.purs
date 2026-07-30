@@ -23,7 +23,7 @@ import Data.Tuple (Tuple(..), fst)
 import Control.Alt ((<|>))
 import Control.Monad.State (State, runState, gets, modify_)
 import Lexer (loopLetter)
-import Parser (Annot(..), Formula(..), Tree(..), Id, Sched, Step, fnName, opString)
+import Parser (Annot(..), Formula(..), Tree(..), Id, Sched, Step, opString)
 import Simple.JSON (class WriteForeign, writeImpl)
 
 data NodeType = Dot | Stock | Faucet | Cloud | Port
@@ -40,44 +40,44 @@ instance writeForeignNodeType :: WriteForeign NodeType where
 -- | A formula with its references resolved to node ids (identity, not
 -- | spelling -- the same seam rule as links). Serializes as nested objects:
 -- | {kind: "num", value}, {kind: "ref", id}, {kind: "+"|"-"|"*"|"/", left,
--- | right}, {kind: "smooth"|"delay", input, time} -- directly evaluable by
--- | the simulator with no re-parsing.
-data RFormula = RNum Number | RRef String | RBin String RFormula RFormula | RCall String RFormula RFormula
+-- | right}, {kind: "delay", input, time} -- directly evaluable by the
+-- | simulator with no re-parsing.
+data RFormula = RNum Number | RRef String | RBin String RFormula RFormula | RCall RFormula RFormula
 derive instance eqRFormula :: Eq RFormula
 instance showRFormula :: Show RFormula where
   show (RNum n) = "RNum " <> show n
   show (RRef id) = "RRef " <> id
   show (RBin op l r) = "(" <> show l <> " " <> op <> " " <> show r <> ")"
-  show (RCall k input time) = show input <> "(t " <> (if k == "smooth" then "~" else "-") <> " " <> show time <> ")"
+  show (RCall input time) = show input <> "(t - " <> show time <> ")"
 instance writeForeignRFormula :: WriteForeign RFormula where
   writeImpl (RNum n) = writeImpl { kind: "num", value: n }
   writeImpl (RRef id) = writeImpl { kind: "ref", id }
   writeImpl (RBin op l r) = writeImpl { kind: op, left: l, right: r }
-  writeImpl (RCall k input time) = writeImpl { kind: k, input, time }
+  writeImpl (RCall input time) = writeImpl { kind: "delay", input, time }
 
 -- | The ids a formula references, in reference order, deduplicated. Time
--- | shifts count both sides: `sales(t ~ perception delay)` implies arrows
--- | from the perceived flow and the delay constant (figure 31 draws both).
+-- | shifts count both sides: `orders(t - delivery delay)` implies arrows
+-- | from the delayed flow and the delay constant (figure 31 draws both).
 refIds :: RFormula -> Array String
 refIds (RNum _) = []
 refIds (RRef id) = [ id ]
 refIds (RBin _ l r) = Array.nub (refIds l <> refIds r)
-refIds (RCall _ input time) = Array.nub (refIds input <> refIds time)
+refIds (RCall input time) = Array.nub (refIds input <> refIds time)
 
 -- | The ids whose CURRENT value a formula reads when evaluated -- the edges
--- | that matter for cycle detection. A time shift reads its own state (last
--- | step's smoothing level, the delay buffer), never its input's current
--- | value, so shifts break dependency cycles: `deliveries: (orders to
--- | factory(t - ...))` may sit on a loop that winds back to deliveries.
+-- | that matter for cycle detection. A time shift reads its own state (the
+-- | delay buffer), never its input's current value, so shifts break
+-- | dependency cycles: `deliveries: (orders to factory(t - ...))` may sit
+-- | on a loop that winds back to deliveries.
 eagerRefIds :: RFormula -> Array String
 eagerRefIds (RNum _) = []
 eagerRefIds (RRef id) = [ id ]
 eagerRefIds (RBin _ l r) = Array.nub (eagerRefIds l <> eagerRefIds r)
-eagerRefIds (RCall _ _ _) = []
+eagerRefIds (RCall _ _) = []
 
-type NodeRec = { ty :: NodeType, label :: String, value :: Maybe Number, steps :: Maybe (Array Step), smooth :: Maybe Boolean, expr :: Maybe RFormula, parent :: Maybe String }
+type NodeRec = { ty :: NodeType, label :: String, value :: Maybe Number, steps :: Maybe (Array Step), expr :: Maybe RFormula, parent :: Maybe String }
 
-type Node = { type :: NodeType, id :: String, label :: String, value :: Maybe Number, steps :: Maybe (Array Step), smooth :: Maybe Boolean, expr :: Maybe RFormula, parent :: Maybe String, group :: Maybe Int, loop :: Maybe (Array String) }
+type Node = { type :: NodeType, id :: String, label :: String, value :: Maybe Number, steps :: Maybe (Array Step), expr :: Maybe RFormula, parent :: Maybe String, group :: Maybe Int, loop :: Maybe (Array String) }
 type Link = { type :: String, source :: String, target :: String }
 type Graph = { nodes :: Array Node, links :: Array Link }
 
@@ -127,7 +127,7 @@ resolveNamed ty i name = do
       let newId = prefixFor ty <> show i
       modify_ \s -> s
         { registry = Map.insert name newId s.registry
-        , nodes = Map.insert newId { ty, label: name, value: Nothing, steps: Nothing, smooth: Nothing, expr: Nothing, parent: Nothing } s.nodes
+        , nodes = Map.insert newId { ty, label: name, value: Nothing, steps: Nothing, expr: Nothing, parent: Nothing } s.nodes
         }
       pure newId
 
@@ -140,7 +140,7 @@ cloudLabel = "|"
 freshAnon :: NodeType -> Id -> String -> Evaluator String
 freshAnon ty i label = do
   let newId = prefixFor ty <> show i
-  modify_ \s -> s { nodes = Map.insert newId { ty, label, value: Nothing, steps: Nothing, smooth: Nothing, expr: Nothing, parent: Nothing } s.nodes }
+  modify_ \s -> s { nodes = Map.insert newId { ty, label, value: Nothing, steps: Nothing, expr: Nothing, parent: Nothing } s.nodes }
   pure newId
 
 -- | Attach a value annotation (a stock's initial level, a faucet's rate, a
@@ -156,10 +156,9 @@ setValue id mval = modify_ \s ->
 
 -- | Attach a schedule (a faucet's rate, a dot's constant or driving curve).
 -- | Same first-wins spirit, but as a unit: the first mention carrying any
--- | annotation fixes the initial (`value`), the steps, and the smooth flag
--- | together; later annotations never overwrite any of them. An empty steps
--- | list serializes as no `steps` key at all, and `smooth` appears only
--- | when true (a `~` schedule).
+-- | annotation fixes the initial (`value`) and the steps together; later
+-- | annotations never overwrite either. An empty steps list serializes as
+-- | no `steps` key at all.
 setSched :: String -> Sched -> Evaluator Unit
 setSched id sch = modify_ \s ->
   s { nodes = Map.update upd id s.nodes }
@@ -167,7 +166,6 @@ setSched id sch = modify_ \s ->
   upd rec = Just $ if annotated rec then rec else rec
     { value = Just sch.initial
     , steps = if Array.null sch.steps then Nothing else Just sch.steps
-    , smooth = if sch.smooth then Just true else Nothing
     }
 
 -- | Already carrying an annotation? (a plain/scheduled value or a formula
@@ -198,7 +196,7 @@ portFor id = do
       let pid = prefixFor Port <> show n
       modify_ \s -> s
         { portCount = n + 1
-        , nodes = Map.insert pid { ty: Port, label: "", value: Nothing, steps: Nothing, smooth: Nothing, expr: Nothing, parent: Just id } s.nodes
+        , nodes = Map.insert pid { ty: Port, label: "", value: Nothing, steps: Nothing, expr: Nothing, parent: Just id } s.nodes
         }
       pure pid
     _ -> pure id
@@ -224,20 +222,20 @@ drawArrow source target = do
 -- | unseen names, exactly like a bare mention). A reference must land on a
 -- | stock or a dot -- a faucet has no value to read (v1) -- EXCEPT as a
 -- | time shift's input, where a faucet reference reads the flow's rate:
--- | that is how `sales(t ~ ...)` perceives a flow. The flag rides down
--- | through arithmetic; a shift's time resets it (a delay time is a value,
--- | not a flow).
+-- | that is how `orders(t - ...)` reads a delayed flow. The flag rides
+-- | down through arithmetic; a shift's time resets it (a delay time is a
+-- | value, not a flow).
 resolveFormula :: Boolean -> Formula -> Evaluator RFormula
 resolveFormula _ (FNum n) = pure (RNum n)
 resolveFormula inShift (FBin op l r) = RBin (opString op) <$> resolveFormula inShift l <*> resolveFormula inShift r
-resolveFormula _ (FCall kind input time) =
-  RCall (fnName kind) <$> resolveFormula true input <*> resolveFormula false time
+resolveFormula _ (FCall input time) =
+  RCall <$> resolveFormula true input <*> resolveFormula false time
 resolveFormula inShift (FRef i name) = do
   id <- resolveNamed Dot i name
   tyM <- gets \s -> map _.ty (Map.lookup id s.nodes)
   case tyM of
     Just Faucet | not inShift ->
-      setErr ("a formula may only reference stocks and dots; '" <> name <> "' is a faucet (a time shift like " <> name <> "(t ~ T) may read one)")
+      setErr ("a formula may only reference stocks and dots; '" <> name <> "' is a faucet (a time shift like " <> name <> "(t - T) may read one)")
     _ -> pure unit
   pure (RRef id)
 
@@ -459,7 +457,7 @@ evaluate trees =
       Tuple _ finalState = runState (traverse_ evaluateNode trees) initialState
       nodeArray = (Map.toUnfoldable finalState.nodes :: Array (Tuple String NodeRec))
       groupOf = computeGroups finalState
-      nodes = map (\(Tuple id v) -> { type: v.ty, id, label: v.label, value: v.value, steps: v.steps, smooth: v.smooth, expr: v.expr, parent: v.parent, group: Map.lookup id groupOf, loop: Map.lookup id finalState.loopTags }) nodeArray
+      nodes = map (\(Tuple id v) -> { type: v.ty, id, label: v.label, value: v.value, steps: v.steps, expr: v.expr, parent: v.parent, group: Map.lookup id groupOf, loop: Map.lookup id finalState.loopTags }) nodeArray
   in case finalState.err <|> formulaCycleError finalState.nodes of
        Just msg -> Left msg
        Nothing -> Right { nodes, links: finalState.links }

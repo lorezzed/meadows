@@ -90,8 +90,7 @@ JSON error string):
    - `R(` / `B(` → loop-open (`TokLoop`, exact uppercase two-char lexeme, tried
      before identifiers with backtracking — a bare `R`, `R->b`, or `Rx(` still
      lex as identifiers); `)` (`TokRParen`) closes the annotation
-   - `:` → `TokColon`, `@` → `TokAt`, `~` → `TokTilde` (the smoothness
-     mark, as a schedule marker and inside a time shift `x(t ~ T)`),
+   - `:` → `TokColon`, `@` → `TokAt`,
      `+` `-` `*` `/` `^` → formula operators
      (`TokPlus`/`TokMinus`/`TokStar`/`TokSlash`/`TokCaret`; a `-`
      directly followed by digits is a signed literal instead), and number
@@ -99,10 +98,13 @@ JSON error string):
      (digits with an optional `.digits` fraction and an optional leading `-`
      sign; no exponent — together they form value annotations like
      `[tub: 50]` and schedules like `=>inflow: 0 @5: 5` or figure 19's
-     `outside temperature: 10 ~4.5: -5 ...`). Operators lex before
+     `outside temperature: 10 @0.5: 8.5 @1: 7 ...`). Operators lex before
      numbers, so `->` is never mistaken for a sign; a digit *inside* a
      word stays part of the identifier (`a2` is one name); `5.` is a
-     tokenization error, and `,` is no longer part of the language at all
+     tokenization error, and `,` and `~` are not part of the language at
+     all (`~` once marked smooth schedules and smoothing shifts — both
+     were removed in favor of plain maths: denser `@` staircases and
+     explicit lag-stock structure)
 
 2. **`Parser.purs`** — `parse :: List PosToken -> Either String (List Tree)`, one `Tree`
    per newline-separated statement. A combinator parser over the token stream:
@@ -116,18 +118,17 @@ JSON error string):
    error). Stocks accept an optional `: N` initial
    value (`'[' NAME (':' NUMBER)? ']'`, `Maybe Number` on `StockExpr`);
    faucet and bare (dot) names accept an optional **schedule**
-   (`NAME (':' NUMBER (MARKER NUMBER ':' NUMBER)*)?` where MARKER is `@` or
-   `~`; e.g. `inflow: 0 @5: 5` = closed until t=5 then 5, or a single `: N`
+   (`NAME (':' NUMBER ('@' NUMBER ':' NUMBER)*)?`; e.g. `inflow: 0 @5: 5`
+   = closed until t=5 then 5, or a single `: N`
    constant like `room temperature: 18`) **or a parenthesized formula**
    (`: (expr)` — `+ - * / ^` with the usual precedence (`^` tightest and
    right-associative: `x^2y` is `(x^2) * y`, `2x^2` is 2·(x²)), implicit
    multiplication by juxtaposition with a name or group (`2x`, `2(a + b)`;
    note multi-word joining makes `output fraction` ONE name — write
    `output * fraction` to multiply), references to other nodes by name, a
-   `Formula` AST with per-reference minted ids, and the two **time
-   shifts** `x(t - T)` (the value x had exactly T ago — a pipeline delay)
-   and `x(t ~ T)` (the value *about* T ago — first-order exponential
-   smoothing, mean lag T) — `FCall FnKind`, minting NO id of its own. A
+   `Formula` AST with per-reference minted ids, and the one **time
+   shift** `x(t - T)` (the value x had exactly T ago — a pipeline delay) —
+   `FCall`, minting NO id of its own. A
    shift opens on the exact token pair `(t` after a name or a paren group
    (`peekShift`, a pure two-token peek — so `x(a + b)` stays juxtaposed
    multiplication, and `smooth`/`delay` are ordinary names everywhere).
@@ -137,14 +138,16 @@ JSON error string):
    multiplicative term — `x(t - 3 - d)` is a positioned error, write
    `x(t - (3 + d))` — a signed literal folds (`x(t -3)` ≡ `x(t - 3)`),
    `x(t)` is just x, and shifts chain left to right:
-   `x(t ~ 2)(t - 3)` delays the smoothed signal), carried as
+   `x(t - 2)(t - 3)` delays the delayed signal), carried as
    `Maybe Annot = Maybe (SchedAnnot Sched | FormulaAnnot Formula)` with
-   `Sched = { initial, steps :: Array { at, value }, smooth :: Boolean }`
+   `Sched = { initial, steps :: Array { at, value } }`
    on `Faucet*Expr` and `NodeExpr` — a scheduled dot is a *driving variable*
-   (figure 19's cold-day `outside temperature`). `@` steps hold
-   piecewise-constant; `~` steps mark the schedule smooth (interpolated).
-   One schedule uses one marker — the first step decides, and a step with
-   the other marker is a positioned error. A value anywhere else
+   (figure 19's cold-day `outside temperature`). Steps hold
+   piecewise-constant; a curve is written as a denser `@` staircase.
+   (Exponential smoothing is not a language feature — perception-style
+   reads use the pipeline shift itself, `sales(t - perception delay)`,
+   which mints no nodes, so a model's diagram keeps the book figure's
+   exact census.) A value anywhere else
    (`[a]: 5`, a bare `5`, a schedule on a stock) is a positioned parse
    error, and
    `valueTail`/`annotTail` consume nothing when no `:` follows, so id-minting
@@ -191,18 +194,17 @@ JSON error string):
      `setSched`, formulas through `setFormula`): the *first explicit*
      annotation for a
      name wins — value-less mentions never erase, later annotations never
-     overwrite, and a schedule wins *as a unit* (value + steps + smooth flag
-     together; `smooth: true` serializes only for `~` schedules; a formula
+     overwrite, and a schedule wins *as a unit* (value + steps together; a
+     formula
      counts as the annotation too — value vs formula, whichever came first).
      **Formulas** resolve their references through the registry (minting
      dots for unseen names), must land on stocks or dots (a faucet
      reference is a model error — EXCEPT as a time shift's INPUT, where
-     reading a faucet means perceiving the flow's
-     rate: figure 31's `sales(t ~ perception delay)`; the shift's time
-     keeps the error), serialize as a resolved `expr` tree
+     reading a faucet means reading the flow's rate:
+     `deliveries: (orders to factory(t - delivery delay))`; the shift's
+     time keeps the error), serialize as a resolved `expr` tree
      (`{kind: "num"|"ref"|"+"|"-"|"*"|"/"|"^"}` with ids, plus
-     `{kind: "smooth"|"delay", input, time}` for time shifts — `RFormula`;
-     the JSON kinds keep the historical names), and
+     `{kind: "delay", input, time}` for time shifts — `RFormula`), and
      auto-draw the info arrow each reference implies, shift inputs and
      times included (deduplicated against
      identical arrows already drawn — so `R(...)` annotations and formulas
@@ -217,7 +219,7 @@ JSON error string):
      value is its initial rate, overridden from each step's `at` time onward.
      The compiler just carries the numbers.
 
-   Output types: `Node = { type, id, label, value :: Maybe Number, steps :: Maybe (Array { at, value }), smooth :: Maybe Boolean, expr :: Maybe RFormula, parent :: Maybe String, group :: Maybe Int, loop :: Maybe (Array String) }`
+   Output types: `Node = { type, id, label, value :: Maybe Number, steps :: Maybe (Array { at, value }), expr :: Maybe RFormula, parent :: Maybe String, group :: Maybe Int, loop :: Maybe (Array String) }`
    (`Maybe` fields omit their JSON key on `Nothing` — goldens rely on that;
    `parent` appears only on ports), `Link = { type, source, target }`,
    `Graph = { nodes, links }`. `NodeType`
@@ -231,15 +233,12 @@ syntax): one statement per line (blank lines collapse), tokens space-separated
 except where a lexeme glues to its neighbor — brackets hug their stock, a colon
 hugs the name before it, faucet ops take their name (`| =>tree growth [wood in
 living trees]`; a bare `=` reprints as `=>`), schedule markers take their time
-(`@5: 5`, and `~4.5: -5` — a marker's tilde follows a NUMBER and hugs its
-time via `prev2`, a one-token memory, while a shift's tilde follows the `t`
-and breathes like an operator:
-`sales(t ~ perception delay)`), loop-opens and parens hug inward, `^` is
+(`@5: 5`), loop-opens and parens hug inward, `^` is
 tight on both sides (`2x^2`), and juxtaposed multiplication stays
 tight inside formula groups only (`2x`, `2(a + b)`, `x(a + b)` — which also
-glues time shifts: `sales(t ~ perception delay)`; `5 [stock]` at statement
+glues time shifts: `orders(t - delivery delay)`; `5 [stock]` at statement
 level keeps its space).
-Arrows, formula operators, and a shift's `-`/`~` breathe on both sides. Token-preserving (a name
+Arrows, formula operators, and a shift's `-` breathe on both sides. Token-preserving (a name
 followed by a number keeps its space — `x2` would re-lex as one identifier;
 numbers reprint from their value, integral ones without `.0`) and total: input
 that doesn't lex comes back untouched. `test/format.mjs` pins the reference
@@ -382,10 +381,9 @@ the diagram's figure 5):
   auxiliary (dots), evaluated per step over current levels and dot values
   (memoized per step; non-finite arithmetic like division by zero reads as
   0); a formula faucet overrides the goal/factor heuristics. Every schedule
-  is read through the exported `scheduleFn` — `@` steps hold piecewise-constant (`value`
-  from t=0, overridden by each entry from its `at` time on; both default
-  0), `~` steps interpolate a monotone cubic (Fritsch–Carlson, exact at the
-  points, no overshoot, flat outside them) — sampled at each step's start. Faucet
+  is read through the exported `scheduleFn` — steps hold piecewise-constant
+  (`value` from t=0, overridden by each entry from its `at` time on; both
+  default 0; a curve is a denser staircase) — sampled at each step's start. Faucet
   source/sink stocks come from flow-link direction, clouds/dots infinite.
   Info-arrow endpoints resolve through ports to their parent stock before any
   walk (`faucetWiring`), so the compiler's port indirection is invisible to
@@ -412,10 +410,9 @@ the diagram's figure 5):
   `goalRefs` exports the constants serving as goals for the chart's dashed
   reference rules (factor constants are not goals and draw no rule).
   **Time shifts** (figures 31–35) carry per-run state keyed by owner node +
-  tree position: `x(t ~ T)` is a first-order lag stepping toward x by
-  `min(1, DT/T)` (T ≤ 0 snaps — the goal-seek cap's shape), `x(t - T)` a
-  ring-buffer pipeline of `max(1, round(T/DT))` samples (T rounds to whole
-  steps). A shift's value at evaluation time is its START-of-step state
+  tree position: `x(t - T)` is a ring-buffer pipeline of
+  `max(1, round(T/DT))` samples (T rounds to whole steps). A shift's value
+  at evaluation time is its START-of-step state
   (never a recursion into its input — that's what makes loops through
   shifts legal); states advance once per step, after rates and rations are
   known but before levels move, gathering every input first so chained
@@ -423,7 +420,12 @@ the diagram's figure 5):
   input reads the flow's APPLIED (post-ration) rate; at t=0 every shift
   primes to its input's value right then (faucets at their raw clamped
   rate, circular primings reading 0) — so an equilibrium model holds
-  exactly. `flowSeries` re-runs the engine and returns the figure-33 view
+  exactly. Exponential smoothing is deliberately NOT an engine feature:
+  perception reads use the pipeline delay itself (the dealership's
+  `perceived sales: (sales(t - perception delay))`, the fishery's
+  `harvest(t - 0.1)`), keeping every diagram at the book figure's exact
+  node census.
+  `flowSeries` re-runs the engine and returns the figure-33 view
   (each shift's input, solid, and owner, dashed, sampled per step plus one
   closing sample — aligned with the stock series); `hasDelays` is the
   cheap static gate the chart's flows toggle keys on.
@@ -434,9 +436,8 @@ the diagram's figure 5):
   (the book's "room temperature = 18°C") in their goal DOT's accent — the
   same color the dot wears in the editor and diagram — labeled in the right
   margin in that accent too; a
-  SCHEDULED goal draws as a dashed path instead (figure 19's cold day):
-  stepped for `@`, and for `~` a per-DT sampling of the simulator's own
-  `scheduleFn` interpolant, so the chart shows exactly the curve the run
+  SCHEDULED goal draws as a dashed stepped path instead (figure 19's cold
+  day staircase) — exactly the reading the run
   integrated; its label anchors at its final value, and the y-domain follows
   goal values below zero (stock levels themselves never go negative); all
   right-margin labels dodge vertically to a 12px rhythm so figure 11's
@@ -473,7 +474,7 @@ the diagram's figure 5):
 merging new data (the JSON omits absent `Maybe` keys, so stale values would
 otherwise survive edits). `displayLabel` renders a schedule in full
 (`inflow: 0 @5: 5`) and formulas in the source spelling
-(`sales(t ~ perception delay)`, `2x^2`).
+(`orders to factory(t - delivery delay)`, `2x^2`).
 
 `ui/type.ts` defines the d3-flavored `Node`/`Link`/`System` types (extending
 `d3.SimulationNodeDatum` / `SimulationLinkDatum`). `ui/declarations.d.ts` lets `*.svg`

@@ -2,8 +2,6 @@ module Parser
   ( Annot(..)
   , Formula(..)
   , FormOp(..)
-  , FnKind(..)
-  , fnName
   , opString
   , Tree(..)
   , Id
@@ -26,17 +24,12 @@ import Parsing.Combinators (choice, many, optionMaybe, optional, sepEndBy, (<?>)
 import Parsing.Token (eof) as Token
 type Id = Int
 -- | One segment of a schedule: from time `at` onward the value is `value`
--- | (until a later step takes over), or -- in a smooth schedule -- the
--- | curve passes through (at, value).
+-- | (until a later step takes over).
 type Step = { at :: Number, value :: Number }
--- | A full annotation: the initial value plus any steps. Steps written with
--- | `@` hold piecewise-constant (`inflow: 0 @5: 5` = closed until t=5, then
--- | 5 -- a tap being turned); steps written with `~` mark the schedule
--- | `smooth` and the simulator interpolates a curve through the points
--- | (figure 19's continuously varying outside temperature). One schedule
--- | uses one marker: the first step decides, and a later step with the
--- | other marker is a positioned error.
-type Sched = { initial :: Number, steps :: Array Step, smooth :: Boolean }
+-- | A full annotation: the initial value plus any steps. Steps hold
+-- | piecewise-constant (`inflow: 0 @5: 5` = closed until t=5, then 5 -- a
+-- | tap being turned); a curve is written as a denser staircase of steps.
+type Sched = { initial :: Number, steps :: Array Step }
 -- | Formula operators, usual precedence (`^` binds tightest, then `*`/`/`,
 -- | then `+`/`-`).
 data FormOp = FAdd | FSub | FMul | FDiv | FPow
@@ -47,40 +40,29 @@ opString FSub = "-"
 opString FMul = "*"
 opString FDiv = "/"
 opString FPow = "^"
--- | The two time-shifted readings a formula may take of another signal
--- | (the book's perception and delivery delays), written as function
--- | notation over the reserved time variable `t`: `x(t - T)` is the value
--- | x had exactly T ago (a pipeline delay), and `x(t ~ T)` the value x had
--- | *about* T ago -- a first-order exponential smoothing whose mean lag is
--- | T. A shift opens with the exact token pair `(t`, so `x(a + b)` stays
--- | juxtaposed multiplication; `smooth` and `delay` are ordinary names.
-data FnKind = FnSmooth | FnDelay
-derive instance eqFnKind :: Eq FnKind
-fnName :: FnKind -> String
-fnName FnSmooth = "smooth"
-fnName FnDelay = "delay"
-shiftMark :: FnKind -> String
-shiftMark FnSmooth = "~"
-shiftMark FnDelay = "-"
 -- | A value formula (`investment: (output * fraction of output invested)`):
 -- | arithmetic over numbers and named nodes. Each reference mints a parser
 -- | id like any other name mention, so the evaluator resolves it through
--- | the registry -- identity, not spelling. A time shift mints nothing of
--- | its own: it creates no graph node, and the simulator keys its state by
--- | the owning node and position instead.
+-- | the registry -- identity, not spelling. The one non-arithmetic form is
+-- | the pipeline time shift `x(t - T)` -- the value x had exactly T ago,
+-- | written as function notation over the reserved time variable `t`. A
+-- | shift opens with the exact token pair `(t`, so `x(a + b)` stays
+-- | juxtaposed multiplication. A time shift mints nothing of its own: it
+-- | creates no graph node, and the simulator keys its state by the owning
+-- | node and position instead.
 data Formula
   = FNum Number
   | FRef Id String
   | FBin FormOp Formula Formula
-  | FCall FnKind Formula Formula
+  | FCall Formula Formula
 derive instance eqFormula :: Eq Formula
 instance showFormula :: Show Formula where
   show (FNum n) = show n
   show (FRef i s) = s <> "#" <> show i
   show (FBin op l r) = "(" <> show l <> " " <> opString op <> " " <> show r <> ")"
-  show (FCall k input time) = show input <> "(t " <> shiftMark k <> " " <> show time <> ")"
--- | A node's annotation: a schedule (a constant, `@` steps, or a `~` curve)
--- | or a parenthesized formula.
+  show (FCall input time) = show input <> "(t - " <> show time <> ")"
+-- | A node's annotation: a schedule (a constant or `@` steps) or a
+-- | parenthesized formula.
 data Annot = SchedAnnot Sched | FormulaAnnot Formula
 derive instance eqAnnot :: Eq Annot
 instance showAnnot :: Show Annot where
@@ -121,9 +103,7 @@ showAnnotM (Just (FormulaAnnot f)) = ": " <> show f
 showSched :: Maybe Sched -> String
 showSched Nothing = ""
 showSched (Just s) = ": " <> show s.initial
-  <> Array.foldMap (\st -> " " <> marker <> show st.at <> ": " <> show st.value) s.steps
-  where
-  marker = if s.smooth then "~" else "@"
+  <> Array.foldMap (\st -> " @" <> show st.at <> ": " <> show st.value) s.steps
 -- | The token parser: positioned tokens over a `State Id` base monad.
 -- | ParserT's MonadState instance routes `state` to the base monad, so
 -- | `fresh` mints AST ids directly inside parsing code.
@@ -188,10 +168,10 @@ numberTok = satisfyMap case _ of
 valueTail :: P (Maybe Number)
 valueTail = optionMaybe (tk TokColon *> (numberTok <?> "a number after ':'"))
 
--- | An optional annotation after a name: `: N` (with optional `@`/`~`
--- | steps) is a schedule, `: ( ... )` a formula. Same non-backtracking
--- | discipline as valueTail: each consumed ':', '(', '@', or '~' commits,
--- | so a malformed segment is a positioned error.
+-- | An optional annotation after a name: `: N` (with optional `@` steps)
+-- | is a schedule, `: ( ... )` a formula. Same non-backtracking discipline
+-- | as valueTail: each consumed ':', '(', or '@' commits, so a malformed
+-- | segment is a positioned error.
 annotTail :: P (Maybe Annot)
 annotTail = optionMaybe do
   tk TokColon
@@ -201,33 +181,17 @@ annotTail = optionMaybe do
     ] <?> "a number or a '(' formula after ':'"
 
 -- | A schedule (the ':' already consumed): an initial value plus any number
--- | of steps. The first step's marker fixes the schedule's kind -- `@`
--- | holds piecewise-constant, `~` interpolates smoothly -- and every later
--- | step must repeat the same marker (the other one fails without
--- | consuming, so `many` stops and the stray marker surfaces as a
--- | positioned "unexpected" error).
+-- | of piecewise-constant `@` steps.
 schedBody :: P Sched
 schedBody = do
   initial <- numberTok
-  mfirst <- optionMaybe anyMarker
-  case mfirst of
-    Nothing -> pure { initial, steps: [], smooth: false }
-    Just smooth -> do
-      first <- stepBody (markerName smooth)
-      rest <- many (stepSeg smooth)
-      pure { initial, steps: Array.fromFoldable (first : rest), smooth }
+  steps <- many stepSeg
+  pure { initial, steps: Array.fromFoldable steps }
   where
-  -- true = `~` (smooth), false = `@` (stepped)
-  anyMarker = satisfyMap case _ of
-    TokAt -> Just false
-    TokTilde -> Just true
-    _ -> Nothing
-  markerOf smooth = if smooth then TokTilde else TokAt
-  markerName smooth = if smooth then "'~'" else "'@'"
-  stepSeg smooth = tk (markerOf smooth) *> stepBody (markerName smooth)
-  stepBody name = do
-    at <- numberTok <?> ("a time after " <> name)
-    tk TokColon <?> ("a ':' after the " <> name <> " time")
+  stepSeg = tk TokAt *> stepBody
+  stepBody = do
+    at <- numberTok <?> "a time after '@'"
+    tk TokColon <?> "a ':' after the '@' time"
     value <- numberTok <?> "a value after ':'"
     pure { at, value }
 
@@ -338,26 +302,25 @@ guardNotT = do
       failWithPosition "'t' is the time variable -- it only opens a time shift like x(t - 1)" pos
     _ -> pure unit
 
--- | shift := '(' 't' ('-' time | '~' time | NEGNUMBER)? ')'
+-- | shift := '(' 't' ('-' time | NEGNUMBER)? ')'
 -- | Postfix time shifts, chaining left to right: after a name or a paren
 -- | group, the exact token pair `(t` opens a shift -- `x(t - T)` reads the
--- | value x had T ago (FnDelay), `x(t ~ T)` the value x had *about* T ago
--- | (FnSmooth), and `x(t)` is just x. Any other '(' is left alone (it is
--- | juxtaposed multiplication), decided by `peekShift`'s pure two-token
--- | peek, so the grammar stays `try`-free. The time is one multiplicative
--- | term: `x(t - 3 - d)` is a positioned error -- parenthesize the
--- | compound time, `x(t - (3 + d))`. A signed literal folds exactly like
--- | the additive level's negative juxtaposition: `x(t -3)` is `x(t - 3)`.
--- | A shift mints no id of its own (see FCall).
+-- | value x had T ago (a pipeline delay), and `x(t)` is just x. Any other
+-- | '(' is left alone (it is juxtaposed multiplication), decided by
+-- | `peekShift`'s pure two-token peek, so the grammar stays `try`-free.
+-- | The time is one multiplicative term: `x(t - 3 - d)` is a positioned
+-- | error -- parenthesize the compound time, `x(t - (3 + d))`. A signed
+-- | literal folds exactly like the additive level's negative
+-- | juxtaposition: `x(t -3)` is `x(t - 3)`. A shift mints no id of its
+-- | own (see FCall).
 fShiftTail :: Formula -> P Formula
 fShiftTail base = defer \_ -> peekShift >>=
   if _ then do
     tk TokLParen
     _ <- identTok -- the peeked `t`
     shifted <- choice
-      [ tk TokTilde *> (FCall FnSmooth base <$> fMult)
-      , tk TokMinus *> (FCall FnDelay base <$> fMult)
-      , negLiteral <#> \n -> FCall FnDelay base (FNum (negate n))
+      [ tk TokMinus *> (FCall base <$> fMult)
+      , negLiteral <#> \n -> FCall base (FNum (negate n))
       , pure base -- `x(t)`: the signal right now
       ]
     tk TokRParen <?> "a closing ')' after the time shift (parenthesize a compound time: x(t - (3 + d)))"
@@ -481,8 +444,8 @@ cloudTerm = do
   i <- fresh
   pure (CloudExpr i)
 -- | A bare name takes a full annotation, exactly like a faucet: `: N` is
--- | an auxiliary constant (`room temperature: 18`), `@`/`~` steps make it
--- | a driving variable (figure 19's cold day), and `: (expr)` a computed
+-- | an auxiliary constant (`room temperature: 18`), `@` steps make it a
+-- | driving variable (figure 19's cold day), and `: (expr)` a computed
 -- | auxiliary (`output: (capital / 3)`). annotTail consumes nothing when
 -- | no ':' follows, and the id still mints after the whole term, so
 -- | value-less minting order is untouched.

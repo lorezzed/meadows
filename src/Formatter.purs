@@ -17,15 +17,14 @@
 -- |   - brackets hug their stock:      [wood in living trees]
 -- |   - a colon hugs the name before:  inflow: 0
 -- |   - faucet ops take their name:    =>logging   (a bare `=` reprints =>)
--- |   - schedule markers take their time:  @5: 5   ~4.5: -5   (a marker's
--- |     tilde follows a number; a time shift's follows `t` and breathes)
+-- |   - schedule markers take their time:  @5: 5
 -- |   - loop-opens and parens hug inward:  B(cooling <- hot coffee)
 -- |   - inside a formula group, juxtaposed multiplication stays tight:
 -- |     2x, 2(a + b), x(a + b)  (statement-level `5 [stock]` keeps its
--- |     space), which also glues time shifts: sales(t ~ perception delay)
+-- |     space), which also glues time shifts: orders(t - delivery delay)
 -- |   - `^` is tight on both sides: 2x^2
--- | Arrows, formula operators, and a shift's `-`/`~` breathe on both
--- | sides: a -> b, capital / 3, orders(t - delivery delay).
+-- | Arrows, formula operators, and a shift's `-` breathe on both sides:
+-- | a -> b, capital / 3, orders(t - delivery delay).
 -- | Numbers reprint from their value — integral without the trailing `.0`.
 module Formatter (format) where
 
@@ -43,7 +42,7 @@ import Lexer (Operator(..), Token(..), loopLetter, opSymbol, tokenize)
 -- | group holds arithmetic (juxtaposition tightens).
 data Ctx = LoopCtx | GroupCtx
 
-type St = { out :: String, prev :: Maybe Token, prev2 :: Maybe Token, stack :: List Ctx }
+type St = { out :: String, prev :: Maybe Token, stack :: List Ctx }
 
 format :: String -> String
 format input = case tokenize input of
@@ -57,16 +56,15 @@ format input = case tokenize input of
     _ -> false
 
 print :: List Token -> String
-print toks = (foldl step { out: "", prev: Nothing, prev2: Nothing, stack: Nil } toks).out
+print toks = (foldl step { out: "", prev: Nothing, stack: Nil } toks).out
   where
   -- A separator both breaks the line and resets the pair/paren state (on
   -- valid input parens never span statements; on invalid input this keeps
   -- the printer sane).
-  step st TokSep = { out: st.out <> "\n", prev: Nothing, prev2: Nothing, stack: Nil }
+  step st TokSep = { out: st.out <> "\n", prev: Nothing, stack: Nil }
   step st tok =
-    { out: st.out <> sep st.prev st.prev2 tok st.stack <> lexeme tok
+    { out: st.out <> sep st.prev tok st.stack <> lexeme tok
     , prev: Just tok
-    , prev2: st.prev
     , stack: push tok st.stack
     }
 
@@ -86,23 +84,16 @@ print toks = (foldl step { out: "", prev: Nothing, prev2: Nothing, stack: Nil } 
 
   -- The space (or not) between two adjacent tokens. `stack` is the paren
   -- context BEFORE the current token opens anything, so an opening `(` is
-  -- judged by where it appears, not by the group it starts. `prev2` (the
-  -- token before `prev`) tells a schedule marker's tilde -- following the
-  -- previous value NUMBER and hugging its time, `10 ~4.5: -5` -- from a
-  -- smooth time shift's, which follows the `t` and breathes like an
-  -- operator: `sales(t ~ perception delay)`.
-  sep :: Maybe Token -> Maybe Token -> Token -> List Ctx -> String
-  sep Nothing _ _ _ = ""
-  sep (Just prev) prev2 cur stack = if tight then "" else " "
+  -- judged by where it appears, not by the group it starts.
+  sep :: Maybe Token -> Token -> List Ctx -> String
+  sep Nothing _ _ = ""
+  sep (Just prev) cur stack = if tight then "" else " "
     where
     tight = case prev, cur of
       TokLBracket, _ -> true
       TokLoop _, _ -> true
       TokLParen, _ -> true
       TokAt, _ -> true
-      TokTilde, _ -> case prev2 of
-        Just (TokNumber _) -> true
-        _ -> false
       TokCaret, _ -> true
       _, TokCaret -> true
       TokOp FaucetR, TokIdent _ -> true
@@ -112,7 +103,7 @@ print toks = (foldl step { out: "", prev: Nothing, prev2: Nothing, stack: Nil } 
       _, TokColon -> true
       -- Juxtaposed multiplication, formula groups only. (A name followed by
       -- a NUMBER can never tighten: `x2` would re-lex as one identifier.)
-      -- A name's '(' tightens too: smooth(sales, ...) calls and x(a + b)
+      -- A name's '(' tightens too: time shifts x(t - 1) and x(a + b)
       -- juxtaposition alike.
       TokNumber _, TokIdent _ -> inGroup stack
       TokNumber _, TokLParen -> inGroup stack
@@ -131,7 +122,6 @@ print toks = (foldl step { out: "", prev: Nothing, prev2: Nothing, stack: Nil } 
     TokRBracket -> "]"
     TokColon -> ":"
     TokAt -> "@"
-    TokTilde -> "~"
     TokCaret -> "^"
     TokPlus -> "+"
     TokMinus -> "-"
