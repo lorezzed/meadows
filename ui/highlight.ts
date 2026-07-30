@@ -16,7 +16,7 @@
 //   the lexer's precedence, where a trailing one-letter word joins a
 //   preceding identifier first (`foo R(` is the name "foo R", then `(`);
 // - a lone `t` whose previous token is `(` is the reserved time variable
-//   opening a time shift (`sales(t ~ perception delay)`), so it stays
+//   opening a time shift (`orders(t - delivery delay)`), so it stays
 //   plain — approximated by the nearest non-blank character, which is
 //   exact for formula shifts (and claims the `t` in a statement-level
 //   `R(t -> b)` too, an accepted corner: `t` can't be referenced from

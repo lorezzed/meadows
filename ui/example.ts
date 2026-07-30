@@ -114,12 +114,15 @@ B(heat to outside <- discrepancy between inside and outside temperatures <- room
 outside temperature: 10 -> discrepancy between inside and outside temperatures`
     },
     {
+        // The cold day is a dense @ staircase (half-unit steps down to -5
+        // and back) — the piecewise driving variable the run integrates,
+        // drawn as the stepped dashed goal path.
         label: 'figure 15 & 19',
         content: `| =>heat from furnace: 1.2 [room temperature: 10] =>heat to outside: 0.13 |
 B(heat from furnace <- discrepancy between desired and actual room temperatures <- room temperature)
 thermostat setting: 18 -> discrepancy between desired and actual room temperatures
 B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
-outside temperature: 10 ~1: 7 ~2: 4 ~3: 0 ~4: -3 ~4.5: -5 ~5.5: -3 ~6: 0 ~7: 4 ~8: 7 ~9: 10 -> discrepancy between inside and outside temperatures`
+outside temperature: 10 @0.5: 8.5 @1: 7 @1.5: 5.5 @2: 4 @2.5: 2 @3: 0 @3.5: -1.5 @4: -3 @4.5: -5 @5: -4 @5.5: -3 @6: 0 @6.5: 2 @7: 4 @7.5: 5.5 @8: 7 @8.5: 8.5 @9: 10 -> discrepancy between inside and outside temperatures`
     },
     {
         label: 'figure 15 & 20',
@@ -127,7 +130,7 @@ outside temperature: 10 ~1: 7 ~2: 4 ~3: 0 ~4: -3 ~4.5: -5 ~5.5: -3 ~6: 0 ~7: 4 ~
 B(heat from furnace <- discrepancy between desired and actual room temperatures <- room temperature)
 thermostat setting: 18 -> discrepancy between desired and actual room temperatures
 B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
-outside temperature: 10 ~1: 7 ~2: 4 ~3: 0 ~4: -3 ~4.5: -5 ~5.5: -3 ~6: 0 ~7: 4 ~8: 7 ~9: 10 -> discrepancy between inside and outside temperatures`
+outside temperature: 10 @0.5: 8.5 @1: 7 @1.5: 5.5 @2: 4 @2.5: 2 @3: 0 @3.5: -1.5 @4: -3 @4.5: -5 @5: -4 @5.5: -3 @6: 0 @6.5: 2 @7: 4 @7.5: 5.5 @8: 7 @8.5: 8.5 @9: 10 -> discrepancy between inside and outside temperatures`
     },
     {
         label: 'figure 21 & 22',
@@ -146,11 +149,13 @@ fertility: 0.21 -> births
 mortality: 0.3 -> deaths`
     },
     {
+        // The fertility transition rides a half-unit @ staircase down the
+        // old straight ramp (0.21 to replacement 0.09 over two decades).
         label: 'figure 21 & 24',
         content: `| =>births [population: 6.6] =>deaths |
 R(births <- population)
 B(deaths <- population)
-fertility: 0.21 ~2: 0.09 -> births
+fertility: 0.21 @0.5: 0.18 @1: 0.15 @1.5: 0.12 @2: 0.09 -> births
 mortality: 0.09 -> deaths`
     },
     {
@@ -168,15 +173,18 @@ mortality b: 0.3 -> deaths b
 | =>births c [stabilization: 6.6] =>deaths c |
 R(births c <- stabilization)
 B(deaths c <- stabilization)
-fertility c: 0.21 ~2: 0.09 -> births c
+fertility c: 0.21 @0.5: 0.18 @1: 0.15 @1.5: 0.12 @2: 0.09 -> births c
 mortality c: 0.09 -> deaths c`
     },
     {
+        // The rebound scenario's fertility curve as a half-unit @
+        // staircase: down to replacement by 2.5, flat to 4.5, then the
+        // climb to 0.36 (values sampled off the old monotone curve).
         label: 'figure 21 & 26',
         content: `| =>births [population: 6.6] =>deaths |
 R(births <- population)
 B(deaths <- population)
-fertility: 0.21 ~2.5: 0.09 ~4.5: 0.09 ~7: 0.27 ~10: 0.36 -> births
+fertility: 0.21 @0.5: 0.182 @1: 0.15 @1.5: 0.121 @2: 0.099 @2.5: 0.09 @5: 0.105 @5.5: 0.143 @6: 0.191 @6.5: 0.238 @7: 0.27 @7.5: 0.289 @8: 0.306 @8.5: 0.32 @9: 0.333 @9.5: 0.346 @10: 0.36 -> births
 mortality: 0.09 -> deaths`
     },
     {
@@ -258,6 +266,11 @@ response delay -> orders to factory
 perception delay -> perceived sales`
     },
     {
+        // Both delays are pipeline shifts, minting no nodes — the diagram
+        // stays exactly figure 31: perceived sales reads the sales flow
+        // as it was 0.5 ago (sales(t - perception delay)), deliveries the
+        // orders 0.5 ago. Inventory holds 200, dips to ~187 near day 31,
+        // then oscillates with growing swings.
         label: 'figure 31 & 32',
         content: `| =>deliveries [inventory of cars on the lot: 200] =>sales |
 B(deliveries <- orders to factory <- discrepancy <- inventory of cars on the lot)
@@ -265,7 +278,7 @@ orders to factory: (perceived sales + discrepancy / response delay)
 deliveries: (orders to factory(t - delivery delay))
 discrepancy: (desired inventory - inventory of cars on the lot)
 desired inventory: (perceived sales)
-perceived sales: (sales(t ~ perception delay))
+perceived sales: (sales(t - perception delay))
 sales: (customer demand)
 customer demand: 200 @2.5: 220
 perception delay: 0.5
@@ -274,8 +287,8 @@ delivery delay: 0.5`
     },
     {
         // The same run as figure 31 & 32, opened in the chart's flows view:
-        // figure 33's panels — sales vs perceived sales (the smooth pair),
-        // orders vs deliveries (the delay pair).
+        // figure 33's panels — sales vs perceived sales (the perception
+        // pair), orders vs deliveries (the delivery pair).
         label: 'figure 31 & 33',
         flows: true,
         content: `| =>deliveries [inventory of cars on the lot: 200] =>sales |
@@ -284,7 +297,7 @@ orders to factory: (perceived sales + discrepancy / response delay)
 deliveries: (orders to factory(t - delivery delay))
 discrepancy: (desired inventory - inventory of cars on the lot)
 desired inventory: (perceived sales)
-perceived sales: (sales(t ~ perception delay))
+perceived sales: (sales(t - perception delay))
 sales: (customer demand)
 customer demand: 200 @2.5: 220
 perception delay: 0.5
@@ -294,8 +307,8 @@ delivery delay: 0.5`
     {
         // Figure 34's inventory chart: the SAME base model as 31 & 32
         // (response delay 0.3), duplicated under the book's own figure
-        // number — flat 200 to day 25, dip to ~188 at day 31, then the
-        // gently growing ~21-day oscillation (peaks near days 42/63/85).
+        // number — flat 200 to day 25, dip to ~187 at day 31, then the
+        // growing ~21-day oscillation.
         label: 'figure 31 & 34',
         content: `| =>deliveries [inventory of cars on the lot: 200] =>sales |
 B(deliveries <- orders to factory <- discrepancy <- inventory of cars on the lot)
@@ -303,7 +316,7 @@ orders to factory: (perceived sales + discrepancy / response delay)
 deliveries: (orders to factory(t - delivery delay))
 discrepancy: (desired inventory - inventory of cars on the lot)
 desired inventory: (perceived sales)
-perceived sales: (sales(t ~ perception delay))
+perceived sales: (sales(t - perception delay))
 sales: (customer demand)
 customer demand: 200 @2.5: 220
 perception delay: 0.5
@@ -312,8 +325,8 @@ delivery delay: 0.5`
     },
     {
         // Figure 35's growing oscillation: the dealer reacting FASTER
-        // (response delay 0.2 = 2 days) makes it worse — peaks climbing
-        // ~267/415/418 with troughs cut toward 120.
+        // (response delay 0.2 = 2 days) makes it worse — peaks driven to
+        // ~400 with troughs cut toward ~127.
         label: 'figure 31 & 35',
         content: `| =>deliveries [inventory of cars on the lot: 200] =>sales |
 B(deliveries <- orders to factory <- discrepancy <- inventory of cars on the lot)
@@ -321,7 +334,7 @@ orders to factory: (perceived sales + discrepancy / response delay)
 deliveries: (orders to factory(t - delivery delay))
 discrepancy: (desired inventory - inventory of cars on the lot)
 desired inventory: (perceived sales)
-perceived sales: (sales(t ~ perception delay))
+perceived sales: (sales(t - perception delay))
 sales: (customer demand)
 customer demand: 200 @2.5: 220
 perception delay: 0.5
@@ -330,8 +343,8 @@ delivery delay: 0.5`
     },
     {
         // Figure 36's damped settle: the dealer reacting SLOWER (response
-        // delay 0.6 = 6 days) — one shallow dip to ~188 at day 32, one
-        // overshoot to ~227 at day 47, then flat on the new 220.
+        // delay 0.6 = 6 days) — one shallow dip to ~184, one overshoot to
+        // ~233, then flat on the new 220.
         label: 'figure 31 & 36',
         content: `| =>deliveries [inventory of cars on the lot: 200] =>sales |
 B(deliveries <- orders to factory <- discrepancy <- inventory of cars on the lot)
@@ -339,7 +352,7 @@ orders to factory: (perceived sales + discrepancy / response delay)
 deliveries: (orders to factory(t - delivery delay))
 discrepancy: (desired inventory - inventory of cars on the lot)
 desired inventory: (perceived sales)
-perceived sales: (sales(t ~ perception delay))
+perceived sales: (sales(t - perception delay))
 sales: (customer demand)
 customer demand: 200 @2.5: 220
 perception delay: 0.5
@@ -554,25 +567,25 @@ regeneration <- regeneration rate <- resource -> regeneration`
         // Three pieces make the dip: growth goal 1.5 capital is the
         // book's 5%/yr desired growth (net of the 0.75/unit depreciation
         // drain); profit is income read off the catch a season late
-        // (price * harvest(t ~ 0.1), minus a 1.75/unit operating cost of
-        // capital) — reading the FAUCET through the shift, figure 31's
-        // perceiving-a-flow form; and per-fish regeneration is a
-        // depensation hump (112 (x(1 - x))^2, x = resource/1000: crowded
-        // fish and scarce fish both breed poorly), so total regeneration
-        // peaks at R = 600, ABOVE the settle point, and its +7/unit
-        // slope at equilibrium barely damps the loop. The button opens
-        // preset to the flows view its profit lag unlocks, showing every
-        // panel at once. The solid harvest rate is panel A: riding the
-        // goal-blind ramp over the hump to ~4070 (~272/yr — per-unit
-        // rates are 15x the book's per-year axis) at year ~110, dipping
-        // to ~3364 (~224/yr), settling at ~3500 (~233/yr). Capital's
-        // blue line is panel B: an S-curve cresting ~1450 before easing
-        // onto ~1398. The resource's green line is panel C: sliding to
-        // ~485 and recovering onto the flat 500, where regeneration
+        // (price * harvest(t - 0.1), minus a 1.75/unit operating cost of
+        // capital) — reading the FAUCET through the pipeline shift, which
+        // mints no nodes, so the diagram stays exactly figure 42; and
+        // per-fish regeneration is a depensation hump (112 (x(1 - x))^2,
+        // x = resource/1000: crowded fish and scarce fish both breed
+        // poorly), so total regeneration peaks at R = 600, ABOVE the
+        // settle point, and its shallow slope at equilibrium barely damps
+        // the loop. The button opens preset to the flows view its profit
+        // delay unlocks, showing every panel at once. The solid harvest
+        // rate is panel A: riding the goal-blind ramp over the hump to
+        // ~4070 (~271/yr — per-unit rates are 15x the book's per-year
+        // axis) at year ~111, dipping, settling at ~3500 (~233/yr).
+        // Capital's line is panel B: an S-curve cresting ~1450 before
+        // easing onto ~1397. The resource's line is panel C: sliding to
+        // ~484 and recovering onto the flat 500, where regeneration
         // balances the catch and profit meets depreciation. The dashed
-        // profit line is the lagged income read whose overshoot causes
-        // the dip. Figure 44 swaps in the technology yield curve and
-        // never settles — this one does.
+        // profit line is the season-late income read whose overshoot
+        // causes the dip. Figure 44 swaps in the technology yield curve
+        // and never settles — this one does.
         label: 'figure 42 & 43',
         flows: true,
         content: `| =>investment [capital: 5] =>depreciation |
@@ -585,7 +598,7 @@ growth goal: (1.5 capital)
 depreciation: (capital / capital lifetime)
 capital lifetime: (4 / 3)
 harvest: (10 capital * yield per unit capital)
-profit: (price * harvest(t ~ 0.1) - 1.75 capital)
+profit: (price * harvest(t - 0.1) - 1.75 capital)
 price: 1
 yield per unit capital: ((resource / 1000)^2)
 regeneration: (resource * regeneration rate)
@@ -598,26 +611,21 @@ regeneration rate: (112 (resource / 1000 * (1 - resource / 1000))^2)`
         // 1.27 x^2.8 / (x^2.8 + 0.27), x = resource/1000, still exactly
         // 1 at carrying capacity): sonar-era boats keep catching near
         // full efficiency down past half density, then the curve cliffs.
-        // Efficiency no longer signals depletion, so the bind
-        // (10 y = 2.5) slides from R = 500 down the regeneration hump's
-        // unstable left side to R ~380 — and there the season-late
-        // profit read overpowers what little damping is left: instead of
-        // ringing once and settling, the fishery orbits its
-        // never-reached equilibrium forever, period ~21 years. The
-        // button opens preset to the flows view its profit lag unlocks,
-        // which shows every panel at once. The solid harvest rate is
-        // panel A: cresting ~4150 (~277/yr — per-unit rates are 15x the
-        // book's per-year axis) at year ~100, then cycling ~1500-3470
-        // (~100-231/yr), the rebound peaks sitting clearly BELOW the
-        // crest. Capital's blue line is panel B: topping out ~1113 —
-        // nowhere near 43's 1400 — then cycling ~765-1093, first peak
-        // level with the rest. The resource's green line is panel C:
-        // bottoming ~310 and cycling ~310-475, never regaining halfway.
-        // The dashed profit line swings a beat behind each cycle — the
-        // delay driving the dance. Nothing collapses and nothing
-        // settles: the book's sustained oscillation (push the technology
-        // harder — a lower half-yield point — and the swings deepen
-        // toward figure 45's collapse).
+        // Efficiency no longer signals depletion, so the bind slides
+        // from R = 500 down the regeneration hump's unstable left side
+        // to R ~380 — and there the season-late profit read overpowers
+        // what little damping is left: instead of ringing once and
+        // settling, the fishery orbits its never-reached equilibrium
+        // forever, period ~21 years. The button opens preset to the
+        // flows view. The solid harvest rate is panel A: cresting ~4150
+        // (~277/yr — per-unit rates are 15x the book's per-year axis)
+        // near year 100, then cycling with rebound peaks clearly BELOW
+        // the crest. Capital's line is panel B: topping out ~1115 —
+        // nowhere near 43's 1450 — then cycling. The resource's line is
+        // panel C: bottoming ~308 and cycling without ever regaining
+        // halfway. The dashed profit line swings a beat behind each
+        // cycle — the delay driving the dance. Nothing collapses and
+        // nothing settles: the book's sustained oscillation.
         label: 'figure 42 & 44',
         flows: true,
         content: `| =>investment [capital: 5] =>depreciation |
@@ -630,7 +638,7 @@ growth goal: (1.5 capital)
 depreciation: (capital / capital lifetime)
 capital lifetime: (4 / 3)
 harvest: (10 capital * yield per unit capital)
-profit: (price * harvest(t ~ 0.1) - 1.75 capital)
+profit: (price * harvest(t - 0.1) - 1.75 capital)
 price: 1
 yield per unit capital: ((1.27 (resource / 1000)^2.8) / ((resource / 1000)^2.8 + 0.27))
 regeneration: (resource * regeneration rate)
@@ -650,14 +658,13 @@ regeneration rate: (112 (resource / 1000 * (1 - resource / 1000))^2)`
         // fish can't find mates), profit dies with the catch, and
         // capital rots at its bare 20-year lifetime. The button opens
         // preset to the flows view. The solid harvest rate is panel A:
-        // cresting ~4830 (~322/yr — per-unit rates are 15x the book's
+        // cresting ~4840 (~322/yr — per-unit rates are 15x the book's
         // per-year axis) at year ~95, then cliffing to ZERO by year
-        // ~108, flat forever. Capital's blue line is panel B: the 5%/yr
-        // ramp to a pointed tent ~630 at year ~99 — half of 43's
-        // sustainable fleet — then pure-depreciation exponential decay
-        // (~47 by year 150). The resource's green line is panel C: the
-        // gentle glide (~830 at year 75), the plunge through year ~100,
-        // and the dead-flat ~0 tail. The dashed profit line spikes and
+        // ~108, flat forever. Capital's line is panel B: the 5%/yr ramp
+        // to a pointed tent ~634 at year ~99, then pure-depreciation
+        // exponential decay (~47 by year 150). The resource's line is
+        // panel C: the gentle glide, the plunge through year ~100, and
+        // the dead-flat ~2% tail. The dashed profit line spikes and
         // dies with the catch. Figure 43 settles, 44 oscillates — 45 is
         // the one-way trip.
         label: 'figure 42 & 45',
@@ -672,7 +679,7 @@ growth goal: (1.5 capital)
 depreciation: (capital / capital lifetime)
 capital lifetime: (4 / 3)
 harvest: (10 capital * yield per unit capital)
-profit: (price * harvest(t ~ 0.1) - 1.75 capital)
+profit: (price * harvest(t - 0.1) - 1.75 capital)
 price: 1
 yield per unit capital: ((1.01 (resource / 1000)^2.8) / ((resource / 1000)^2.8 + 0.01))
 regeneration: (resource * regeneration rate)

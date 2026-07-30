@@ -114,7 +114,7 @@ const css = `
     outline-offset: 2px;
   }
   /* The chart's footer row, tucked under the panel's right corner: the
-     flows toggle (shown only when the model has smooth/delay calls) and the
+     flows toggle (shown only when the model has delay calls) and the
      t= horizon field, right where the time axis they affect ends. */
   .horizon {
     display: flex;
@@ -346,9 +346,9 @@ const chart = createChart(side)
 // compiled system with its stock accent assignment, and whether it plots.
 let tEnd = T_END;
 // The flows toggle (figure 33's view): when on, the chart overlays each
-// smooth/delay call's input and output as thin lines — sales against
-// perceived sales, orders against deliveries. Off by default so the plain
-// stock charts (figures 32, 34, 35) stay exactly the book's.
+// delay call's input and output as thin lines — orders against
+// deliveries. Off by default so the plain stock charts (figures 32, 34,
+// 35) stay exactly the book's.
 let showFlows = false;
 let lastChart: { system: System; colorOf: (id: string) => string; plottable: boolean } | null = null;
 function refreshChart(): void {
@@ -587,14 +587,14 @@ const renderExpr = (e: Expr): string => {
   switch (e.kind) {
     case "num": return `${e.value}`;
     case "ref": return labelById.get(e.id) ?? e.id;
-    case "smooth": case "delay": {
-      // A shift prints as the source reads: input(t ~ T) / input(t - T),
-      // the input parenthesized unless it is a bare reference and the
-      // time unless it is one term — exactly the re-parseable spelling.
+    case "delay": {
+      // A shift prints as the source reads: input(t - T), the input
+      // parenthesized unless it is a bare reference and the time unless
+      // it is one term — exactly the re-parseable spelling.
       const input = e.input.kind === "ref" ? renderExpr(e.input) : `(${renderExpr(e.input)})`;
       const time = e.time.kind === "num" || e.time.kind === "ref"
         ? renderExpr(e.time) : `(${renderExpr(e.time)})`;
-      return `${input}(t ${e.kind === "smooth" ? "~" : "-"} ${time})`;
+      return `${input}(t - ${time})`;
     }
     default: {
       // Parenthesize a child that binds looser than this operator; shifts
@@ -612,8 +612,7 @@ const renderExpr = (e: Expr): string => {
 const displayLabel = (d: Node): string => {
   if (d.expr != null) return `${d.label}: (${renderExpr(d.expr)})`;
   if (d.value == null) return d.label;
-  const marker = d.smooth ? "~" : "@";
-  const steps = (d.steps ?? []).map(s => ` ${marker}${s.at}: ${s.value}`).join("");
+  const steps = (d.steps ?? []).map(s => ` @${s.at}: ${s.value}`).join("");
   return `${d.label}: ${d.value}${steps}`;
 };
 
@@ -733,7 +732,7 @@ function update(system: System) {
     // would otherwise keep a stale `group`/`loop`/`value`/`steps` after
     // losing it upstream (the JSON simply omits the key, so Object.assign
     // wouldn't overwrite).
-    return prev ? Object.assign(prev, { group: null, loop: null, value: null, steps: null, smooth: null, expr: null, parent: null }, d) : { ...d };
+    return prev ? Object.assign(prev, { group: null, loop: null, value: null, steps: null, expr: null, parent: null }, d) : { ...d };
   });
   const links = system.links.map(d => ({ ...d }));
   // Formula labels resolve refs by id; refresh before any displayLabel call

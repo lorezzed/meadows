@@ -10,7 +10,7 @@
 // there in one tooltip — it only reads the already-rendered series, so the
 // render-once contract holds.
 import * as d3 from "d3";
-import { DT, T_END, scheduleFn, type FlowSeries, type GoalRef, type StockSeries } from "./simulate";
+import { DT, T_END, type FlowSeries, type GoalRef, type StockSeries } from "./simulate";
 
 // Fixed-order categorical accents: the base palette for the ONE per-node
 // color assignment app.ts's update() builds for every view — stocks take
@@ -314,16 +314,10 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
     // One dashed rule per goal constant (the book's "room temperature = 18°C"
     // line), full plot width, in its goal dot's accent — the same color the
     // dot wears in the editor and the diagram; the dash keeps it a
-    // reference under the series lines. A
-    // SCHEDULED goal (figure 19's outside temperature) draws as a dashed
-    // path instead: `@` schedules step (holding each value until the next),
-    // `~` schedules sample the simulator's own smooth interpolant at every
-    // DT — either way the chart shows exactly what the run integrated.
+    // reference under the series lines. A SCHEDULED goal (figure 19's
+    // outside temperature) draws as a dashed stepped path instead, holding
+    // each value until the next step — exactly what the run integrated.
     const goalPts = (g: GoalRef) => {
-      if (g.smooth && g.steps?.length) {
-        const fn = scheduleFn(g);
-        return d3.range(0, tEnd + DT / 2, DT).map(at => ({ at, value: fn(at) }));
-      }
       const pts = [{ at: 0, value: g.value }, ...(g.steps ?? []).filter(s => s.at <= tEnd)]
         .sort((a, b) => a.at - b.at);
       const lastPt = pts[pts.length - 1] ?? { at: 0, value: g.value };
@@ -337,9 +331,6 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
       .x(p => x(Math.max(0, p.at)))
       .y(p => y(p.value))
       .curve(d3.curveStepAfter);
-    const smoothLine = d3.line<{ at: number; value: number }>()
-      .x(p => x(p.at))
-      .y(p => y(p.value));
     gGoals.selectAll<SVGPathElement, GoalRef>("path")
       .data(goals, d => d.id)
       .join("path")
@@ -347,7 +338,7 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
       .attr("stroke", d => colorOf(d.id))
       .attr("stroke-width", 1.5)
       .attr("stroke-dasharray", "7 5")
-      .attr("d", d => (d.smooth && d.steps?.length ? smoothLine : stepLine)(goalPts(d)));
+      .attr("d", d => stepLine(goalPts(d)));
 
     // Right-margin labels — series ends, goal rules, and flow lines
     // together — dodge vertically so converging lines stay individually

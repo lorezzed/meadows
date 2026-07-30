@@ -240,40 +240,31 @@ outside temperature: 10 -> discrepancy between inside and outside temperatures`;
     fail('figure 18', `both constants should register, setting first: ${JSON.stringify(goals)}`);
 }
 
-// A smooth (`~`) schedule interpolates a monotone curve through its points:
-// exact at every point, flat outside the first/last, monotone between
-// consecutive points, and never overshooting the point range.
+// A schedule holds each value until the next step (there is exactly one
+// reading — a curve is written as a denser staircase), exact at every
+// point, flat outside the first/last, later-written duplicates winning.
 {
   const WAVE = [[1, 7], [2, 4], [3, 0], [4, -3], [4.5, -5], [5.5, -3], [6, 0], [7, 4], [8, 7], [9, 10]]
     .map(([at, value]) => ({ at, value }));
-  const fn = scheduleFn({ value: 10, steps: WAVE, smooth: true });
-  for (const p of [{ at: 0, value: 10 }, ...WAVE])
-    if (Math.abs(fn(p.at) - p.value) > 1e-12)
-      fail('smooth schedule', `must pass through (${p.at}, ${p.value}), got ${fn(p.at)}`);
-  if (fn(9.7) !== 10 || fn(1000) !== 10) fail('smooth schedule', 'flat after the last point');
-  if (fn(-3) !== 10) fail('smooth schedule', 'flat before the first point');
-  let prev = fn(4.5);
-  for (let t = 4.5; t <= 5.5 + 1e-9; t += DT / 4) {
-    const v = fn(t);
-    if (v < prev - 1e-12) fail('smooth schedule', `must rise monotonically on 4.5..5.5, fell at t=${t}`);
-    prev = v;
-  }
-  for (let t = 0; t <= T_END; t += DT)
-    if (fn(t) < -5 - 1e-12 || fn(t) > 10 + 1e-12)
-      fail('smooth schedule', `must never overshoot the point range, got ${fn(t)} at t=${t}`);
-  // The stepped reading of the same points is unchanged: holds, then jumps.
-  const stepped = scheduleFn({ value: 10, steps: WAVE, smooth: false });
+  const stepped = scheduleFn({ value: 10, steps: WAVE });
   if (stepped(0.99) !== 10 || stepped(1) !== 7 || stepped(4.6) !== -5)
     fail('stepped schedule', 'must hold each value until the next step');
+  if (stepped(9.7) !== 10 || stepped(1000) !== 10) fail('stepped schedule', 'flat after the last point');
+  if (stepped(-3) !== 10) fail('stepped schedule', 'flat before the first point');
+  const dup = scheduleFn({ value: 1, steps: [{ at: 0, value: 4 }, { at: 2, value: 5 }] });
+  if (dup(0) !== 4 || dup(1.9) !== 4 || dup(2) !== 5)
+    fail('stepped schedule', 'a step at 0 overrides the initial value');
 }
 
 // figures 15 & 19 (well insulated, leak 0.13) & 20 (poorly insulated, 0.4):
-// the outside temperature is a smooth `~` schedule — a cold day dipping to
-// -5 — so the leak chases a moving target. The room sags mid-run and
-// recovers; the deeper the leak gain, the deeper the sag. Mirrored
-// step-for-step through the same scheduleFn the simulator uses.
+// the outside temperature is a dense @ staircase — a cold day stepping
+// down to -5 and back — so the leak chases a moving target. The room sags
+// mid-run and recovers; the deeper the leak gain, the deeper the sag.
+// Mirrored step-for-step through the same scheduleFn the simulator uses.
 {
-  const wave = '10 ~1: 7 ~2: 4 ~3: 0 ~4: -3 ~4.5: -5 ~5.5: -3 ~6: 0 ~7: 4 ~8: 7 ~9: 10';
+  const PTS = [[0.5, 8.5], [1, 7], [1.5, 5.5], [2, 4], [2.5, 2], [3, 0], [3.5, -1.5], [4, -3],
+    [4.5, -5], [5, -4], [5.5, -3], [6, 0], [6.5, 2], [7, 4], [7.5, 5.5], [8, 7], [8.5, 8.5], [9, 10]];
+  const wave = '10 ' + PTS.map(([at, value]) => `@${at}: ${value}`).join(' ');
   const thermo = (leak) => `|=>heat from furnace: 1.2[room temperature: 10]=>heat to outside: ${leak}|
 B(heat from furnace <- discrepancy between desired and actual room temperatures <- room temperature)
 thermostat setting: 18 -> discrepancy between desired and actual room temperatures
@@ -281,9 +272,7 @@ B(heat to outside <- discrepancy between inside and outside temperatures <- room
 outside temperature: ${wave} -> discrepancy between inside and outside temperatures`;
   const outsideFn = scheduleFn({
     value: 10,
-    steps: [[1, 7], [2, 4], [3, 0], [4, -3], [4.5, -5], [5.5, -3], [6, 0], [7, 4], [8, 7], [9, 10]]
-      .map(([at, value]) => ({ at, value })),
-    smooth: true,
+    steps: PTS.map(([at, value]) => ({ at, value })),
   });
   const mirror = (leak) => {
     let L = 10;
@@ -309,8 +298,8 @@ outside temperature: ${wave} -> discrepancy between inside and outside temperatu
     if (!(last(room) > dip + 0.5))
       fail(fig, 'room must recover as the cold day ends');
     const outside = goalRefs(system).find(g => g.label === 'outside temperature');
-    if (!(outside && outside.value === 10 && outside.steps?.length === 10 && outside.smooth === true))
-      fail(fig, `the scheduled goal should carry its 10 steps and smooth flag, got ${JSON.stringify(outside)}`);
+    if (!(outside && outside.value === 10 && outside.steps?.length === 18 && outside.smooth === undefined))
+      fail(fig, `the scheduled goal should carry its 18 staircase steps (and no smooth key), got ${JSON.stringify(outside)}`);
   }
 }
 
@@ -330,7 +319,7 @@ outside temperature: ${wave} -> discrepancy between inside and outside temperatu
 // (bare faucets, drawn level→faucet arrows, valued fertility and mortality
 // dots). One time unit is a decade, so 2007's crude rates (21 births, 9
 // deaths per 1000 per year) read 0.21 and 0.09 — and the same structure
-// grows (22), declines (23), or stabilizes (24, fertility falling smoothly
+// grows (22), declines (23), or stabilizes (24, fertility staircasing down
 // onto mortality) purely by the numbers. Mirrored step-for-step in the
 // simulator's float-op order, factor schedules through scheduleFn itself.
 {
@@ -351,11 +340,15 @@ mortality: ${mortality} -> deaths`;
     return levels;
   };
   const constant = (v) => () => v;
-  const fertFall = scheduleFn({ value: 0.21, steps: [{ at: 2, value: 0.09 }], smooth: true });
+  const FERT24 = '0.21 @0.5: 0.18 @1: 0.15 @1.5: 0.12 @2: 0.09';
+  const fertFall = scheduleFn({
+    value: 0.21,
+    steps: [{ at: 0.5, value: 0.18 }, { at: 1, value: 0.15 }, { at: 1.5, value: 0.12 }, { at: 2, value: 0.09 }],
+  });
   const runs = [
     ['figure 22', pop('0.21', '0.09'), mirror(constant(0.21), constant(0.09)), 21.5, 22.2],
     ['figure 23', pop('0.21', '0.3'), mirror(constant(0.21), constant(0.3)), 2.5, 2.9],
-    ['figure 24', pop('0.21 ~2: 0.09', '0.09'), mirror(fertFall, constant(0.09)), 7.3, 7.6],
+    ['figure 24', pop(FERT24, '0.09'), mirror(fertFall, constant(0.09)), 7.5, 7.8],
   ];
   const lasts = new Map();
   for (const [fig, input, wantLevels, lo, hi] of runs) {
@@ -377,7 +370,7 @@ mortality: ${mortality} -> deaths`;
     fail('figure 23', 'deaths dominant: population must fall strictly, staying positive');
   // Stabilization: growth until fertility meets mortality at t=2, then the
   // two rates cancel exactly — the level holds to the bit from there on.
-  const stab = simulate(sys(pop('0.21 ~2: 0.09', '0.09')))[0];
+  const stab = simulate(sys(pop(FERT24, '0.09')))[0];
   const flatFrom = Math.round(2 / DT);
   if (!stab.levels.every((v, i) => i === 0 || v >= stab.levels[i - 1]))
     fail('figure 24', 'population must never fall in the stabilization run');
@@ -399,7 +392,7 @@ mortality b: 0.3 -> deaths b
 |=>births c[stabilization: 6.6]=>deaths c|
 R(births c <- stabilization)
 B(deaths c <- stabilization)
-fertility c: 0.21 ~2: 0.09 -> births c
+fertility c: ${FERT24} -> births c
 mortality c: 0.09 -> deaths c`;
   const system25 = sys(F25);
   const series25 = simulate(system25);
@@ -414,14 +407,16 @@ mortality c: 0.09 -> deaths c`;
     fail('figure 25', 'no goal rules in the composite either');
 
   // figures 21 & 26: shifting dominance — one run, three phases. Fertility
-  // starts above mortality, falls onto it (the two equal schedule points
-  // interpolate exactly constant, so the plateau holds), then climbs past it
-  // again: grow, hold, grow faster — ending near the book's ≈18.3 billion.
-  const F26 = '0.21 ~2.5: 0.09 ~4.5: 0.09 ~7: 0.27 ~10: 0.36';
+  // starts above mortality, staircases down onto it (holding 0.09 through
+  // the plateau), then climbs past it again: grow, hold, grow faster —
+  // ending near the book's ≈18 billion.
+  const STEPS26 = [[0.5, 0.182], [1, 0.15], [1.5, 0.121], [2, 0.099], [2.5, 0.09], [5, 0.105],
+    [5.5, 0.143], [6, 0.191], [6.5, 0.238], [7, 0.27], [7.5, 0.289], [8, 0.306], [8.5, 0.32],
+    [9, 0.333], [9.5, 0.346], [10, 0.36]];
+  const F26 = '0.21 ' + STEPS26.map(([at, value]) => `@${at}: ${value}`).join(' ');
   const fertShift = scheduleFn({
     value: 0.21,
-    steps: [{ at: 2.5, value: 0.09 }, { at: 4.5, value: 0.09 }, { at: 7, value: 0.27 }, { at: 10, value: 0.36 }],
-    smooth: true,
+    steps: STEPS26.map(([at, value]) => ({ at, value })),
   });
   const system26 = sys(pop(F26, '0.09'));
   const shift = simulate(system26).find(s => s.label === 'population');
@@ -438,8 +433,8 @@ mortality c: 0.09 -> deaths c`;
     fail('figure 26', `phase two: fertility = mortality must hold the level, drifted ${Math.max(...plateau) - Math.min(...plateau)}`);
   if (!(last(shift) > 2 * shift.levels[idx(4.5)]))
     fail('figure 26', 'phase three: renewed dominance must more than double the plateau');
-  if (!(last(shift) > 17.5 && last(shift) < 18.7))
-    fail('figure 26', `should end near the book's ≈18.3, got ${last(shift)}`);
+  if (!(last(shift) > 17.2 && last(shift) < 18.7))
+    fail('figure 26', `should end near the book's ≈18 (the staircase holds each value, so it under-integrates the climb a touch), got ${last(shift)}`);
   if (goalRefs(system26).length !== 0)
     fail('figure 26', 'the shifting fertility is a factor, not a goal');
 }
@@ -601,12 +596,11 @@ adjustment: 10`;
     fail('figure 30', 'the formula faucets register no goal rules — figure 30 draws no dashed line');
 }
 
-// Time shifts x(t ~ T) and x(t - T) (the figures 31–35 machinery), pinned
-// float-exactly against hand-rolled state recurrences in the engine's op
-// order: a shift's value is its START-of-step state (the delay ring serves
-// before it overwrites, the smoothing reads before it steps), states
-// advance on start-of-step inputs after the rates and rations are known,
-// and both prime to their input's value at t=0.
+// Time shifts x(t - T) (the figures 31–35 machinery), pinned float-exactly
+// against hand-rolled state recurrences in the engine's op order: a
+// shift's value is its START-of-step state (the delay ring serves before
+// it overwrites), states advance on start-of-step inputs after the rates
+// and rations are known, and each primes to its input's value at t=0.
 {
   // x(t - T): a pure pipeline. x steps 0→10 at t=1; the delayed faucet
   // echoes it exactly 0.5 (ten samples) later, so the sink stock first
@@ -634,58 +628,38 @@ adjustment: 10`;
 }
 
 {
-  // x(t ~ T): a first-order lag. The faucet's rate IS the lag's
-  // start-of-step state; the state then steps toward x by min(1, DT/T).
-  // Priming makes S(0) = x(0).
-  const system = sys('x: 0 @1: 10\n|=>f: (x(t ~ 1))[s: 0]');
-  const s = simulate(system)[0];
-  const xFn = scheduleFn({ value: 0, steps: [{ at: 1, value: 10 }] });
-  let S = 0, L = 0;
-  const want = [L];
-  for (let n = 0; n < Math.round(T_END / DT); n++) {
-    const rate = Math.max(0, S);
-    S = S + Math.min(1, DT / 1) * (xFn(n * DT) - S);
-    L = Math.max(0, L + rate * DT * 1);
-    want.push(L);
-  }
-  if (!s.levels.every((v, i) => v === want[i]))
-    fail('smooth lag', 'levels must match the lag mirror sample-for-sample');
-  // T = 0 degenerates to tracking the input exactly (the snap guard, the
-  // same min(1, ·) cap the goal-seek gain uses).
-  const snap = simulate(sys('x: 3\n|=>f: (x(t ~ 0))[s: 0]'))[0];
-  if (!snap.levels.every((v, i) => Math.abs(v - 3 * i * DT) < 1e-9))
-    fail('smooth snap', 'T=0 must track the input exactly');
-}
-
-{
-  // A smoothing may perceive a FLOW: its input is the faucet's rate as
-  // APPLIED — rationed down as the source stock empties — while the t=0
-  // priming reads the raw clamped rate (nothing has flowed yet): here the
-  // drain asks 5 but holds only 0.1, so the lag starts at 5 and chases the
-  // rationed trickle down from its first step.
-  const system = sys('[a: 0.1]=>drain: 5|\n|=>inflow: (drain(t ~ 1))[b: 0]');
+  // A delay may read a FLOW: its input is the faucet's rate as APPLIED —
+  // rationed down as the source stock empties — while the t=0 priming
+  // reads the raw clamped rate (nothing has flowed yet): here the drain
+  // asks 5 but holds only 0.1, so the pipeline starts full of 5 and then
+  // carries the rationed trickle, one lag behind.
+  const system = sys('[a: 0.1]=>drain: 5|\n|=>inflow: (drain(t - 1))[b: 0]');
   const b = simulate(system).find(x => x.label === 'b');
-  let A = 0.1, B = 0, S = 5;
+  let A = 0.1, B = 0;
+  const buf = new Array(20).fill(5);
+  let ptr = 0;
   const wantB = [B];
   for (let n = 0; n < Math.round(T_END / DT); n++) {
     const drainRate = 5;
-    const inflowRate = Math.max(0, S);
+    const inflowRate = Math.max(0, buf[ptr]);
     const demandA = drainRate * DT;
     const rationA = demandA > A ? A / demandA : 1;
     const applied = drainRate * rationA;
-    S = S + Math.min(1, DT / 1) * (applied - S);
+    buf[ptr] = applied;
+    ptr = (ptr + 1) % 20;
     A = Math.max(0, A + -(drainRate * DT * rationA));
     B = Math.max(0, B + inflowRate * DT * 1);
     wantB.push(B);
   }
   if (!b.levels.every((v, i) => v === wantB[i]))
-    fail('smoothed flow', 'the lag must chase the applied (post-ration) rate, primed raw');
+    fail('delayed flow', 'the pipeline must carry the applied (post-ration) rate, primed raw');
 }
 
 // figures 31 & 32 (whose inventory chart is the book's figure 34), 35,
 // and 36: the delayed car dealership. Sales step up 10%
-// at t=2.5 (day 25); perceived sales smooths the sales flow
-// (`sales(t ~ perception delay)`, 0.5 = 5 days), deliveries pipeline the
+// at t=2.5 (day 25); perceived sales reads the sales flow as it was five
+// days earlier (`sales(t - perception delay)`, 0.5 — a pipeline, so no
+// extra nodes), deliveries pipeline the
 // orders (`(t - delivery delay)`, 0.5), and orders anchor on perceived
 // sales plus the inventory discrepancy made up over the response delay. The delivery
 // pipeline vs response-time ratio decides everything: 0.5/0.3 (the book's
@@ -699,7 +673,7 @@ orders to factory: (perceived sales + discrepancy / response delay)
 deliveries: (orders to factory(t - delivery delay))
 discrepancy: (desired inventory - inventory of cars on the lot)
 desired inventory: (perceived sales)
-perceived sales: (sales(t ~ perception delay))
+perceived sales: (sales(t - perception delay))
 sales: (customer demand)
 customer demand: 200 @2.5: 220
 perception delay: 0.5
@@ -707,20 +681,23 @@ response delay: ${rd}
 delivery delay: 0.5`;
   const demandFn = scheduleFn({ value: 200, steps: [{ at: 2.5, value: 220 }] });
   const mirror = (rd) => {
-    let I = 200, S = 200;                 // the smooth primes to sales' raw rate at t=0
-    const buf = new Array(10).fill(200);  // the pipeline primes to orders(0) = S + 0/rd
-    let ptr = 0;
+    let I = 200;                           // both rings prime on the 200 equilibrium
+    const bufD = new Array(10).fill(200);  // the delivery pipeline: orders(0) = P + 0/rd
+    const bufP = new Array(10).fill(200);  // the perception pipeline: sales' raw rate at t=0
+    let ptrD = 0, ptrP = 0;
     const levels = [I];
     for (let n = 0; n < Math.round(T_END / DT); n++) {
       const t = n * DT;
-      const deliveries = Math.max(0, buf[ptr]);   // the delay's start-of-step state
+      const deliveries = Math.max(0, bufD[ptrD]); // the delay's start-of-step state
       const sales = Math.max(0, demandFn(t));     // inventory stays ample: ration 1
-      const desired = S;                          // ten days of sales = one unit's worth
+      const P = bufP[ptrP];                       // perceived sales: the flow ten samples ago
+      const desired = P;                          // ten days of sales = one unit's worth
       const disc = desired - I;
-      const orders = S + disc / rd;               // gathered before any state commits
-      buf[ptr] = orders;
-      ptr = (ptr + 1) % 10;
-      S = S + Math.min(1, DT / 0.5) * (sales * 1 - S);
+      const orders = P + disc / rd;               // gathered before any state commits
+      bufD[ptrD] = orders;
+      ptrD = (ptrD + 1) % 10;
+      bufP[ptrP] = sales * 1;                     // the applied rate (ration 1)
+      ptrP = (ptrP + 1) % 10;
       I = Math.max(0, I + (deliveries * DT * 1 - sales * DT * 1));
       levels.push(I);
     }
@@ -748,7 +725,7 @@ delivery delay: 0.5`;
   const dip32 = win(L32, 2.5, 3.8, Math.min);
   if (!(dip32 > 185 && dip32 < 192)) fail('figure 32', `first dip should bottom near 188, got ${dip32}`);
   const p1 = win(L32, 3.8, 5, Math.max), p2 = win(L32, 5.5, 7, Math.max), p3 = win(L32, 7.5, 9, Math.max);
-  if (!(p1 > 240 && p1 < 252 && p2 > 250 && p2 < 262 && p3 > 262 && p3 < 275))
+  if (!(p1 > 253 && p1 < 268 && p2 > 268 && p2 < 284 && p3 > 288 && p3 < 304))
     fail('figure 32', `peaks should climb the book's ladder, got ${p1}/${p2}/${p3}`);
   if (!(p1 < p2 && p2 < p3)) fail('figure 32', 'the oscillation must grow — the delays sit past the stability margin');
   const w1 = win(L32, 4.8, 5.8, Math.min), w2 = win(L32, 6.8, 7.8, Math.min), w3 = win(L32, 8.8, 9.8, Math.min);
@@ -765,17 +742,17 @@ delivery delay: 0.5`;
   // overshoot (~227 near day 47), then flat on 220.
   const L36 = measured.get('figure 36');
   const dip36 = win(L36, 2.5, 4.5, Math.min);
-  if (!(dip36 > 184 && dip36 < 192)) fail('figure 36', `the single dip bottoms near 188, got ${dip36}`);
+  if (!(dip36 > 180 && dip36 < 192)) fail('figure 36', `the single dip bottoms near 184, got ${dip36}`);
   const over = win(L36, 4, 5.5, Math.max);
-  if (!(over > 224 && over < 230)) fail('figure 36', `slower response overshoots only to ~227, got ${over}`);
-  if (!(win(L36, 7, 10, Math.max) - win(L36, 7, 10, Math.min) < 2))
+  if (!(over > 228 && over < 238)) fail('figure 36', `slower response overshoots only to ~233, got ${over}`);
+  if (!(win(L36, 7, 10, Math.max) - win(L36, 7, 10, Math.min) < 4))
     fail('figure 36', 'the oscillation must be damped away by the last third');
   const end36 = L36[L36.length - 1];
   if (!(end36 > 219 && end36 < 221)) fail('figure 36', `must settle on the new 220 equilibrium, got ${end36}`);
   // figure 33: the flow view of the base run — each delay's input against
-  // its output. The pipeline is EXACT (deliveries echoes orders ten samples
-  // later, clamped at the tap, primed at the 200 equilibrium); perceived
-  // sales lags the sales step exponentially (~63% closed in one delay).
+  // its output. Both pipelines are EXACT ten-sample echoes primed at the
+  // 200 equilibrium: deliveries echoes orders, perceived sales echoes the
+  // applied sales flow.
   const system32 = sys(car('0.3'));
   const flows = flowSeries(system32);
   if (flows.map(f => `${f.label}${f.dashed ? '~' : ''}`).join() !== 'deliveries~,sales,orders to factory,perceived sales~')
@@ -787,10 +764,10 @@ delivery delay: 0.5`;
     fail('figure 33', 'deliveries must be orders shifted exactly ten samples (primed at 200)');
   if (!sales.values.every((v, i) => v === Math.max(0, demandFn(i * DT))))
     fail('figure 33', 'sales must track customer demand sample-for-sample');
-  if (!(at(perceived.values, 2.5) === 200
-        && at(perceived.values, 3) > 210 && at(perceived.values, 3) < 216
-        && at(perceived.values, 4) > 218 && at(perceived.values, 4) < 220))
-    fail('figure 33', `perceived sales must lag the step exponentially, got ${at(perceived.values, 3)} at t=3`);
+  if (!perceived.values.every((v, i) => v === (i < 10 ? 200 : sales.values[i - 10])))
+    fail('figure 33', 'perceived sales must be the sales flow shifted exactly ten samples (primed at 200)');
+  if (!(at(perceived.values, 2.9) === 200 && at(perceived.values, 3) === 220))
+    fail('figure 33', `perception picks up the step exactly one delay late, got ${at(perceived.values, 3)} at t=3`);
   if (sales.values.length !== L32.length)
     fail('figure 33', 'flow series align with the stock series sample count');
   if (!hasDelays(system32))
@@ -1131,14 +1108,15 @@ yield per unit capital: (resource / 1000)`;
 // (1 unit = 15 years), overshooting once and settling the way the book's
 // three panels do. The goal is the book's 5%/yr desired growth
 // (1.5 capital against the 0.75/unit depreciation drain), profit is
-// income perceived a season late (price * harvest(t ~ 0.1) minus a
-// 1.75/unit operating cost — a FAUCET read through a shift, so the smooth
-// tracks the APPLIED harvest rate), and per-fish regeneration is the
-// depensation hump 112 (x(1 - x))^2, peaking at R = 600 ABOVE the settle
-// point — its +7/unit equilibrium slope barely damps the loop, and the
-// lagged profit carries capital past the turn. Mirrored float-exactly
-// (soft-min, the smooth stepping DT/0.1 toward the applied rate before
-// levels move, both rations), then the book's shapes pinned as windows.
+// income read off the catch a season late (price * harvest(t - 0.1) minus
+// a 1.75/unit operating cost — a FAUCET read through the pipeline shift,
+// so the ring carries the APPLIED harvest rate and no extra nodes exist),
+// and per-fish regeneration is the depensation hump 112 (x(1 - x))^2,
+// peaking at R = 600 ABOVE the settle point — its +7/unit equilibrium
+// slope barely damps the loop, and the delayed profit carries capital
+// past the turn. Mirrored float-exactly (soft-min, the two-sample profit
+// ring committing the applied rate before levels move, both rations),
+// then the book's shapes pinned as windows.
 {
   const FISH = `| =>investment [capital: 5] =>depreciation |
 | =>regeneration [resource: 1000] =>harvest |
@@ -1150,7 +1128,7 @@ growth goal: (1.5 capital)
 depreciation: (capital / capital lifetime)
 capital lifetime: (4 / 3)
 harvest: (10 capital * yield per unit capital)
-profit: (price * harvest(t ~ 0.1) - 1.75 capital)
+profit: (price * harvest(t - 0.1) - 1.75 capital)
 price: 1
 yield per unit capital: ((resource / 1000)^2)
 regeneration: (resource * regeneration rate)
@@ -1160,20 +1138,22 @@ regeneration rate: (112 (resource / 1000 * (1 - resource / 1000))^2)`;
   const Kf = series.find(s => s.label === 'capital');
   const Rf = series.find(s => s.label === 'resource');
   let K = 5, R = 1000;
-  let S = Math.max(0, (10 * K) * ((R / 1000) ** 2)); // primed: raw clamped rate at t=0
+  const buf = new Array(2).fill(Math.max(0, (10 * K) * ((R / 1000) ** 2))); // primed: raw clamped rate at t=0
+  let ptr = 0;
   const wantK = [K], wantR = [R];
   for (let n = 0; n < Math.round(T_END / DT); n++) {
     const y = (R / 1000) ** 2;
     const rate = 112 * ((R / 1000 * (1 - R / 1000)) ** 2);
     const regen = Math.max(0, R * rate);
     const G = 1.5 * K;
-    const P = (1 * S) - (1.75 * K);
+    const P = (1 * buf[ptr]) - (1.75 * K);
     const inv = Math.max(0, (P * G) / ((P ** 6 + G ** 6) ** (1 / 6)));
     const dep = Math.max(0, K / (4 / 3));
     const harv = Math.max(0, (10 * K) * y);
     const demandK = dep * DT, rationK = demandK > K ? K / demandK : 1;
     const demandR = harv * DT, rationR = demandR > R ? R / demandR : 1;
-    S = S + Math.min(1, DT / 0.1) * ((harv * rationR) - S);
+    buf[ptr] = harv * rationR;
+    ptr = (ptr + 1) % 2;
     let dK = 0;
     dK += inv * DT * 1;
     dK -= dep * DT * rationK;
@@ -1262,20 +1242,22 @@ regeneration rate: (112 (resource / 1000 * (1 - resource / 1000))^2)`;
       const xr = R_ / 1000;
       return (1.27 * xr ** 2.8) / (xr ** 2.8 + 0.27);
     };
-    let S = Math.max(0, (10 * K) * yOf(R));
+    const buf = new Array(2).fill(Math.max(0, (10 * K) * yOf(R)));
+    let ptr = 0;
     const wantK = [K], wantR = [R];
     for (let n = 0; n < Math.round(T_END / DT); n++) {
       const y = yOf(R);
       const rate = 112 * ((R / 1000 * (1 - R / 1000)) ** 2);
       const regen = Math.max(0, R * rate);
       const G = 1.5 * K;
-      const P = (1 * S) - (1.75 * K);
+      const P = (1 * buf[ptr]) - (1.75 * K);
       const inv = Math.max(0, (P * G) / ((P ** 6 + G ** 6) ** (1 / 6)));
       const dep = Math.max(0, K / (4 / 3));
       const harv = Math.max(0, (10 * K) * y);
       const demandK = dep * DT, rationK = demandK > K ? K / demandK : 1;
       const demandR = harv * DT, rationR = demandR > R ? R / demandR : 1;
-      S = S + Math.min(1, DT / 0.1) * ((harv * rationR) - S);
+      buf[ptr] = harv * rationR;
+      ptr = (ptr + 1) % 2;
       let dK = 0;
       dK += inv * DT * 1;
       dK -= dep * DT * rationK;
@@ -1359,20 +1341,22 @@ regeneration rate: (112 (resource / 1000 * (1 - resource / 1000))^2)`;
       const xr = R_ / 1000;
       return (1.01 * xr ** 2.8) / (xr ** 2.8 + 0.01);
     };
-    let S = Math.max(0, (10 * K) * yOf(R));
+    const buf = new Array(2).fill(Math.max(0, (10 * K) * yOf(R)));
+    let ptr = 0;
     const wantK = [K], wantR = [R];
     for (let n = 0; n < Math.round(T_END / DT); n++) {
       const y = yOf(R);
       const rate = 112 * ((R / 1000 * (1 - R / 1000)) ** 2);
       const regen = Math.max(0, R * rate);
       const G = 1.5 * K;
-      const P = (1 * S) - (1.75 * K);
+      const P = (1 * buf[ptr]) - (1.75 * K);
       const inv = Math.max(0, (P * G) / ((P ** 6 + G ** 6) ** (1 / 6)));
       const dep = Math.max(0, K / (4 / 3));
       const harv = Math.max(0, (10 * K) * y);
       const demandK = dep * DT, rationK = demandK > K ? K / demandK : 1;
       const demandR = harv * DT, rationR = demandR > R ? R / demandR : 1;
-      S = S + Math.min(1, DT / 0.1) * ((harv * rationR) - S);
+      buf[ptr] = harv * rationR;
+      ptr = (ptr + 1) % 2;
       let dK = 0;
       dK += inv * DT * 1;
       dK -= dep * DT * rationK;

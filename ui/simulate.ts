@@ -1,10 +1,9 @@
 // Pure stock-flow simulation (no d3, no DOM — importable headlessly).
 // Derives each stock's level over time from the compiled graph: stock
 // `value` = initial level; a faucet's rate is its schedule — piecewise-
-// constant for `@` steps (`value` from t=0, overridden by each entry from
-// its `at` time onward; both default to 0: an unannotated faucet is a
-// closed tap), or a smooth monotone curve through the same points for `~`
-// steps (see scheduleFn). Flow-link
+// constant (`value` from t=0, overridden by each `@` entry from its `at`
+// time onward; both default to 0: an unannotated faucet is a closed tap;
+// see scheduleFn). Flow-link
 // direction decides which stock a faucet drains (stock→faucet) and fills
 // (faucet→stock); clouds, dots, and chained faucets are infinite sources/
 // sinks. Forward Euler in DT steps over a horizon defaulting to T_END (the
@@ -32,19 +31,15 @@
 // tap, exactly as before.
 //
 // DELAYS (figures 31–35, the oscillating car lot): a formula may read a
-// signal at a shifted time — `x(t ~ T)`, the value about T ago, is a
-// first-order exponential lag stepping toward x by min(1, DT/T) each step
-// (T ≤ 0 snaps, like the goal-seek gain cap); `x(t - T)` is a pipeline:
-// the value x had exactly T ago (T rounds to a whole number of DT steps,
-// minimum one), served from a ring buffer. Only as a shift's input may a
-// reference land on a FAUCET, reading the flow's rate as actually applied
-// this step (post-rationing) — how `sales(t ~ perception delay)` perceives
-// a flow. Both shifts read their own state at evaluation time (last step's
-// lag level, the buffer), so a feedback loop closed through one is legal
-// and cycle-free. At t=0 each shift primes to its input's value right
-// then — a smoothing starts equal to its input, a pipeline starts full of
-// it — with faucet inputs read at their raw clamped rate (nothing has
-// flowed yet) and circular primings reading 0.
+// signal at a shifted time — `x(t - T)` is a pipeline: the value x had
+// exactly T ago (T rounds to a whole number of DT steps, minimum one),
+// served from a ring buffer. Only as a shift's input may a reference land
+// on a FAUCET, reading the flow's rate as actually applied this step
+// (post-rationing). A shift reads its own state at evaluation time (the
+// buffer), so a feedback loop closed through one is legal and cycle-free.
+// At t=0 each shift primes to its input's value right then — the pipeline
+// starts full of it — with faucet inputs read at their raw clamped rate
+// (nothing has flowed yet) and circular primings reading 0.
 import type { Expr, Link, Node, System } from "./type";
 
 export const T_END = 10; // default simulated horizon (simulate() takes an override)
@@ -154,9 +149,9 @@ function faucetWiring(system: System): Wiring[] {
 
 // The chart's dashed reference rules: each constant serving as at least one
 // goal-seeking faucet's goal, once, in parser-id order. A scheduled goal
-// carries its steps (and smooth flag) too, so the chart can draw the moving
-// target exactly as the simulator reads it.
-export type GoalRef = { id: string; label: string; value: number; steps?: { at: number; value: number }[]; smooth?: boolean };
+// carries its steps too, so the chart can draw the moving target exactly
+// as the simulator reads it.
+export type GoalRef = { id: string; label: string; value: number; steps?: { at: number; value: number }[] };
 
 export function goalRefs(system: System): GoalRef[] {
   const seen = new Map<string, GoalRef>();
@@ -167,22 +162,18 @@ export function goalRefs(system: System): GoalRef[] {
         label: w.goal.label,
         value: w.goal.value,
         ...(w.goal.steps ? { steps: w.goal.steps } : {}),
-        ...(w.goal.smooth ? { smooth: true } : {}),
       });
   }
   return [...seen.values()].sort((a, b) => parserId(a.id) - parserId(b.id));
 }
 
 // A schedule's value over time, as a reusable function (the chart samples
-// the very same interpolant the simulator integrates). Points are the
-// initial `value` at t=0 plus the steps, sorted by time; at duplicate times
-// the later-written point wins (a step at 0 overrides the initial). Stepped
-// (`@`) schedules hold each value until the next step — the tap-turning
-// semantics of figure 7. Smooth (`~`) schedules pass a monotone cubic
-// (Fritsch–Carlson, no overshoot between points) through the same points —
-// the book's continuously varying driving curves, figure 19's outside
-// temperature — holding flat before the first and after the last point.
-export type SchedLike = { value?: number | null; steps?: { at: number; value: number }[] | null; smooth?: boolean | null };
+// the very same reading the simulator integrates). Points are the initial
+// `value` at t=0 plus the steps, sorted by time; at duplicate times the
+// later-written point wins (a step at 0 overrides the initial). Schedules
+// hold each value until the next step — the tap-turning semantics of
+// figure 7; a curve is written as a denser staircase of steps.
+export type SchedLike = { value?: number | null; steps?: { at: number; value: number }[] | null };
 
 export function scheduleFn(n: SchedLike): (t: number) => number {
   const sorted = [{ at: 0, value: n.value ?? 0 }]
@@ -194,55 +185,28 @@ export function scheduleFn(n: SchedLike): (t: number) => number {
     if (prev && prev.at === p.at) prev.value = p.value;
     else pts.push({ ...p });
   }
-  if (!n.smooth || pts.length < 2) {
-    return t => {
-      let v = pts[0]?.value ?? 0;
-      for (const p of pts) {
-        if (p.at > t) break;
-        v = p.value;
-      }
-      return v;
-    };
-  }
-  // Fritsch–Carlson tangents: secant-mean at interior points with the sign
-  // guard that keeps each segment monotone, one-sided at the ends.
-  const xs = pts.map(p => p.at), ys = pts.map(p => p.value);
-  const last = xs.length - 1;
-  const dx: number[] = [], secant: number[] = [];
-  for (let i = 0; i < last; i++) {
-    dx.push(xs[i + 1]! - xs[i]!);
-    secant.push((ys[i + 1]! - ys[i]!) / (xs[i + 1]! - xs[i]!));
-  }
-  const m: number[] = [secant[0]!];
-  for (let i = 1; i < last; i++) {
-    const a = secant[i - 1]!, b = secant[i]!;
-    m.push(a * b <= 0 ? 0 : 3 * (dx[i - 1]! + dx[i]!) / ((2 * dx[i]! + dx[i - 1]!) / a + (dx[i]! + 2 * dx[i - 1]!) / b));
-  }
-  m.push(secant[last - 1]!);
   return t => {
-    if (t <= xs[0]!) return ys[0]!;
-    if (t >= xs[last]!) return ys[last]!;
-    let i = 0;
-    while (xs[i + 1]! < t) i++;
-    const h = xs[i + 1]! - xs[i]!, s = (t - xs[i]!) / h;
-    const h00 = (1 + 2 * s) * (1 - s) * (1 - s), h10 = s * (1 - s) * (1 - s);
-    const h01 = s * s * (3 - 2 * s), h11 = s * s * (s - 1);
-    return h00 * ys[i]! + h10 * h * m[i]! + h01 * ys[i + 1]! + h11 * h * m[i + 1]!;
+    let v = pts[0]?.value ?? 0;
+    for (const p of pts) {
+      if (p.at > t) break;
+      v = p.value;
+    }
+    return v;
   };
 }
 
 // A time-shift site inside some node's expr, keyed by that owner and the
 // shift's position in the tree ("L"/"R" through operators, "I"/"T" into a
 // shift's input and time) — the stable identity its state lives under.
-type CallSite = { key: string; kind: "smooth" | "delay"; input: Expr; time: Expr };
+type CallSite = { key: string; input: Expr; time: Expr };
 
 const collectCalls = (e: Expr, key: string, out: CallSite[]): void => {
   switch (e.kind) {
     case "num": case "ref": return;
-    case "smooth": case "delay":
+    case "delay":
       collectCalls(e.input, key + "I", out);
       collectCalls(e.time, key + "T", out);
-      out.push({ key, kind: e.kind, input: e.input, time: e.time });
+      out.push({ key, input: e.input, time: e.time });
       return;
     default:
       collectCalls(e.left, key + "L", out);
@@ -278,7 +242,7 @@ function run(system: System, tEnd: number): { stocks: StockSeries[]; flows: Flow
   // Each faucet moves rate(t)·DT per step from its source stock to its sink
   // stock (see faucetWiring); a side with no stock is an infinite reservoir.
   // Every annotated quantity is a schedule read through scheduleFn — stepped
-  // or smooth. A faucet reads its own schedule as a rate (or as a gain when
+  // sampled at each step's start. A faucet reads its own schedule as a rate (or as a gain when
   // goal-seeking); a goal or factor dot's schedule is the value compared
   // against or multiplied by, so a scheduled goal (figure 19's outside
   // temperature) is a moving target.
@@ -329,10 +293,9 @@ function run(system: System, tEnd: number): { stocks: StockSeries[]; flows: Flow
     switch (e.kind) {
       case "num": return e.value;
       case "ref": return valueOf(e.id, t, memo);
-      // A shift's value is its STATE — last step's lag level, the ring
-      // buffer's oldest sample — never a recursion into its input;
-      // primeCall fills a missing state (the t=0 path only).
-      case "smooth": return smoothState.get(key) ?? primeCall(key, e, t, memo);
+      // A shift's value is its STATE — the ring buffer's oldest sample —
+      // never a recursion into its input; primeCall fills a missing state
+      // (the t=0 path only).
       case "delay": {
         const st = delayState.get(key);
         return st ? st.buf[st.ptr]! : primeCall(key, e, t, memo);
@@ -372,25 +335,21 @@ function run(system: System, tEnd: number): { stocks: StockSeries[]; flows: Flow
   };
 
   // Call state. Priming is lazy and recursive: a call's initial state is
-  // its input's value at t=0 (a smooth starts equal to its input, a delay's
-  // pipeline starts full of it — the standard SMOOTH/DELAY init), which may
-  // chain through other yet-unprimed calls; a circular priming reads 0.
+  // its input's value at t=0 (the pipeline starts full of it — the
+  // standard DELAY init), which may chain through other yet-unprimed
+  // calls; a circular priming reads 0.
   const calls: CallSite[] = [];
   for (const n of [...system.nodes].sort((a, b) => parserId(a.id) - parserId(b.id)))
     if (n.expr != null) collectCalls(n.expr, n.id + ":", calls);
-  const smoothState = new Map<string, number>();
   const delayState = new Map<string, { buf: number[]; ptr: number }>();
   const priming = new Set<string>();
-  const primeCall = (key: string, e: Expr & { kind: "smooth" | "delay" }, t: number, memo: Map<string, number>): number => {
+  const primeCall = (key: string, e: Expr & { kind: "delay" }, t: number, memo: Map<string, number>): number => {
     if (priming.has(key)) return 0;
     priming.add(key);
     const v0 = evalExpr(e.input, t, memo, key + "I");
-    if (e.kind === "smooth") smoothState.set(key, v0);
-    else {
-      const T = evalExpr(e.time, t, memo, key + "T");
-      const n = Math.max(1, Math.round((Number.isFinite(T) ? Math.max(0, T) : 0) / DT));
-      delayState.set(key, { buf: new Array(n).fill(v0), ptr: 0 });
-    }
+    const T = evalExpr(e.time, t, memo, key + "T");
+    const n = Math.max(1, Math.round((Number.isFinite(T) ? Math.max(0, T) : 0) / DT));
+    delayState.set(key, { buf: new Array(n).fill(v0), ptr: 0 });
     priming.delete(key);
     return v0;
   };
@@ -398,8 +357,8 @@ function run(system: System, tEnd: number): { stocks: StockSeries[]; flows: Flow
     // Prime every call up front (order-independent: primeCall recurses).
     const memo = new Map<string, number>();
     for (const c of calls) {
-      if (c.kind === "smooth" ? !smoothState.has(c.key) : !delayState.has(c.key))
-        primeCall(c.key, { kind: c.kind, input: c.input, time: c.time }, 0, memo);
+      if (!delayState.has(c.key))
+        primeCall(c.key, { kind: "delay", input: c.input, time: c.time }, 0, memo);
     }
   }
 
@@ -455,24 +414,16 @@ function run(system: System, tEnd: number): { stocks: StockSeries[]; flows: Flow
     sampleFlows(i * DT, memo);
     // Advance the call states on start-of-step values: gather every input
     // first (a chained call must see its upstream's pre-update state), then
-    // commit — the smooth steps toward its input by min(1, DT/T), the delay
-    // ring overwrites the sample it just served and moves on. Runs before
-    // the levels update so inputs read this step's stocks.
+    // commit — each delay ring overwrites the sample it just served and
+    // moves on. Runs before the levels update so inputs read this step's
+    // stocks.
     const inputs = calls.map(c => evalExpr(c.input, i * DT, memo, c.key + "I"));
-    const times = calls.map(c => c.kind === "smooth" ? evalExpr(c.time, i * DT, memo, c.key + "T") : 0);
     calls.forEach((c, k) => {
       const x = inputs[k] ?? 0;
-      if (c.kind === "smooth") {
-        const T = times[k] ?? 0;
-        const toward = T > 0 ? Math.min(1, DT / T) : 1;
-        const s = smoothState.get(c.key) ?? x;
-        smoothState.set(c.key, s + toward * (x - s));
-      } else {
-        const st = delayState.get(c.key);
-        if (st) {
-          st.buf[st.ptr] = x;
-          st.ptr = (st.ptr + 1) % st.buf.length;
-        }
+      const st = delayState.get(c.key);
+      if (st) {
+        st.buf[st.ptr] = x;
+        st.ptr = (st.ptr + 1) % st.buf.length;
       }
     });
     curFlowRate = null;

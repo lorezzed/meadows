@@ -1,14 +1,14 @@
 // A compiled formula from the JSON seam: numbers, node references (by id),
 // binary arithmetic, and time shifts — the evaluator resolved names to ids
 // and drew the implied info arrows; the simulator evaluates the tree each
-// step. A shift node (`x(t ~ T)` first-order lag, `x(t - T)` pipeline)
-// carries per-run state in the simulator, keyed by its owner and
-// position — it is not itself a node.
+// step. A shift node (`x(t - T)`, a pipeline delay) carries per-run state
+// in the simulator, keyed by its owner and position — it is not itself a
+// node.
 export type Expr =
   | { kind: "num"; value: number }
   | { kind: "ref"; id: string }
   | { kind: "+" | "-" | "*" | "/" | "^"; left: Expr; right: Expr }
-  | { kind: "smooth" | "delay"; input: Expr; time: Expr };
+  | { kind: "delay"; input: Expr; time: Expr };
 
 type NodeBase = {
   type: string;
@@ -27,10 +27,6 @@ type NodeBase = {
   // A schedule's steps (`=>name: 0 @5: 5` = rate 0, then 5 from t=5; dots
   // take them too as driving variables). Absent/null = `value` throughout.
   steps?: { at: number; value: number }[] | null;
-  // True when the steps were written with `~`: the schedule interpolates a
-  // smooth monotone curve through its points instead of holding
-  // piecewise-constant. Absent/null = stepped.
-  smooth?: boolean | null;
   // A `: (expr)` formula: a computed auxiliary (dots) or a rate law
   // (faucets). Mutually exclusive with value/steps (first annotation wins).
   expr?: Expr | null;
