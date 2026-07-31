@@ -257,23 +257,19 @@ outside temperature: 10 -> discrepancy between inside and outside temperatures`;
 }
 
 // figures 15 & 19 (well insulated, leak 0.13) & 20 (poorly insulated, 0.4):
-// the outside temperature is a dense @ staircase — a cold day stepping
-// down to -5 and back — so the leak chases a moving target. The room sags
-// mid-run and recovers; the deeper the leak gain, the deeper the sag.
-// Mirrored step-for-step through the same scheduleFn the simulator uses.
+// the outside temperature is an equation of time — a period-10 cosine cold
+// day dipping to -5 at t=5 and back to 10 — so the leak chases a moving
+// target. The room sags mid-run and recovers; the deeper the leak gain,
+// the deeper the sag. Mirrored step-for-step: JS's left-associative float
+// ops are exactly the engine's fold order, so the mirror is float-exact.
 {
-  const PTS = [[0.5, 8.5], [1, 7], [1.5, 5.5], [2, 4], [2.5, 2], [3, 0], [3.5, -1.5], [4, -3],
-    [4.5, -5], [5, -4], [5.5, -3], [6, 0], [6.5, 2], [7, 4], [7.5, 5.5], [8, 7], [8.5, 8.5], [9, 10]];
-  const wave = '10 ' + PTS.map(([at, value]) => `@${at}: ${value}`).join(' ');
+  const OUTSIDE = '(2.5 + 7.5 * cos(2 * pi * t / 10))';
   const thermo = (leak) => `|=>heat from furnace: 1.2[room temperature: 10]=>heat to outside: ${leak}|
 B(heat from furnace <- discrepancy between desired and actual room temperatures <- room temperature)
 thermostat setting: 18 -> discrepancy between desired and actual room temperatures
 B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
-outside temperature: ${wave} -> discrepancy between inside and outside temperatures`;
-  const outsideFn = scheduleFn({
-    value: 10,
-    steps: PTS.map(([at, value]) => ({ at, value })),
-  });
+outside temperature: ${OUTSIDE} -> discrepancy between inside and outside temperatures`;
+  const outsideFn = (t) => 2.5 + 7.5 * Math.cos(2 * Math.PI * t / 10);
   const mirror = (leak) => {
     let L = 10;
     const levels = [L];
@@ -285,7 +281,7 @@ outside temperature: ${wave} -> discrepancy between inside and outside temperatu
     }
     return levels;
   };
-  for (const [fig, leak, dipLo, dipHi] of [['figure 19', 0.13, 15.5, 16.2], ['figure 20', 0.4, 12.0, 13.2]]) {
+  for (const [fig, leak, dipLo, dipHi] of [['figure 19', 0.13, 15.6, 16.0], ['figure 20', 0.4, 12.1, 12.6]]) {
     const system = sys(thermo(leak));
     const room = simulate(system).find(s => s.label === 'room temperature');
     const wantLevels = mirror(leak);
@@ -297,9 +293,13 @@ outside temperature: ${wave} -> discrepancy between inside and outside temperatu
       fail(fig, `mid-run sag should bottom out in [${dipLo}, ${dipHi}], got ${dip}`);
     if (!(last(room) > dip + 0.5))
       fail(fig, 'room must recover as the cold day ends');
+    // The formula goal carries its sampler, not steps — the chart draws
+    // the smooth dashed curve from it. cos(0) and cos(pi) are exact in
+    // doubles, so the endpoints pin bit-exactly.
     const outside = goalRefs(system).find(g => g.label === 'outside temperature');
-    if (!(outside && outside.value === 10 && outside.steps?.length === 18 && outside.smooth === undefined))
-      fail(fig, `the scheduled goal should carry its 18 staircase steps (and no smooth key), got ${JSON.stringify(outside)}`);
+    if (!(outside && outside.value === 10 && outside.steps === undefined
+          && typeof outside.fn === 'function' && outside.fn(0) === 10 && outside.fn(5) === -5))
+      fail(fig, `the formula goal should carry its curve sampler (10 at 0, -5 at 5), got ${JSON.stringify(outside)}`);
   }
 }
 
@@ -317,11 +317,12 @@ outside temperature: ${wave} -> discrepancy between inside and outside temperatu
 // figures 21–25: the population system — a reinforcing births loop and a
 // balancing deaths loop on one stock, both read through the factor rule
 // (bare faucets, drawn level→faucet arrows, valued fertility and mortality
-// dots). One time unit is a decade, so 2007's crude rates (21 births, 9
-// deaths per 1000 per year) read 0.21 and 0.09 — and the same structure
-// grows (22), declines (23), or stabilizes (24, fertility staircasing down
-// onto mortality) purely by the numbers. Mirrored step-for-step in the
-// simulator's float-op order, factor schedules through scheduleFn itself.
+// dots — a closed formula counts as valued exactly like a constant). One
+// time unit is a decade, so 2007's crude rates (21 births, 9 deaths per
+// 1000 per year) read 0.21 and 0.09 — and the same structure grows (22),
+// declines (23), or stabilizes (24, fertility riding the book's straight
+// ramp down onto mortality) purely by the numbers. Mirrored step-for-step
+// in the simulator's float-op order.
 {
   const pop = (fertility, mortality) => `|=>births[population: 6.6]=>deaths|
 R(births <- population)
@@ -340,15 +341,12 @@ mortality: ${mortality} -> deaths`;
     return levels;
   };
   const constant = (v) => () => v;
-  const FERT24 = '0.21 @0.5: 0.18 @1: 0.15 @1.5: 0.12 @2: 0.09';
-  const fertFall = scheduleFn({
-    value: 0.21,
-    steps: [{ at: 0.5, value: 0.18 }, { at: 1, value: 0.15 }, { at: 1.5, value: 0.12 }, { at: 2, value: 0.09 }],
-  });
+  const FERT24 = '(max(0.09, 0.21 - 0.06 * t))';
+  const fertFall = (t) => Math.max(0.09, 0.21 - 0.06 * t);
   const runs = [
     ['figure 22', pop('0.21', '0.09'), mirror(constant(0.21), constant(0.09)), 21.5, 22.2],
     ['figure 23', pop('0.21', '0.3'), mirror(constant(0.21), constant(0.3)), 2.5, 2.9],
-    ['figure 24', pop(FERT24, '0.09'), mirror(fertFall, constant(0.09)), 7.5, 7.8],
+    ['figure 24', pop(FERT24, '0.09'), mirror(fertFall, constant(0.09)), 7.3, 7.6],
   ];
   const lasts = new Map();
   for (const [fig, input, wantLevels, lo, hi] of runs) {
@@ -369,9 +367,11 @@ mortality: ${mortality} -> deaths`;
   if (!decline.levels.every((v, i) => v > 0 && (i === 0 || v < decline.levels[i - 1])))
     fail('figure 23', 'deaths dominant: population must fall strictly, staying positive');
   // Stabilization: growth until fertility meets mortality at t=2, then the
-  // two rates cancel exactly — the level holds to the bit from there on.
+  // two rates cancel exactly — the level holds to the bit. (At the exact
+  // t=2 sample the ramp reads a float hair ABOVE 0.09 — 0.21 - 0.06*2 in
+  // doubles — so the hold is bit-exact from one sample later.)
   const stab = simulate(sys(pop(FERT24, '0.09')))[0];
-  const flatFrom = Math.round(2 / DT);
+  const flatFrom = Math.round(2 / DT) + 1;
   if (!stab.levels.every((v, i) => i === 0 || v >= stab.levels[i - 1]))
     fail('figure 24', 'population must never fall in the stabilization run');
   if (!stab.levels.every((v, i) => i < flatFrom || v === stab.levels[flatFrom]))
@@ -407,17 +407,13 @@ mortality c: 0.09 -> deaths c`;
     fail('figure 25', 'no goal rules in the composite either');
 
   // figures 21 & 26: shifting dominance — one run, three phases. Fertility
-  // starts above mortality, staircases down onto it (holding 0.09 through
-  // the plateau), then climbs past it again: grow, hold, grow faster —
-  // ending near the book's ≈18 billion.
-  const STEPS26 = [[0.5, 0.182], [1, 0.15], [1.5, 0.121], [2, 0.099], [2.5, 0.09], [5, 0.105],
-    [5.5, 0.143], [6, 0.191], [6.5, 0.238], [7, 0.27], [7.5, 0.289], [8, 0.306], [8.5, 0.32],
-    [9, 0.333], [9.5, 0.346], [10, 0.36]];
-  const F26 = '0.21 ' + STEPS26.map(([at, value]) => `@${at}: ${value}`).join(' ');
-  const fertShift = scheduleFn({
-    value: 0.21,
-    steps: STEPS26.map(([at, value]) => ({ at, value })),
-  });
+  // starts above mortality, rides the max ramp down onto it (holding 0.09
+  // exactly through the plateau — the ramp clamps and the sin term is
+  // still 0), then the quarter-wave sin climb carries it past again: grow,
+  // hold, grow faster — ending near the book's ≈18 billion.
+  const F26 = '(max(0.09, 0.21 - 0.048 * t) + max(0, 0.27 * sin(pi * (t - 5) / 10)))';
+  const fertShift = (t) =>
+    Math.max(0.09, 0.21 - 0.048 * t) + Math.max(0, 0.27 * Math.sin(Math.PI * (t - 5) / 10));
   const system26 = sys(pop(F26, '0.09'));
   const shift = simulate(system26).find(s => s.label === 'population');
   const want26 = mirror(fertShift, constant(0.09));
@@ -427,16 +423,103 @@ mortality c: 0.09 -> deaths c`;
     fail('figure 26', 'fertility never drops below mortality: population never falls');
   const idx = (t) => Math.round(t / DT);
   if (!shift.levels.slice(1, idx(2.5) + 1).every((v, i) => v > shift.levels[i]))
-    fail('figure 26', 'phase one: births dominant, strict growth until the schedules meet');
-  const plateau = shift.levels.slice(idx(2.5), idx(4.5) + 2);
-  if (Math.max(...plateau) - Math.min(...plateau) > 1e-6)
-    fail('figure 26', `phase two: fertility = mortality must hold the level, drifted ${Math.max(...plateau) - Math.min(...plateau)}`);
+    fail('figure 26', 'phase one: births dominant, strict growth until the ramp meets mortality');
+  // The step taken AT t=5 still reads sin(0) = 0, so the plateau includes
+  // the t=5.05 sample; strict growth starts with the next step.
+  const plateau = shift.levels.slice(idx(2.5), idx(5) + 2);
+  if (Math.max(...plateau) - Math.min(...plateau) > 0)
+    fail('figure 26', `phase two: fertility = mortality must hold the level to the bit, drifted ${Math.max(...plateau) - Math.min(...plateau)}`);
+  if (!shift.levels.slice(idx(5) + 2).every((v, i) => v > shift.levels[idx(5) + 1 + i]))
+    fail('figure 26', 'phase three: the sin climb must grow strictly once past t=5');
   if (!(last(shift) > 2 * shift.levels[idx(4.5)]))
     fail('figure 26', 'phase three: renewed dominance must more than double the plateau');
-  if (!(last(shift) > 17.2 && last(shift) < 18.7))
-    fail('figure 26', `should end near the book's ≈18 (the staircase holds each value, so it under-integrates the climb a touch), got ${last(shift)}`);
+  if (!(last(shift) > 17.5 && last(shift) < 18.4))
+    fail('figure 26', `should end near the book's ≈18, got ${last(shift)}`);
   if (goalRefs(system26).length !== 0)
     fail('figure 26', 'the shifting fertility is a factor, not a goal');
+}
+
+// Equations of time: `t`, `pi`, cos/sin, min/max in formulas. A CLOSED
+// formula (no references) is a driving variable — it counts as a valued
+// dot in the goal/factor walk exactly like a constant or a schedule —
+// while a formula WITH references stays a walk-through relay. Faucet rate
+// laws read t directly; a closed shift is analytic in the sampler.
+{
+  // A `(t)` rate law: the tub fills along the integral of t — mirrored
+  // exactly (the rate sampled at each step's start).
+  const ramp = simulate(sys('|=>fill: (t)[tub: 0]'))[0];
+  let L = 0;
+  const want = [L];
+  for (let n = 0; n < Math.round(T_END / DT); n++) {
+    L = Math.max(0, L + (Math.max(0, n * DT) * DT * 1));
+    want.push(L);
+  }
+  if (!ramp.levels.every((v, i) => Math.abs(v - want[i]) < 1e-12))
+    fail('t rate law', 'a faucet rate of (t) must integrate the ramp exactly');
+  const pie = simulate(sys('|=>fill: (pi)[tub: 0]'))[0];
+  if (Math.abs(last(pie) - Math.PI * T_END) > 1e-9)
+    fail('pi rate law', `a (pi) rate must fill pi per unit time, got ${last(pie)}`);
+
+  // A closed-formula GOAL: the stock chases the moving target the same way
+  // a scheduled goal moves — and goalRefs carries the curve's sampler
+  // (no steps key), anchored at its t=0 reading.
+  const chase = `[room: 100]=>cool: 1|
+B(cool <- gap <- room)
+target: (max(20, 40 - 4 * t)) -> gap`;
+  const sysChase = sys(chase);
+  const goals = goalRefs(sysChase);
+  if (!(goals.length === 1 && goals[0].label === 'target' && goals[0].value === 40
+        && goals[0].steps === undefined && typeof goals[0].fn === 'function'
+        && goals[0].fn(10) === 20))
+    fail('formula goal', `goalRefs must carry the closed formula's sampler, got ${JSON.stringify(goals)}`);
+  const chased = simulate(sysChase)[0];
+  const goalFn = (t) => Math.max(20, 40 - 4 * t);
+  let R = 100;
+  const wantChase = [R];
+  for (let n = 0; n < Math.round(T_END / DT); n++) {
+    const q = (Math.min(1, 1 / DT) * Math.max(0, R - goalFn(n * DT))) * DT * 1;
+    R = Math.max(0, R - q);
+    wantChase.push(R);
+  }
+  if (!chased.levels.every((v, i) => Math.abs(v - wantChase[i]) < 1e-9))
+    fail('formula goal', 'draining toward a formula goal must mirror gain × discrepancy');
+
+  // A closed-formula FACTOR: min(0.1, 0.2) reads exactly 0.1 — compound
+  // growth identical to the constant-factor run.
+  const compound = sys('|=>f[a: 100]\nR(f <- a)\nc: (min(0.1, 0.2)) -> f');
+  const grown = simulate(compound)[0];
+  let A = 100;
+  const wantGrown = [A];
+  for (let n = 0; n < Math.round(T_END / DT); n++) {
+    A = Math.max(0, A + (0.1 * A) * DT * 1);
+    wantGrown.push(A);
+  }
+  if (!grown.levels.every((v, i) => Math.abs(v - wantGrown[i]) < 1e-12))
+    fail('formula factor', 'a closed-formula factor must compound like its constant value');
+  if (goalRefs(compound).length !== 0)
+    fail('formula factor', 'factors draw no goal rules');
+
+  // Relay protection: a formula WITH refs is not "valued" — the walk goes
+  // straight through it to the constant behind, exactly as before.
+  const relayed = sys('[a: 100]=>f: 5|\nB(f <- relay <- a)\nk: 10\nrelay: (k)');
+  const rGoals = goalRefs(relayed);
+  if (!(rGoals.length === 1 && rGoals[0].label === 'k' && rGoals[0].value === 10))
+    fail('relay protection', `a ref-bearing formula dot must stay a walk-through relay, got ${JSON.stringify(rGoals)}`);
+
+  // A delay nested under a function argument is still a delay: the flows
+  // toggle sees it (and its ring primes/advances through collectCalls).
+  if (!hasDelays(sys('x: 5\na: (cos(x(t - 1)))')))
+    fail('delay under cos', 'hasDelays must see through function arguments');
+
+  // A closed shift is analytic in the sampler: (t)(t - 1) is the ramp read
+  // one unit late, clamped at the t=0 priming read.
+  const lag = sys(`[s: 100]=>drain: 1|
+B(drain <- gap <- s)
+lagged: ((t)(t - 1)) -> gap`);
+  const lagGoal = goalRefs(lag)[0];
+  if (!(lagGoal && typeof lagGoal.fn === 'function' && lagGoal.fn(0) === 0
+        && lagGoal.fn(0.5) === 0 && Math.abs(lagGoal.fn(5) - 4) < 1e-12))
+    fail('closed shift goal', `(t)(t - 1) must sample as max(0, t - 1), got ${lagGoal && JSON.stringify([lagGoal.fn(0), lagGoal.fn(0.5), lagGoal.fn(5)])}`);
 }
 
 // Formulas: `: (expr)` is a rate law (faucets) or a computed auxiliary
@@ -838,6 +921,107 @@ falling: (speed)`));
   if (last(alt) !== 0) fail('skydiver', `must land at exactly 0, got ${last(alt)}`);
   if (!(alt.levels[Math.round(9.5 / DT)] > 0)) fail('skydiver', 'still airborne at t=9.5');
   if (!alt.levels.every(x => x >= 0)) fail('skydiver', 'altitude never goes underground');
+}
+
+// The keyword showcase buttons (ui/example.ts): one per reserved formula
+// word, each pinned on the shape its keyword creates.
+{
+  // rush hour (t): arrivals 2t vs departures 8 — the road stays essentially
+  // empty until the rates cross at t=4, then the jam compounds toward
+  // ∫(2t - 8) = 36.
+  const system = sys('| =>cars arriving: (2t) [cars on the road: 0] =>cars leaving: 8 |');
+  const road = simulate(system)[0];
+  const at = (t) => road.levels[Math.round(t / DT)];
+  if (!(at(3) < 1 && at(4) < 1.5))
+    fail('rush hour', `the road stays near-empty before the rates cross, got ${at(3)} at t=3`);
+  if (!road.levels.slice(Math.round(4.5 / DT)).every((v, i, a) => i === 0 || v > a[i - 1]))
+    fail('rush hour', 'the jam grows strictly once arrivals outpace departures');
+  if (!(last(road) > 35 && last(road) < 37))
+    fail('rush hour', `should end near the closed-form 36, got ${last(road)}`);
+  if (goalRefs(system).length !== 0) fail('rush hour', 'no goals here');
+}
+{
+  // odometer (pi): distance accrues at the constant 2π·0.35·3 — a dead
+  // straight line to ≈66 (pi in an honest circumference).
+  const dist = simulate(sys(`| =>rolling [distance: 0]
+wheel radius: 0.35
+cadence: 3
+rolling: (2 * pi * wheel radius * cadence)`))[0];
+  const rate = 2 * Math.PI * 0.35 * 3;
+  if (!dist.levels.every((v, i) => Math.abs(v - rate * i * DT) < 1e-9))
+    fail('odometer', 'distance must run dead straight at 2πr × cadence');
+  if (!(Math.abs(last(dist) - rate * T_END) < 1e-9))
+    fail('odometer', `should end at 2π·0.35·3·10 ≈ 65.97, got ${last(dist)}`);
+}
+{
+  // tides (cos): the basin chases a two-cycle cosine sea level through a
+  // fill/drain faucet pair — attenuated swings around 3 with a visible
+  // lag, under the smooth dashed goal curve.
+  const system = sys(`| =>flood tide: 1.5 [harbor basin: 3] =>ebb tide: 1.5 |
+B(flood tide <- gap <- harbor basin)
+B(ebb tide <- gap)
+sea level: (3 + 1.5 * cos(2 * pi * t / 5)) -> gap`);
+  const goals = goalRefs(system);
+  if (!(goals.length === 1 && goals[0].label === 'sea level'
+        && typeof goals[0].fn === 'function'
+        && goals[0].fn(0) === 4.5 && goals[0].fn(2.5) === 1.5))
+    fail('tides', `sea level should be the one formula goal (4.5 at t=0, 1.5 at t=2.5), got ${JSON.stringify(goals)}`);
+  const basin = simulate(system)[0];
+  let maxima = 0, minima = 0;
+  for (let i = 1; i < basin.levels.length - 1; i++) {
+    if (basin.levels[i] > basin.levels[i - 1] && basin.levels[i] >= basin.levels[i + 1] && basin.levels[i] > 3.3) maxima++;
+    if (basin.levels[i] < basin.levels[i - 1] && basin.levels[i] <= basin.levels[i + 1] && basin.levels[i] < 2.7) minima++;
+  }
+  if (!(maxima >= 2 && minima >= 2))
+    fail('tides', `two tide cycles should show two crests and two troughs, got ${maxima}/${minima}`);
+  if (!basin.levels.every(v => v > 1.5 && v < 4.6))
+    fail('tides', 'the basin tracks attenuated inside the sea level swing');
+}
+{
+  // monsoon (sin): one seasonal half-wave of rain against a steady river —
+  // dip while the river still wins, crest as the rains fall back under it,
+  // recede after.
+  const res = simulate(sys(`| =>rainfall [reservoir: 20] =>river outflow: 12 |
+rainfall: (38 * sin(pi * t / 10))`))[0];
+  const min = Math.min(...res.levels), max = Math.max(...res.levels);
+  const minT = res.levels.indexOf(min) * DT, maxT = res.levels.indexOf(max) * DT;
+  if (!(min > 13 && min < 15 && minT > 0.8 && minT < 1.4))
+    fail('monsoon', `early dip ≈14 near t≈1, got ${min} at ${minT}`);
+  if (!(max > 145 && max < 150 && maxT > 8.5 && maxT < 9.5))
+    fail('monsoon', `crest ≈148 near t=9, got ${max} at ${maxT}`);
+  if (!(last(res) < max && last(res) > 138))
+    fail('monsoon', 'the reservoir recedes after the crest');
+}
+{
+  // phone charger (min): constant-current at exactly 25 while the cap
+  // binds, then the constant-voltage taper onto full — the first Euler
+  // step moves exactly 25·DT.
+  const bat = simulate(sys(`| =>charging [battery: 10]
+full charge: 100
+charging: (min(25, 1.2 * (full charge - battery)))`))[0];
+  if (bat.levels[1] !== 11.25)
+    fail('charger', `the capped phase moves exactly 25·DT per step, got ${bat.levels[1]}`);
+  if (!bat.levels.every((v, i) => i === 0 || v >= bat.levels[i - 1]))
+    fail('charger', 'charge only rises');
+  if (!(last(bat) > 99.99 && last(bat) <= 100))
+    fail('charger', `should taper onto full, got ${last(bat)}`);
+  const lateDelta = last(bat) - bat.levels[bat.levels.length - 2];
+  if (!(lateDelta < 0.01))
+    fail('charger', 'the taper crawls at the end');
+}
+{
+  // drought (max): proportional use coasts exponentially until the
+  // essential floor takes over below level 24 — the floor breaks the
+  // balancing loop and crashes the reservoir to exactly 0 just before
+  // the horizon.
+  const town = simulate(sys(`[town reservoir: 100] =>consumption |
+consumption: (max(6, 0.25 * town reservoir))`))[0];
+  if (last(town) !== 0) fail('drought', `must run dry at exactly 0, got ${last(town)}`);
+  const firstZero = town.levels.findIndex(v => v === 0) * DT;
+  if (!(firstZero > 9.3 && firstZero < 10))
+    fail('drought', `should run dry just before the horizon, got t=${firstZero}`);
+  if (!town.levels.every((v, i) => i === 0 || v < town.levels[i - 1] || v === 0))
+    fail('drought', 'the reservoir only falls until it is dry');
 }
 
 // figures 37 & 38: the oil economy (1 unit = 10 years). Capital compounds

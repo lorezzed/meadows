@@ -62,6 +62,15 @@ expect('a shift time name still colors', 'a: (x(t - response delay))', ['a', 'x'
 expect('t away from a paren is a name', 't -> b', ['t', 'b']);
 expect('the shift reading tolerates a space before t', 'a: (x( t ~ 1))', ['a', 'x']);
 expect('smooth and delay are ordinary names', 'a: (smooth * delay)', ['a', 'smooth', 'delay']);
+expect('t is plain anywhere inside a formula', 'a: (2 * t + t / 3)', ['a']);
+expect('pi and a called cos are plain in a formula', 'a: (2.5 + 7.5 * cos(2 * pi * t / 10))', ['a']);
+expect('min/max args still color their refs', 'a: (min(x, y))', ['a', 'x', 'y']);
+expect('a bare cos in a formula is a name', 'a: (cos * x)', ['a', 'cos', 'x']);
+expect('a spaced cos ( still calls', 'a: (cos (x))', ['a', 'x']);
+expect('cos outside a formula is a name', 'cos -> b', ['cos', 'b']);
+expect('nested parens keep the formula context',
+  'f: (max(0.09, 0.21 - 0.048 * t) + max(0, 0.27 * sin(pi * (t - 5) / 10)))', ['f']);
+expect('a loop-open never opens a formula', 'R(t -> b)', ['t', 'b']);
 
 // The raw slice is preserved even though the NAME normalizes its spaces.
 {

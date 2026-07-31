@@ -90,21 +90,24 @@ JSON error string):
    - `R(` / `B(` → loop-open (`TokLoop`, exact uppercase two-char lexeme, tried
      before identifiers with backtracking — a bare `R`, `R->b`, or `Rx(` still
      lex as identifiers); `)` (`TokRParen`) closes the annotation
-   - `:` → `TokColon`, `@` → `TokAt`,
+   - `:` → `TokColon`, `@` → `TokAt`, `,` → `TokComma` (legal only between
+     a 2-arg call's arguments — see the parser),
      `+` `-` `*` `/` `^` → formula operators
      (`TokPlus`/`TokMinus`/`TokStar`/`TokSlash`/`TokCaret`; a `-`
      directly followed by digits is a signed literal instead), and number
      literals → `TokNumber`
      (digits with an optional `.digits` fraction and an optional leading `-`
      sign; no exponent — together they form value annotations like
-     `[tub: 50]` and schedules like `=>inflow: 0 @5: 5` or figure 19's
-     `outside temperature: 10 @0.5: 8.5 @1: 7 ...`). Operators lex before
+     `[tub: 50]` and schedules like `=>inflow: 0 @5: 5`). Operators lex
+     before
      numbers, so `->` is never mistaken for a sign; a digit *inside* a
      word stays part of the identifier (`a2` is one name); `5.` is a
-     tokenization error, and `,` and `~` are not part of the language at
-     all (`~` once marked smooth schedules and smoothing shifts — both
-     were removed in favor of plain maths: denser `@` staircases and
-     explicit lag-stock structure)
+     tokenization error, and `~` is not part of the language at
+     all (it once marked smooth schedules and smoothing shifts — both
+     were removed in favor of plain maths, first denser `@` staircases,
+     now closed formulas of `t` for curves — and explicit lag-stock
+     structure). `t`, `pi`, `cos`, `sin`, `min`, `max` are ordinary
+     identifiers to the lexer; the parser reserves them inside formulas
 
 2. **`Parser.purs`** — `parse :: List PosToken -> Either String (List Tree)`, one `Tree`
    per newline-separated statement. A combinator parser over the token stream:
@@ -125,25 +128,38 @@ JSON error string):
    right-associative: `x^2y` is `(x^2) * y`, `2x^2` is 2·(x²)), implicit
    multiplication by juxtaposition with a name or group (`2x`, `2(a + b)`;
    note multi-word joining makes `output fraction` ONE name — write
-   `output * fraction` to multiply), references to other nodes by name, a
-   `Formula` AST with per-reference minted ids, and the one **time
+   `output * fraction` to multiply, and `pi t` is likewise one NAME —
+   write `pi * t`), references to other nodes by name (a `Formula` AST
+   with per-reference minted ids), the reserved **time variable `t`** and
+   **constant `pi`** as complete terms (`a: (t)` is the time itself — a
+   ramp; both mint nothing and take no shift tail, so `t(t - 1)` is
+   juxtaposed multiplication; nodes named `t`/`pi` are unreachable from
+   formulas), **function calls** `cos`/`sin` (one argument) and
+   `min`/`max` (two, comma-separated: `max(0.09, 0.21 - 0.06 * t)` — the
+   comma is legal nowhere else) — a reserved name opens a call exactly
+   when its next token is `(` (`peekLParen`, decided in `fAtom` BEFORE the
+   shift peek, so `cos(t / 24)` is a call and never a shift of a node
+   named `cos`; a bare `cos` stays an ordinary reference, the
+   `smooth`/`delay` precedent; calls mint no id, only the references
+   inside their arguments do) — and the one **time
    shift** `x(t - T)` (the value x had exactly T ago — a pipeline delay) —
    `FCall`, minting NO id of its own. A
-   shift opens on the exact token pair `(t` after a name or a paren group
+   shift opens on the exact token pair `(t` after a name, a paren group,
+   or a call
    (`peekShift`, a pure two-token peek — so `x(a + b)` stays juxtaposed
-   multiplication, and `smooth`/`delay` are ordinary names everywhere).
-   Inside a formula the single word `t` is the reserved time variable and
-   may appear nowhere else (`a: (t)` is a positioned error; a node named
-   `t` is unreachable from formulas). The shift time is ONE
+   multiplication). The shift time is ONE
    multiplicative term — `x(t - 3 - d)` is a positioned error, write
    `x(t - (3 + d))` — a signed literal folds (`x(t -3)` ≡ `x(t - 3)`),
    `x(t)` is just x, and shifts chain left to right:
    `x(t - 2)(t - 3)` delays the delayed signal), carried as
    `Maybe Annot = Maybe (SchedAnnot Sched | FormulaAnnot Formula)` with
    `Sched = { initial, steps :: Array { at, value } }`
-   on `Faucet*Expr` and `NodeExpr` — a scheduled dot is a *driving variable*
+   on `Faucet*Expr` and `NodeExpr` — a scheduled or closed-formula dot is
+   a *driving variable*
    (figure 19's cold-day `outside temperature`). Steps hold
-   piecewise-constant; a curve is written as a denser `@` staircase.
+   piecewise-constant and model GENUINE discrete events (a valve opening,
+   a dose); a smooth curve is written as an equation of time
+   (`(2.5 + 7.5 * cos(2 * pi * t / 10))`).
    (Exponential smoothing is not a language feature — perception-style
    reads use the pipeline shift itself, `sales(t - perception delay)`,
    which mints no nodes, so a model's diagram keeps the book figure's
@@ -155,7 +171,8 @@ JSON error string):
    on the *next unconsumed* token so `<?>` labels and `eof` report exact locations —
    the library's own `Parsing.Token` primitives leave the position on the consumed
    token, so don't swap them back in. The grammar uses no `try`: alternatives dispatch
-   on disjoint first tokens, plus `peekShift`'s pure peek for the `(t` form. **Every AST node gets a unique integer `Id`** minted by
+   on disjoint first tokens, plus `peekShift`'s and `peekLParen`'s pure
+   peeks for the `(t` and call forms. **Every AST node gets a unique integer `Id`** minted by
    the `fresh` counter (ParserT's `MonadState` passes through to the base `State Id`) —
    this identity is what later lets repeated mentions of the same name collapse to one
    graph node, and the minting *order* is pinned byte-exactly by `test/golden.mjs`.
@@ -202,22 +219,28 @@ JSON error string):
      reference is a model error — EXCEPT as a time shift's INPUT, where
      reading a faucet means reading the flow's rate:
      `deliveries: (orders to factory(t - delivery delay))`; the shift's
-     time keeps the error), serialize as a resolved `expr` tree
+     time keeps the error, and the `inShift` flag rides through function
+     arguments unchanged), serialize as a resolved `expr` tree
      (`{kind: "num"|"ref"|"+"|"-"|"*"|"/"|"^"}` with ids, plus
-     `{kind: "delay", input, time}` for time shifts — `RFormula`), and
-     auto-draw the info arrow each reference implies, shift inputs and
-     times included (deduplicated against
+     `{kind: "delay", input, time}` for time shifts, `{kind: "t"}`,
+     `{kind: "pi"}`, `{kind: "cos"|"sin", arg}`, and
+     `{kind: "min"|"max", left, right}` — `RFormula`), and
+     auto-draw the info arrow each reference implies, shift inputs, shift
+     times, and function arguments included (deduplicated against
      identical arrows already drawn — so `R(...)` annotations and formulas
      compose without doubled arcs). Formula-through-formula cycles
      (`a: (b)` + `b: (a)`) are rejected after evaluation; `evaluate` is now
      `Either String Graph` and `Main.go` prefixes those as "Model error:".
      The cycle walk uses `eagerRefIds`, which skips shift bodies — a
      shift's value is last step's state, never its input's current value,
-     so a feedback loop closed through `orders(t - …)` is legal. Semantically a stock's value is its initial level; a dot's is
-     an auxiliary constant or, with steps, a piecewise driving variable
+     so a feedback loop closed through `orders(t - …)` is legal — but
+     recurses into function arguments (a `min` reads both sides right
+     now). Semantically a stock's value is its initial level; a dot's is
+     an auxiliary constant or, with steps or a closed formula (one
+     referencing no nodes — pure maths of `t`), a driving variable
      (a goal-seeking faucet's goal, fixed or moving); a faucet's
      value is its initial rate, overridden from each step's `at` time onward.
-     The compiler just carries the numbers.
+     The compiler just carries the numbers (and the curves).
 
    Output types: `Node = { type, id, label, value :: Maybe Number, steps :: Maybe (Array { at, value }), expr :: Maybe RFormula, parent :: Maybe String, group :: Maybe Int, loop :: Maybe (Array String) }`
    (`Maybe` fields omit their JSON key on `Nothing` — goldens rely on that;
@@ -233,10 +256,12 @@ syntax): one statement per line (blank lines collapse), tokens space-separated
 except where a lexeme glues to its neighbor — brackets hug their stock, a colon
 hugs the name before it, faucet ops take their name (`| =>tree growth [wood in
 living trees]`; a bare `=` reprints as `=>`), schedule markers take their time
-(`@5: 5`), loop-opens and parens hug inward, `^` is
+(`@5: 5`), loop-opens and parens hug inward, a comma hugs its left and
+breathes right (`min(0.09, 0.21 - 0.06t)`), `^` is
 tight on both sides (`2x^2`), and juxtaposed multiplication stays
 tight inside formula groups only (`2x`, `2(a + b)`, `x(a + b)` — which also
-glues time shifts: `orders(t - delivery delay)`; `5 [stock]` at statement
+glues time shifts and function calls: `orders(t - delivery delay)`,
+`cos(2 * pi * t / 10)`; `5 [stock]` at statement
 level keeps its space).
 Arrows, formula operators, and a shift's `-` breathe on both sides. Token-preserving (a name
 followed by a number keeps its space — `x2` would re-lex as one identifier;
@@ -283,8 +308,13 @@ simulation is idle). Almost everything lives in **`app.ts`**:
   headlessly tested like simulate.ts) scans the source into spans, mirroring
   the lexer's naming: multi-word joining with whitespace normalization
   (`water   in   tub` IS `water in tub`), `R(`/`B(` loop-opens excluded, the
-  greedy join (`foo R(` is one name "foo R"), and a lone `t` after a `(`
-  excluded as the time variable. Colors key on the NAME — the
+  greedy join (`foo R(` is one name "foo R"), and formula-context tracking
+  for the reserved words — a paren group opened right after a `:` (nested
+  parens counted, reset per line) is a formula, inside which `t`/`pi` are
+  always plain and `cos`/`sin`/`min`/`max` are plain exactly when a `(`
+  follows (the parser's call dispatch); outside formulas all six are
+  ordinary names (`t -> b` names a node t — a loop-open never opens a
+  formula). Colors key on the NAME — the
   compiler's identity rule — via `nameColor`, one half of the single
   per-node accent assignment `update()` rebuilds from the compiled graph
   (see the coordination note on the `update()` bullet below); unknown names
@@ -378,12 +408,21 @@ the diagram's figure 5):
   over a horizon `simulate` takes as a parameter defaulting to `T_END`
   (the chart's `t =` field passes a custom one): stock `value` = initial level; a `: (expr)` formula is a rate
   law (faucets — clamped at 0, a tap never runs backward) or a computed
-  auxiliary (dots), evaluated per step over current levels and dot values
+  auxiliary (dots), evaluated per step over current levels, dot values,
+  and wall-clock time — `t` evaluates to the step's start time, `pi` to
+  Math.PI, cos/sin/min/max to their Math counterparts —
   (memoized per step; non-finite arithmetic like division by zero reads as
-  0); a formula faucet overrides the goal/factor heuristics. Every schedule
-  is read through the exported `scheduleFn` — steps hold piecewise-constant
+  0); a formula faucet overrides the goal/factor heuristics. Every
+  annotated quantity
+  is read through the exported `annotFn` — a schedule's steps hold
+  piecewise-constant
   (`value` from t=0, overridden by each entry from its `at` time on; both
-  default 0; a curve is a denser staircase) — sampled at each step's start. Faucet
+  default 0; genuine discrete events), sampled at each step's start, while
+  a CLOSED formula (referencing no nodes) evaluates as the curve it
+  writes, via `evalClosed` — whose analytic shift (input read at
+  `t − max(1, round(T/DT))·DT`, clamped at the t=0 priming read) matches
+  the engine's ring buffer exactly, so goals, factors, and the chart's
+  goal paths can never disagree with the run. Faucet
   source/sink stocks come from flow-link direction, clouds/dots infinite.
   Info-arrow endpoints resolve through ports to their parent stock before any
   walk (`faucetWiring`), so the compiler's port indirection is invisible to
@@ -393,22 +432,28 @@ the diagram's figure 5):
   (`min(1, level/demand)`), so levels never go negative and chained stocks
   conserve — an empty tub stops draining. A faucet turns **goal-seeking**
   (figures 10 & 11) when the info arrows into it, walked back through
-  value-less relay dots (`discrepancy`), reach exactly one valued dot: that
-  constant is its goal — itself possibly scheduled (figure 19's cold-day
-  `outside temperature`), sampled piecewise at each step's start like every
-  rate — and the schedule value becomes a *gain* —
+  relay dots (`discrepancy` — value-less, or carrying a REF-BEARING
+  formula: computed auxiliaries pass the walk through), reach exactly one
+  VALUED dot — one carrying a constant, a schedule, or a closed formula
+  (`closedExpr`): that
+  reading is its goal — fixed, scheduled, or a curve (figure 19's cosine
+  cold-day `outside temperature`), sampled at each step's start like every
+  rate — and the faucet's own value becomes a *gain* —
   `rate = gain × (level − goal)` draining / `× (goal − level)` filling,
   clamped at 0 and capped at `1/DT` so a hot gain lands on the goal instead
   of oscillating; exponential approach from either side. A *bare* faucet (no
   annotation of its own) in the same one-valued-dot web instead turns
   **reinforcing** (figures 12 & 13) when the walk also reaches the faucet's
   own attached stock — the drawn level→faucet arrow closing the R loop: the
-  constant is a *factor* on the level, `rate = factor × level` — compound
-  interest filling, exponential decay draining; without the drawn feedback a
+  dot's reading is a *factor* on the level, `rate = factor × level` —
+  compound
+  interest filling, exponential decay draining (figures 21 & 24/26: the
+  fertility ramps are closed-formula factors); without the drawn feedback a
   bare faucet stays a closed tap. Ambiguous webs (two
   constants) or stocks on both sides fall back to the constant-rate reading.
-  `goalRefs` exports the constants serving as goals for the chart's dashed
-  reference rules (factor constants are not goals and draw no rule).
+  `goalRefs` exports the dots serving as goals for the chart's dashed
+  reference rules — a schedule goal carries its `steps`, a formula goal its
+  curve sampler `fn` (factor constants are not goals and draw no rule).
   **Time shifts** (figures 31–35) carry per-run state keyed by owner node +
   tree position: `x(t - T)` is a ring-buffer pipeline of
   `max(1, round(T/DT))` samples (T rounds to whole steps). A shift's value
@@ -436,10 +481,14 @@ the diagram's figure 5):
   (the book's "room temperature = 18°C") in their goal DOT's accent — the
   same color the dot wears in the editor and diagram — labeled in the right
   margin in that accent too; a
-  SCHEDULED goal draws as a dashed stepped path instead (figure 19's cold
-  day staircase) — exactly the reading the run
-  integrated; its label anchors at its final value, and the y-domain follows
-  goal values below zero (stock levels themselves never go negative); all
+  SCHEDULED goal draws as a dashed stepped path instead, and a FORMULA
+  goal as a smooth dashed curve sampled once per DT from its `GoalRef.fn`
+  (figure 19's cosine cold day) — in both cases exactly the reading the
+  run
+  integrated; its label anchors at its final value/sample, and the
+  y-domain follows
+  goal values below zero, sampled curves included (stock levels themselves
+  never go negative); all
   right-margin labels dodge vertically to a 12px rhythm so figure 11's
   curves converging on one goal stay individually named. A
   hover layer snaps a crosshair to the nearest sample and shows one tooltip
@@ -474,7 +523,9 @@ the diagram's figure 5):
 merging new data (the JSON omits absent `Maybe` keys, so stale values would
 otherwise survive edits). `displayLabel` renders a schedule in full
 (`inflow: 0 @5: 5`) and formulas in the source spelling
-(`orders to factory(t - delivery delay)`, `2x^2`).
+(`orders to factory(t - delivery delay)`, `2x^2`,
+`outside temperature: (2.5 + 7.5 * cos(2 * pi * t / 10))` — `t`, `pi`,
+and calls print as written).
 
 `ui/type.ts` defines the d3-flavored `Node`/`Link`/`System` types (extending
 `d3.SimulationNodeDatum` / `SimulationLinkDatum`). `ui/declarations.d.ts` lets `*.svg`

@@ -40,40 +40,67 @@ instance writeForeignNodeType :: WriteForeign NodeType where
 -- | A formula with its references resolved to node ids (identity, not
 -- | spelling -- the same seam rule as links). Serializes as nested objects:
 -- | {kind: "num", value}, {kind: "ref", id}, {kind: "+"|"-"|"*"|"/", left,
--- | right}, {kind: "delay", input, time} -- directly evaluable by the
--- | simulator with no re-parsing.
-data RFormula = RNum Number | RRef String | RBin String RFormula RFormula | RCall RFormula RFormula
+-- | right}, {kind: "delay", input, time}, {kind: "t"}, {kind: "pi"},
+-- | {kind: "cos"|"sin", arg}, {kind: "min"|"max", left, right} -- directly
+-- | evaluable by the simulator with no re-parsing.
+data RFormula
+  = RNum Number
+  | RRef String
+  | RBin String RFormula RFormula
+  | RCall RFormula RFormula
+  | RTime
+  | RPi
+  | RFun1 String RFormula
+  | RFun2 String RFormula RFormula
 derive instance eqRFormula :: Eq RFormula
 instance showRFormula :: Show RFormula where
   show (RNum n) = "RNum " <> show n
   show (RRef id) = "RRef " <> id
   show (RBin op l r) = "(" <> show l <> " " <> op <> " " <> show r <> ")"
   show (RCall input time) = show input <> "(t - " <> show time <> ")"
+  show RTime = "t"
+  show RPi = "pi"
+  show (RFun1 name a) = name <> "(" <> show a <> ")"
+  show (RFun2 name l r) = name <> "(" <> show l <> ", " <> show r <> ")"
 instance writeForeignRFormula :: WriteForeign RFormula where
   writeImpl (RNum n) = writeImpl { kind: "num", value: n }
   writeImpl (RRef id) = writeImpl { kind: "ref", id }
   writeImpl (RBin op l r) = writeImpl { kind: op, left: l, right: r }
   writeImpl (RCall input time) = writeImpl { kind: "delay", input, time }
+  writeImpl RTime = writeImpl { kind: "t" }
+  writeImpl RPi = writeImpl { kind: "pi" }
+  writeImpl (RFun1 name a) = writeImpl { kind: name, arg: a }
+  writeImpl (RFun2 name l r) = writeImpl { kind: name, left: l, right: r }
 
 -- | The ids a formula references, in reference order, deduplicated. Time
 -- | shifts count both sides: `orders(t - delivery delay)` implies arrows
 -- | from the delayed flow and the delay constant (figure 31 draws both).
+-- | Function arguments count too: `cos(x)` implies an arrow from x.
 refIds :: RFormula -> Array String
 refIds (RNum _) = []
 refIds (RRef id) = [ id ]
 refIds (RBin _ l r) = Array.nub (refIds l <> refIds r)
 refIds (RCall input time) = Array.nub (refIds input <> refIds time)
+refIds RTime = []
+refIds RPi = []
+refIds (RFun1 _ a) = refIds a
+refIds (RFun2 _ l r) = Array.nub (refIds l <> refIds r)
 
 -- | The ids whose CURRENT value a formula reads when evaluated -- the edges
 -- | that matter for cycle detection. A time shift reads its own state (the
 -- | delay buffer), never its input's current value, so shifts break
 -- | dependency cycles: `deliveries: (orders to factory(t - ...))` may sit
--- | on a loop that winds back to deliveries.
+-- | on a loop that winds back to deliveries. Function arguments are eager
+-- | (a `min` reads both sides right now) -- shifts stay the only skip.
 eagerRefIds :: RFormula -> Array String
 eagerRefIds (RNum _) = []
 eagerRefIds (RRef id) = [ id ]
 eagerRefIds (RBin _ l r) = Array.nub (eagerRefIds l <> eagerRefIds r)
 eagerRefIds (RCall _ _) = []
+eagerRefIds RTime = []
+eagerRefIds RPi = []
+eagerRefIds (RFun1 _ a) = eagerRefIds a
+eagerRefIds (RFun2 _ l r) = Array.nub (eagerRefIds l <> eagerRefIds r)
 
 type NodeRec = { ty :: NodeType, label :: String, value :: Maybe Number, steps :: Maybe (Array Step), expr :: Maybe RFormula, parent :: Maybe String }
 
@@ -227,7 +254,11 @@ drawArrow source target = do
 -- | value, not a flow).
 resolveFormula :: Boolean -> Formula -> Evaluator RFormula
 resolveFormula _ (FNum n) = pure (RNum n)
+resolveFormula _ FTime = pure RTime
+resolveFormula _ FPi = pure RPi
 resolveFormula inShift (FBin op l r) = RBin (opString op) <$> resolveFormula inShift l <*> resolveFormula inShift r
+resolveFormula inShift (FFun1 name a) = RFun1 name <$> resolveFormula inShift a
+resolveFormula inShift (FFun2 name l r) = RFun2 name <$> resolveFormula inShift l <*> resolveFormula inShift r
 resolveFormula _ (FCall input time) =
   RCall <$> resolveFormula true input <*> resolveFormula false time
 resolveFormula inShift (FRef i name) = do

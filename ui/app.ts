@@ -177,6 +177,10 @@ const css = `
   }
   .examples button:hover, .tools button:hover { color: var(--ink); border-color: var(--faint); }
   .examples button:active, .tools button:active { background: var(--paper); }
+  /* The pill whose model the editor holds (see updateActiveExamples). After
+     the hover/active rules so the same-specificity cascade keeps the fill —
+     hover would otherwise put ink text on the ink pill. */
+  .examples button.active { background: var(--ink); border-color: var(--ink); color: var(--paper); }
   /* The editor is a textarea stacked over a color backdrop: .highlight
      renders the same text with each node name in its accent color, and the
      textarea above it makes its own glyphs transparent (caret and selection
@@ -285,7 +289,10 @@ const pre = side
   .style('order', 3)
   .style('display', 'none')
 exampleList.map(x => {
+  // The datum is the content's canonical reprint — the match key for the
+  // active-pill highlight (see updateActiveExamples).
   examples.append('button')
+    .datum(interpreter.format(x.content))
     .text(x.label)
     .on('click', function () {
       loadExample(x);
@@ -466,6 +473,7 @@ const textInput = editorWrap
       // success this runs AFTER update() refreshed nameColor, so a
       // just-typed name colors on its own keystroke.
       renderHighlight(input);
+      updateActiveExamples(input);
     }
   })
   .on('scroll', syncHighlightScroll)
@@ -507,6 +515,18 @@ function renderHighlight(text: string): void {
   // keeps one; a zero-width space holds the backdrop's height in step.
   if (text.endsWith('\n')) highlight.append('span').text('\u200b');
   syncHighlightScroll();
+}
+// An example pill lights while the editor holds its model. The comparison is
+// on the FORMATTED text (each button's datum is its content's canonical
+// reprint), so the highlight keys on the underlying value, not the spelling:
+// buttons sharing one model (the figure 31 & 32/33/34 trio) light together,
+// and a format press or a spacing-only edit never clears it — any real edit
+// does. Runs from the input handler's finally, so every path — typing, a
+// button load, format, even a compile error — keeps the pills honest.
+function updateActiveExamples(text: string): void {
+  const canon = interpreter.format(text);
+  examples.selectAll<HTMLButtonElement, string>('button')
+    .classed('active', d => d === canon);
 }
 // The backdrop shows whatever slice the textarea has scrolled to.
 function syncHighlightScroll(): void {
@@ -586,14 +606,20 @@ let labelById = new Map<string, string>();
 const renderExpr = (e: Expr): string => {
   switch (e.kind) {
     case "num": return `${e.value}`;
+    case "t": return "t";
+    case "pi": return "pi";
     case "ref": return labelById.get(e.id) ?? e.id;
+    case "cos": case "sin": return `${e.kind}(${renderExpr(e.arg)})`;
+    case "min": case "max": return `${e.kind}(${renderExpr(e.left)}, ${renderExpr(e.right)})`;
     case "delay": {
       // A shift prints as the source reads: input(t - T), the input
-      // parenthesized unless it is a bare reference and the time unless
-      // it is one term — exactly the re-parseable spelling.
-      const input = e.input.kind === "ref" ? renderExpr(e.input) : `(${renderExpr(e.input)})`;
-      const time = e.time.kind === "num" || e.time.kind === "ref"
-        ? renderExpr(e.time) : `(${renderExpr(e.time)})`;
+      // parenthesized unless it can take a shift tail bare (a reference
+      // or a call) and the time unless it is one term — exactly the
+      // re-parseable spelling.
+      const bareInput = ["ref", "cos", "sin", "min", "max"].includes(e.input.kind);
+      const input = bareInput ? renderExpr(e.input) : `(${renderExpr(e.input)})`;
+      const bareTime = ["num", "ref", "t", "pi", "cos", "sin", "min", "max"].includes(e.time.kind);
+      const time = bareTime ? renderExpr(e.time) : `(${renderExpr(e.time)})`;
       return `${input}(t - ${time})`;
     }
     default: {

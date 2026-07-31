@@ -266,13 +266,19 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
   // readout like any series.
   function render(series: StockSeries[], colorOf: (id: string) => string, goals: GoalRef[] = [], tEnd: number = T_END, flows: FlowSeries[] = []): void {
     const x = d3.scaleLinear([0, tEnd], [margin.left, chartWidth - margin.right]);
-    // The domain covers the goal rules too — every scheduled value of every
-    // goal: a goal above every curve must not clip off the top, and figure
-    // 19's outside temperature dips below zero, so the floor follows the
-    // goals down (stock levels themselves never go negative) — and, when
-    // the flow view is on, the flow lines' full range (an order backlog can
-    // dip below zero even though rates clamp).
-    const goalValues = goals.flatMap(g => [g.value, ...(g.steps ?? []).map(s => s.value)]);
+    // A closed-formula goal samples its curve once per DT across the run —
+    // the very reading the engine integrated (GoalRef.fn is annotFn's
+    // closed evaluator) — for its path, its label anchor, and the y-domain.
+    const goalSamples = new Map(goals.filter(g => g.fn)
+      .map(g => [g.id, d3.range(0, Math.round(tEnd / DT) + 1).map(i => g.fn!(i * DT))] as [string, number[]]));
+    // The domain covers the goal rules too — every scheduled or sampled
+    // value of every goal: a goal above every curve must not clip off the
+    // top, and figure 19's outside temperature dips below zero, so the
+    // floor follows the goals down (stock levels themselves never go
+    // negative) — and, when the flow view is on, the flow lines' full
+    // range (an order backlog can dip below zero even though rates clamp).
+    const goalValues = goals.flatMap(g =>
+      goalSamples.get(g.id) ?? [g.value, ...(g.steps ?? []).map(s => s.value)]);
     const maxLevel = Math.max(
       d3.max(series, s => d3.max(s.levels)) ?? 0,
       d3.max(goalValues) ?? 0,
@@ -314,9 +320,11 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
     // One dashed rule per goal constant (the book's "room temperature = 18°C"
     // line), full plot width, in its goal dot's accent — the same color the
     // dot wears in the editor and the diagram; the dash keeps it a
-    // reference under the series lines. A SCHEDULED goal (figure 19's
-    // outside temperature) draws as a dashed stepped path instead, holding
-    // each value until the next step — exactly what the run integrated.
+    // reference under the series lines. A SCHEDULED goal draws as a dashed
+    // stepped path, holding each value until the next step; a FORMULA goal
+    // (figure 19's cosine outside temperature) draws its per-DT samples as
+    // a smooth dashed curve — in both cases exactly what the run
+    // integrated.
     const goalPts = (g: GoalRef) => {
       const pts = [{ at: 0, value: g.value }, ...(g.steps ?? []).filter(s => s.at <= tEnd)]
         .sort((a, b) => a.at - b.at);
@@ -324,6 +332,8 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
       return [...pts, { at: tEnd, value: lastPt.value }];
     };
     const goalEndValue = (g: GoalRef) => {
+      const samples = goalSamples.get(g.id);
+      if (samples) return samples[samples.length - 1] ?? g.value;
       const pts = goalPts(g);
       return (pts[pts.length - 1] ?? { value: g.value }).value;
     };
@@ -338,7 +348,10 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
       .attr("stroke", d => colorOf(d.id))
       .attr("stroke-width", 1.5)
       .attr("stroke-dasharray", "7 5")
-      .attr("d", d => stepLine(goalPts(d)));
+      .attr("d", d => {
+        const samples = goalSamples.get(d.id);
+        return samples ? line(samples) : stepLine(goalPts(d));
+      });
 
     // Right-margin labels — series ends, goal rules, and flow lines
     // together — dodge vertically so converging lines stay individually

@@ -21,7 +21,9 @@
 -- |   - loop-opens and parens hug inward:  B(cooling <- hot coffee)
 -- |   - inside a formula group, juxtaposed multiplication stays tight:
 -- |     2x, 2(a + b), x(a + b)  (statement-level `5 [stock]` keeps its
--- |     space), which also glues time shifts: orders(t - delivery delay)
+-- |     space), which also glues time shifts and function calls:
+-- |     orders(t - delivery delay), cos(2 * pi * t / 10)
+-- |   - a comma hugs its left and breathes right: min(0.09, 0.21 - 0.06t)
 -- |   - `^` is tight on both sides: 2x^2
 -- | Arrows, formula operators, and a shift's `-` breathe on both sides:
 -- | a -> b, capital / 3, orders(t - delivery delay).
@@ -101,6 +103,7 @@ print toks = (foldl step { out: "", prev: Nothing, stack: Nil } toks).out
       _, TokRBracket -> true
       _, TokRParen -> true
       _, TokColon -> true
+      _, TokComma -> true
       -- Juxtaposed multiplication, formula groups only. (A name followed by
       -- a NUMBER can never tighten: `x2` would re-lex as one identifier.)
       -- A name's '(' tightens too: time shifts x(t - 1) and x(a + b)
@@ -122,6 +125,7 @@ print toks = (foldl step { out: "", prev: Nothing, stack: Nil } toks).out
     TokRBracket -> "]"
     TokColon -> ":"
     TokAt -> "@"
+    TokComma -> ","
     TokCaret -> "^"
     TokPlus -> "+"
     TokMinus -> "-"

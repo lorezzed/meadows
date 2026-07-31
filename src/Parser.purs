@@ -43,24 +43,37 @@ opString FPow = "^"
 -- | A value formula (`investment: (output * fraction of output invested)`):
 -- | arithmetic over numbers and named nodes. Each reference mints a parser
 -- | id like any other name mention, so the evaluator resolves it through
--- | the registry -- identity, not spelling. The one non-arithmetic form is
--- | the pipeline time shift `x(t - T)` -- the value x had exactly T ago,
--- | written as function notation over the reserved time variable `t`. A
--- | shift opens with the exact token pair `(t`, so `x(a + b)` stays
--- | juxtaposed multiplication. A time shift mints nothing of its own: it
--- | creates no graph node, and the simulator keys its state by the owning
--- | node and position instead.
+-- | the registry -- identity, not spelling. Beyond arithmetic there are:
+-- | the reserved time variable `t` (a complete term -- `outside
+-- | temperature: (2.5 + 7.5 * cos(2 * pi * t / 10))` is a driving curve),
+-- | the constant `pi`, function calls `cos`/`sin` (one argument) and
+-- | `min`/`max` (two, comma-separated) -- a reserved name is a call exactly
+-- | when its next token is `(`, so a bare `cos` stays an ordinary name --
+-- | and the pipeline time shift `x(t - T)`, the value x had exactly T ago,
+-- | written as function notation over `t`. A shift opens with the exact
+-- | token pair `(t` after a name or group, so `x(a + b)` stays juxtaposed
+-- | multiplication. None of these forms mints an id of its own: they create
+-- | no graph nodes (the simulator keys shift state by the owning node and
+-- | position instead), and only the references inside arguments mint.
 data Formula
   = FNum Number
   | FRef Id String
   | FBin FormOp Formula Formula
   | FCall Formula Formula
+  | FTime
+  | FPi
+  | FFun1 String Formula
+  | FFun2 String Formula Formula
 derive instance eqFormula :: Eq Formula
 instance showFormula :: Show Formula where
   show (FNum n) = show n
   show (FRef i s) = s <> "#" <> show i
   show (FBin op l r) = "(" <> show l <> " " <> opString op <> " " <> show r <> ")"
   show (FCall input time) = show input <> "(t - " <> show time <> ")"
+  show FTime = "t"
+  show FPi = "pi"
+  show (FFun1 name a) = name <> "(" <> show a <> ")"
+  show (FFun2 name l r) = name <> "(" <> show l <> ", " <> show r <> ")"
 -- | A node's annotation: a schedule (a constant or `@` steps) or a
 -- | parenthesized formula.
 data Annot = SchedAnnot Sched | FormulaAnnot Formula
@@ -271,36 +284,68 @@ powTail base = defer \_ -> choice
   ]
 
 -- | factor := NUMBER | atom | '(' formula ')'
--- | The `t` guard runs before the labeled choice so its message survives
--- | the `<?>` (which would otherwise mask any non-consuming failure).
 fFactor :: P Formula
-fFactor = defer \_ -> guardNotT *> (choice
+fFactor = defer \_ -> choice
   [ FNum <$> numberTok
   , fAtom
   , fParen
-  ] <?> "a number, a name, or '(' in the formula")
+  ] <?> "a number, a name, or '(' in the formula"
 
--- | atom := NAME shift*
--- | A reference to another node by name, minting a parser id as every name
--- | mention does -- except the single word `t`, the reserved time
--- | variable, which may only open a time shift (see fShiftTail) and is
--- | rejected here with a positioned error before anything is consumed.
+-- | atom := 't' | 'pi' | FUNC '(' args ')' shift* | NAME shift*
+-- | One name token, then a dispatch on what it is. `t` (the time variable)
+-- | and `pi` are complete terms that mint nothing and take no shift tail
+-- | (`t(t - 1)` is juxtaposed multiplication t * (t - 1) -- only true
+-- | names and paren groups open shifts). A reserved function name whose
+-- | NEXT token is `(` is a call -- decided here, before fShiftTail, so
+-- | `cos(t / 24)` is a call and never a time shift of a node named `cos`;
+-- | without the `(` it is an ordinary reference (the `smooth`/`delay`
+-- | precedent: reserved words don't poison plain names). Everything else
+-- | mints a parser id and becomes a reference, as every name mention does.
+-- | Inside formulas `t` and `pi` shadow any nodes so named -- a node named
+-- | `t` is simply not reachable from formulas.
 fAtom :: P Formula
 fAtom = defer \_ -> do
-  guardNotT
   name <- identTok
-  i <- fresh
-  fShiftTail (FRef i name)
+  if name == "t" then pure FTime
+  else if name == "pi" then pure FPi
+  else do
+    call <- peekLParen
+    if call && Array.elem name [ "cos", "sin" ] then fFun1 name >>= fShiftTail
+    else if call && Array.elem name [ "min", "max" ] then fFun2 name >>= fShiftTail
+    else do
+      i <- fresh
+      fShiftTail (FRef i name)
 
--- | Inside a formula the name `t` is the time variable, not a reference --
--- | a node named `t` is simply not reachable from formulas.
-guardNotT :: P Unit
-guardNotT = do
+-- | Peek: is the next token a '('? Consumes nothing either way. Decides
+-- | whether a reserved function name opens a call.
+peekLParen :: P Boolean
+peekLParen = do
   ParseState input _ _ <- getParserT
-  case input of
-    { tok: TokIdent "t", pos } : _ ->
-      failWithPosition "'t' is the time variable -- it only opens a time shift like x(t - 1)" pos
-    _ -> pure unit
+  pure case input of
+    { tok: TokLParen } : _ -> true
+    _ -> false
+
+-- | call := FUNC1 '(' formula ')'   (cos, sin)
+-- | Non-backtracking like every annotation body: the consumed '(' commits,
+-- | so a malformed argument list is a positioned error.
+fFun1 :: String -> P Formula
+fFun1 name = do
+  tk TokLParen
+  a <- formula
+  tk TokRParen <?> ("a closing ')' after " <> name <> "'s argument")
+  pure (FFun1 name a)
+
+-- | call := FUNC2 '(' formula ',' formula ')'   (min, max)
+-- | The comma lives only here: `formula` never consumes one, so it ends
+-- | the first argument, and a comma anywhere else is a positioned error.
+fFun2 :: String -> P Formula
+fFun2 name = do
+  tk TokLParen
+  a <- formula
+  tk TokComma <?> ("a ',' between " <> name <> "'s two arguments")
+  b <- formula
+  tk TokRParen <?> ("a closing ')' after " <> name <> "'s arguments")
+  pure (FFun2 name a b)
 
 -- | shift := '(' 't' ('-' time | NEGNUMBER)? ')'
 -- | Postfix time shifts, chaining left to right: after a name or a paren

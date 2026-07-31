@@ -1,14 +1,20 @@
 // A compiled formula from the JSON seam: numbers, node references (by id),
-// binary arithmetic, and time shifts — the evaluator resolved names to ids
-// and drew the implied info arrows; the simulator evaluates the tree each
-// step. A shift node (`x(t - T)`, a pipeline delay) carries per-run state
-// in the simulator, keyed by its owner and position — it is not itself a
-// node.
+// binary arithmetic, the time variable `t` and constant `pi`, function
+// calls (cos/sin one-arg, min/max two-arg), and time shifts — the
+// evaluator resolved names to ids and drew the implied info arrows; the
+// simulator evaluates the tree each step. A shift node (`x(t - T)`, a
+// pipeline delay) carries per-run state in the simulator, keyed by its
+// owner and position — it is not itself a node. A formula with NO refs is
+// closed — a pure curve of time, the driving-variable form.
 export type Expr =
   | { kind: "num"; value: number }
   | { kind: "ref"; id: string }
   | { kind: "+" | "-" | "*" | "/" | "^"; left: Expr; right: Expr }
-  | { kind: "delay"; input: Expr; time: Expr };
+  | { kind: "delay"; input: Expr; time: Expr }
+  | { kind: "t" }
+  | { kind: "pi" }
+  | { kind: "cos" | "sin"; arg: Expr }
+  | { kind: "min" | "max"; left: Expr; right: Expr };
 
 type NodeBase = {
   type: string;

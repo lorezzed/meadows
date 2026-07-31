@@ -64,6 +64,7 @@ data Token
   | TokRBracket
   | TokColon
   | TokAt
+  | TokComma
   | TokCaret
   | TokPlus
   | TokMinus
@@ -185,6 +186,7 @@ token
   <|> (TokCloud <$ cloud)
   <|> (TokColon <$ char ':')
   <|> (TokAt <$ char '@')
+  <|> (TokComma <$ char ',')
   <|> (TokCaret <$ char '^')
   <|> (TokPlus <$ char '+')
   <|> (TokStar <$ char '*')
@@ -242,6 +244,7 @@ describeToken TokLBracket = "'['"
 describeToken TokRBracket = "']'"
 describeToken TokColon = "':'"
 describeToken TokAt = "'@'"
+describeToken TokComma = "','"
 describeToken TokCaret = "'^'"
 describeToken TokPlus = "'+'"
 describeToken TokMinus = "'-'"

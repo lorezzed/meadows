@@ -38,6 +38,11 @@ expect('shifts glue their paren, the shift minus breathes', 'deliveries: (orders
   'deliveries: (orders(t - delivery delay))');
 expect('^ is tight on both sides', 'y: (2 x ^ 2 + 3)', 'y: (2x^2 + 3)');
 expect('name-group juxtaposition tightens in formulas', 'y: (x (a + 1))', 'y: (x(a + 1))');
+expect('function calls glue, commas hug left and breathe right',
+  'y: (min( 0.09 ,0.21 - 0.06 t ))', 'y: (min(0.09, 0.21 - 0.06t))');
+expect('the cosine driver reprints in source spelling',
+  'outside temperature: (2.5+7.5*cos(2*pi*t/10))',
+  'outside temperature: (2.5 + 7.5 * cos(2 * pi * t / 10))');
 expect('bare = canonicalizes to =>', 'a=j', 'a =>j');
 expect('multi-space name normalizes', 'water   in   tub', 'water in tub');
 expect('blank lines collapse', 'a->b\n\n\nc->d', 'a->b\nc->d'.replace(/->/g, ' -> '));

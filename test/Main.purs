@@ -147,8 +147,11 @@ tests =
   , expectEq "^ lexes as its own token"
       (Right (TokIdent "x" : TokCaret : TokNumber 2.0 : Nil))
       (toksOf "x^2")
-  , expectErrorAt "',' is no longer part of the language"
-      "line 1, column 2" (toksOf "a, b")
+  , expectEq "',' lexes as its own token (function-call arguments)"
+      (Right (TokIdent "a" : TokComma : TokIdent "b" : Nil))
+      (toksOf "a, b")
+  , expectErrorAt "a ',' belongs only between a call's arguments"
+      "line 1, column 2" (parseAll "a, b")
   , expectEq "a leading '-' signs a number literal"
       (Right (TokIdent "a" : TokColon : TokNumber (-5.0) : Nil))
       (toksOf "a: -5")
@@ -329,16 +332,59 @@ tests =
   , expectEq "smooth and delay are ordinary names"
       (Right (NodeExpr 2 "a" (Just (FormulaAnnot (FBin FMul (FRef 0 "smooth") (FRef 1 "delay")))) : Nil))
       (parseAll "a: (smooth * delay)")
-  , expectErrorAt "t is reserved: a bare reference to it is an error"
-      "time variable" (parseAll "a: (t)")
-  , expectErrorAt "the t guard is positioned at the t"
-      "line 1, column 5" (parseAll "a: (t)")
   , expectErrorAt "only - shifts time"
       "line 1, column 9" (parseAll "a: (x(t + 1))")
   , expectErrorAt "a '~' in a shift is a tokenization error"
       "line 1, column 9" (parseAll "a: (x(t ~ 1))")
   , expectErrorAt "a compound time needs its own parens"
       "line 1, column 13" (parseAll "a: (x(t - 3 - d))")
+  -- Parser: the time vocabulary — bare `t`, `pi`, and function calls.
+  -- `t`/`pi` are complete atoms (no mint, no shift tail); cos/sin/min/max
+  -- open calls exactly when followed by '('; none of the forms mints an id.
+  , expectEq "t is a formula term: a: (t) is the time itself"
+      (Right (NodeExpr 0 "a" (Just (FormulaAnnot FTime)) : Nil))
+      (parseAll "a: (t)")
+  , expectEq "t multiplies like any term: (2t)"
+      (Right (NodeExpr 0 "a" (Just (FormulaAnnot (FBin FMul (FNum 2.0) FTime))) : Nil))
+      (parseAll "a: (2t)")
+  , expectEq "pi is a constant term"
+      (Right (NodeExpr 0 "a" (Just (FormulaAnnot FPi)) : Nil))
+      (parseAll "a: (pi)")
+  , expectEq "multi-word joining still wins: pi t is ONE name"
+      (Right (NodeExpr 1 "a" (Just (FormulaAnnot (FRef 0 "pi t"))) : Nil))
+      (parseAll "a: (pi t)")
+  , expectEq "cos( opens a call, minting nothing of its own"
+      (Right (NodeExpr 1 "a" (Just (FormulaAnnot (FFun1 "cos" (FRef 0 "x")))) : Nil))
+      (parseAll "a: (cos(x))")
+  , expectEq "min takes two comma-separated args (ids left to right)"
+      (Right (NodeExpr 2 "a" (Just (FormulaAnnot (FFun2 "min" (FRef 0 "x") (FRef 1 "y")))) : Nil))
+      (parseAll "a: (min(x, y))")
+  , expectEq "cos(t / 24) is a call, never a shift of a node named cos"
+      (Right (NodeExpr 0 "a" (Just (FormulaAnnot
+        (FFun1 "cos" (FBin FDiv FTime (FNum 24.0))))) : Nil))
+      (parseAll "a: (cos(t / 24))")
+  , expectEq "the ramp-and-hold shape: max(0, 0.054 * (t - 5))"
+      (Right (NodeExpr 0 "a" (Just (FormulaAnnot
+        (FFun2 "max" (FNum 0.0)
+          (FBin FMul (FNum 0.054) (FBin FSub FTime (FNum 5.0)))))) : Nil))
+      (parseAll "a: (max(0, 0.054 * (t - 5)))")
+  , expectEq "a bare reserved function name is an ordinary reference"
+      (Right (NodeExpr 2 "a" (Just (FormulaAnnot (FBin FMul (FRef 0 "cos") (FRef 1 "x")))) : Nil))
+      (parseAll "a: (cos * x)")
+  , expectEq "a call takes a shift tail like a paren group"
+      (Right (NodeExpr 1 "a" (Just (FormulaAnnot
+        (FCall (FFun1 "cos" (FRef 0 "x")) (FNum 1.0)))) : Nil))
+      (parseAll "a: (cos(x)(t - 1))")
+  , expectEq "t opens no shift: t(t - 1) is juxtaposed multiplication"
+      (Right (NodeExpr 0 "a" (Just (FormulaAnnot
+        (FBin FMul FTime (FBin FSub FTime (FNum 1.0))))) : Nil))
+      (parseAll "a: (t(t - 1))")
+  , expectErrorAt "a 1-arg call refuses a comma"
+      "line 1, column 10" (parseAll "a: (cos(x, y))")
+  , expectErrorAt "min demands its second argument"
+      "line 1, column 10" (parseAll "a: (min(x))")
+  , expectErrorAt "a 2-arg call stops at two"
+      "line 1, column 13" (parseAll "a: (min(x, y, z))")
   -- Parser: values are positioned errors anywhere else
   , expectErrorAt "a colon needs a number"
       "line 1, column 4" (parseAll "[a:]")
@@ -520,6 +566,29 @@ tests =
       (labelExprs "a: (a(t - 1))")
   , expectErrorAt "an eager cycle beside a shift is still rejected"
       "cycle" (graphOf "a: (b + x(t - 1))\nb: (a)")
+  -- Evaluator: the time vocabulary serializes and composes with the
+  -- reference rules (arrows from function args, eager cycles through
+  -- args, faucet rules riding the shift flag through arguments).
+  , expectEq "a function serializes resolved: RFun1 over the arg tree"
+      (Right [ Tuple "a" (Just (RBin "+" (RFun1 "cos" (RRef "dot#0")) (RNum 1.0))), Tuple "x" Nothing ])
+      (labelExprs "x\na: (cos(x) + 1)")
+  , expectEq "a max ramp serializes with t as its own kind"
+      (Right [ Tuple "a" (Just (RFun2 "max" (RNum 0.09)
+        (RBin "-" (RNum 0.21) (RBin "*" (RNum 0.06) RTime)))) ])
+      (labelExprs "a: (max(0.09, 0.21 - 0.06 * t))")
+  , expectEq "pi serializes as its own kind"
+      (Right [ Tuple "a" (Just (RBin "*" (RNum 2.0) RPi)) ])
+      (labelExprs "a: (2 * pi)")
+  , expectEq "a function arg's reference draws the implied arrow"
+      (Right [ { type: "arrow", source: "dot#0", target: "dot#2" } ])
+      (linksOf "x\na: (cos(x))")
+  , expectErrorAt "an eager cycle through a function arg is rejected"
+      "cycle" (graphOf "a: (min(b, 1))\nb: (a)")
+  , expectEq "a shift under a function still breaks its cycle"
+      (Right [ Tuple "a" (Just (RFun1 "cos" (RCall (RRef "dot#1") (RNum 1.0)))) ])
+      (labelExprs "a: (cos(a(t - 1)))")
+  , expectErrorAt "a function arg may not read a faucet outside a shift"
+      "is a faucet" (graphOf "s=>f\na: (cos(f))")
   -- Evaluator: band groups
   , expectEq "a flow band with a reservoir gets a group"
       (Right [ Tuple "a" (Just 0), Tuple "fill" (Just 0) ])

@@ -71,14 +71,14 @@ thermostat setting: 18 -> discrepancy between desired and actual room temperatur
 B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
 outside temperature -> discrepancy between inside and outside temperatures`;
 
-// figures 15 & 19: both loops live and the outside temperature SCHEDULED —
-// the cold-day driving variable, dipping to -5 (dot schedules + negative
-// literals end-to-end).
+// figures 15 & 19: both loops live and the outside temperature a FORMULA of
+// time — the cold-day driving curve as a period-10 cosine dipping to -5
+// (t/pi/cos end-to-end, a closed formula on a goal dot).
 const EX_THERMO19 = `|=>heat from furnace: 1.2[room temperature: 10]=>heat to outside: 0.13|
 B(heat from furnace <- discrepancy between desired and actual room temperatures <- room temperature)
 thermostat setting: 18 -> discrepancy between desired and actual room temperatures
 B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
-outside temperature: 10 @0.5: 8.5 @1: 7 @1.5: 5.5 @2: 4 @2.5: 2 @3: 0 @3.5: -1.5 @4: -3 @4.5: -5 @5: -4 @5.5: -3 @6: 0 @6.5: 2 @7: 4 @7.5: 5.5 @8: 7 @8.5: 8.5 @9: 10 -> discrepancy between inside and outside temperatures`;
+outside temperature: (2.5 + 7.5 * cos(2 * pi * t / 10)) -> discrepancy between inside and outside temperatures`;
 
 // figures 21 & 22: the population system — one stock, a reinforcing births
 // loop and a balancing deaths loop, fertility and mortality as the valued
@@ -97,22 +97,23 @@ B(deaths <- population)
 fertility: 0.21 -> births
 mortality: 0.3 -> deaths`;
 
-// figures 21 & 24: fertility staircases down to meet mortality by t=2 — the
-// scheduled FACTOR dot (goal dots had schedules already; this pins one on a
-// reinforcing loop's constant).
+// figures 21 & 24: fertility ramps down to meet mortality at t=2 and holds —
+// the closed-formula FACTOR dot (a max ramp on a reinforcing loop's
+// constant, where goal dots got the cosine).
 const EX_POP24 = `|=>births[population: 6.6]=>deaths|
 R(births <- population)
 B(deaths <- population)
-fertility: 0.21 @0.5: 0.18 @1: 0.15 @1.5: 0.12 @2: 0.09 -> births
+fertility: (max(0.09, 0.21 - 0.06 * t)) -> births
 mortality: 0.09 -> deaths`;
 
 // figures 21 & 26: shifting dominance — fertility above mortality, then
-// equal (the two-point 0.09 plateau interpolates exactly constant), then
-// above again and climbing: grow, hold, grow faster.
+// equal, then above again and climbing (a max ramp down to the 0.09
+// plateau by 2.5, flat to 5, then a quarter-wave sin climb to 0.36 at
+// 10): grow, hold, grow.
 const EX_POP26 = `|=>births[population: 6.6]=>deaths|
 R(births <- population)
 B(deaths <- population)
-fertility: 0.21 @0.5: 0.182 @1: 0.15 @1.5: 0.121 @2: 0.099 @2.5: 0.09 @5: 0.105 @5.5: 0.143 @6: 0.191 @6.5: 0.238 @7: 0.27 @7.5: 0.289 @8: 0.306 @8.5: 0.32 @9: 0.333 @9.5: 0.346 @10: 0.36 -> births
+fertility: (max(0.09, 0.21 - 0.048 * t) + max(0, 0.27 * sin(pi * (t - 5) / 10))) -> births
 mortality: 0.09 -> deaths`;
 
 // figure 25: the three scenarios side by side — the same two-loop structure
@@ -130,7 +131,7 @@ mortality b: 0.3 -> deaths b
 |=>births c[stabilization: 6.6]=>deaths c|
 R(births c <- stabilization)
 B(deaths c <- stabilization)
-fertility c: 0.21 @0.5: 0.18 @1: 0.15 @1.5: 0.12 @2: 0.09 -> births c
+fertility c: (max(0.09, 0.21 - 0.06 * t)) -> births c
 mortality c: 0.09 -> deaths c`;
 
 // figure 27: the capital archetype as pure structure — the population
@@ -255,6 +256,32 @@ air drag: (0.02 speed^2)
 [altitude: 180] =>falling |
 falling: (speed)
 B(air drag <- speed)`;
+
+// Keyword showcases: one model per reserved formula word — t, pi, cos,
+// sin, min, max (see ui/example.ts).
+const EX_RUSHHOUR = `| =>cars arriving: (2t) [cars on the road: 0] =>cars leaving: 8 |`;
+
+const EX_ODOMETER = `| =>rolling [distance: 0]
+wheel radius: 0.35
+cadence: 3
+rolling: (2 * pi * wheel radius * cadence)`;
+
+const EX_TIDES = `| =>flood tide: 1.5 [harbor basin: 3] =>ebb tide: 1.5 |
+B(flood tide <- gap <- harbor basin)
+B(ebb tide <- gap)
+sea level: (3 + 1.5 * cos(2 * pi * t / 5)) -> gap`;
+
+const EX_MONSOON = `| =>rainfall [reservoir: 20] =>river outflow: 12 |
+rainfall: (38 * sin(pi * t / 10))`;
+
+const EX_CHARGER = `| =>charging [battery: 10]
+full charge: 100
+charging: (min(25, 1.2 * (full charge - battery)))
+B(charging <- battery)`;
+
+const EX_DROUGHT = `[town reservoir: 100] =>consumption |
+consumption: (max(6, 0.25 * town reservoir))
+B(consumption <- town reservoir)`;
 
 // figure 37: the oil economy — figure 42's capital machinery constrained
 // by a NONRENEWABLE resource (no regeneration; extraction drains to a
@@ -542,6 +569,20 @@ const goldenInputs = [
   // Exponents: ^ binds tightest, right-associative.
   'y: ((2x^2) + 3)',
   'y: (x^2^3)',
+  // The time vocabulary: bare `t`, `pi`, cos/sin calls, min/max with the
+  // comma. A closed formula (no refs) is a driving curve; none of the new
+  // forms mints an id.
+  'a: (t)',
+  'a: (2t + 1)',
+  'a: (2 * pi)',
+  'a: (cos(t / 24))',   // a call, never a shift of a node named cos
+  'a: (cos * x)',       // a bare reserved name is an ordinary reference
+  'a: (min(x, y))',
+  'a: (max(0, x -5))',  // a signed literal as a call argument
+  'a: (cos(x)(t - 1))', // a call takes a shift tail
+  'c: (min(a, b)(t - 1))',
+  't: 5',               // statement-level t is still a plain node
+  'outside temperature: (2.5 + 7.5 * cos(2 * pi * t / 10))',
   EX_COFFEE,      // figures 10 & 11
   EX_INTEREST,    // figures 12 & 13
   EX_CAPITAL,     // figure 14
@@ -578,6 +619,12 @@ const goldenInputs = [
   EX_CAFFEINE,    // showcase: @ pulse schedule + proportional decay
   EX_HOGS,        // showcase: loop closed through price(t - 2)
   EX_SKYDIVER,    // showcase: speed^2 drag, cross-band rate, the 0-floor
+  EX_RUSHHOUR,    // showcase: bare t as a rate law
+  EX_ODOMETER,    // showcase: pi in a circumference formula
+  EX_TIDES,       // showcase: cos as a two-cycle moving goal
+  EX_MONSOON,     // showcase: sin as a seasonal half-wave
+  EX_CHARGER,     // showcase: min as a constant-current/voltage clamp
+  EX_DROUGHT,     // showcase: max as an essential-use floor
 ];
 
 // Errors: the "kind: line L, column C:" prefix is contractual; wording may be tuned.
@@ -618,7 +665,7 @@ const errorCases = [
   ['a=>f: 0 @5:',  /^Parsing error: line 1, column 11: /],  // step needs a rate
   ['[a: 1 @2: 3]', /^Parsing error: line 1, column 7: /],   // stocks: single value only
   ['a @ b',        /^Parsing error: line 1, column 3: /],   // '@' lives inside annotations
-  ['a, b',         /^Tokenization error: line 1, column 2: /],  // ',' left the language
+  ['a, b',         /^Parsing error: line 1, column 2: /],   // ',' lives between call arguments
   ['a: 5 ~',       /^Tokenization error: line 1, column 6: /],   // '~' left the language
   ['a=>f: 0 @2: 1 ~3: 2', /^Tokenization error: line 1, column 15: /],  // (no smooth schedules)
   // Formulas
@@ -628,9 +675,12 @@ const errorCases = [
   ['[a: (x)]',     /^Parsing error: line 1, column 5: /],   // stocks take numbers, not formulas
   ['x=>f\na: (f)', /^Model error: /],                       // a formula cannot read a faucet
   ['a: (b)\nb: (a)', /^Model error: /],                     // formula cycles have no order
+  // Function calls: a reserved name opens a call only on '('; arity is exact
+  ['a: (cos(x, y))',    /^Parsing error: line 1, column 10: /],  // cos takes one argument
+  ['a: (min(x))',       /^Parsing error: line 1, column 10: /],  // min demands a second
+  ['a: (min(x, y, z))', /^Parsing error: line 1, column 13: /],  // and stops at two
   // Time shifts: `(t` after a name or group, `-` the only shift operator,
   // one term of time, and the time still may not read a faucet
-  ['a: (t)',            /^Parsing error: line 1, column 5: /],   // t is the time variable, not a name
   ['a: (x(t + 1))',     /^Parsing error: line 1, column 9: /],   // only - shifts time
   ['a: (x(t ~ 1))',     /^Tokenization error: line 1, column 9: /],  // the smooth shift is gone
   ['a: (x(t - 3 - d))', /^Parsing error: line 1, column 13: /],  // a compound time needs parens
@@ -722,6 +772,15 @@ if (JSON.stringify(tOf('room temperature')?.loop) !== JSON.stringify(['B0', 'B1'
   fail('thermostat model', `room temperature should be in B0 and B1, got ${JSON.stringify(tOf('room temperature')?.loop)}`);
 if (tOf('thermostat setting')?.loop !== undefined || tOf('outside temperature')?.loop !== undefined)
   fail('thermostat model', 'the constants feed the loops without joining them');
+const thermo19 = JSON.parse(M.go(EX_THERMO19));
+if (thermo19.nodes.length !== 11)   // annotations change no census: same 11 as figure 15
+  fail('thermostat 19', `11 nodes expected, got ${thermo19.nodes.length}`);
+const t19Outside = thermo19.nodes.find(n => n.label === 'outside temperature');
+if (!(t19Outside?.value === undefined && t19Outside?.steps === undefined
+      && t19Outside?.expr?.kind === '+'
+      && t19Outside?.expr?.right?.kind === '*'
+      && t19Outside?.expr?.right?.right?.kind === 'cos'))
+  fail('thermostat 19', `outside temperature should be the cosine cold day, got ${JSON.stringify(t19Outside)}`);
 const pop = JSON.parse(M.go(EX_POP22));
 const pOf = label => pop.nodes.find(n => n.label === label);
 if (pop.nodes.length !== 9)   // 2 clouds, 2 faucets, 1 stock, 2 factor dots, 2 ports
@@ -736,15 +795,16 @@ if (!(pOf('fertility')?.type === 'dot' && pOf('fertility')?.value === 0.21 && pO
   fail('population model', 'fertility should be an un-tagged dot valued 0.21');
 const pop24 = JSON.parse(M.go(EX_POP24));
 const fert24 = pop24.nodes.find(n => n.label === 'fertility');
-if (!(fert24?.value === 0.21 && fert24?.smooth === undefined
-      && JSON.stringify(fert24?.steps) === JSON.stringify(
-        [{ value: 0.18, at: 0.5 }, { value: 0.15, at: 1 }, { value: 0.12, at: 1.5 }, { value: 0.09, at: 2 }])))
-  fail('population 24', `fertility should carry the staircase down to replacement, got ${JSON.stringify(fert24)}`);
+if (!(fert24?.value === undefined && fert24?.steps === undefined
+      && fert24?.expr?.kind === 'max'
+      && fert24?.expr?.left?.kind === 'num' && fert24?.expr?.left?.value === 0.09
+      && fert24?.expr?.right?.kind === '-'))
+  fail('population 24', `fertility should be the max ramp down to replacement, got ${JSON.stringify(fert24)}`);
 const fert26 = JSON.parse(M.go(EX_POP26)).nodes.find(n => n.label === 'fertility');
-if (!(fert26?.value === 0.21 && fert26?.steps?.length === 16
-      && JSON.stringify(fert26?.steps?.[0]) === JSON.stringify({ value: 0.182, at: 0.5 })
-      && JSON.stringify(fert26?.steps?.[15]) === JSON.stringify({ value: 0.36, at: 10 })))
-  fail('population 26', `fertility should carry the 16-step rebound staircase, got ${JSON.stringify(fert26)}`);
+if (!(fert26?.value === undefined && fert26?.steps === undefined
+      && fert26?.expr?.kind === '+'
+      && fert26?.expr?.left?.kind === 'max' && fert26?.expr?.right?.kind === 'max'))
+  fail('population 26', `fertility should be the sum of two max ramps, got ${JSON.stringify(fert26)}`);
 const pop25 = JSON.parse(M.go(EX_POP25));
 if (pop25.nodes.length !== 27) fail('population 25', `27 nodes expected (21 + 6 ports), got ${pop25.nodes.length}`);
 if (new Set(pop25.nodes.map(n => n.group).filter(g => g != null)).size !== 3)

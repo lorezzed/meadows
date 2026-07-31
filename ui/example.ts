@@ -114,15 +114,15 @@ B(heat to outside <- discrepancy between inside and outside temperatures <- room
 outside temperature: 10 -> discrepancy between inside and outside temperatures`
     },
     {
-        // The cold day is a dense @ staircase (half-unit steps down to -5
-        // and back) — the piecewise driving variable the run integrates,
-        // drawn as the stepped dashed goal path.
+        // The cold day is an equation of time — a period-10 cosine dipping
+        // to -5 at midday and back to 10 — the driving curve the run
+        // integrates, drawn as the smooth dashed goal path.
         label: 'figure 15 & 19',
         content: `| =>heat from furnace: 1.2 [room temperature: 10] =>heat to outside: 0.13 |
 B(heat from furnace <- discrepancy between desired and actual room temperatures <- room temperature)
 thermostat setting: 18 -> discrepancy between desired and actual room temperatures
 B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
-outside temperature: 10 @0.5: 8.5 @1: 7 @1.5: 5.5 @2: 4 @2.5: 2 @3: 0 @3.5: -1.5 @4: -3 @4.5: -5 @5: -4 @5.5: -3 @6: 0 @6.5: 2 @7: 4 @7.5: 5.5 @8: 7 @8.5: 8.5 @9: 10 -> discrepancy between inside and outside temperatures`
+outside temperature: (2.5 + 7.5 * cos(2 * pi * t / 10)) -> discrepancy between inside and outside temperatures`
     },
     {
         label: 'figure 15 & 20',
@@ -130,7 +130,7 @@ outside temperature: 10 @0.5: 8.5 @1: 7 @1.5: 5.5 @2: 4 @2.5: 2 @3: 0 @3.5: -1.5
 B(heat from furnace <- discrepancy between desired and actual room temperatures <- room temperature)
 thermostat setting: 18 -> discrepancy between desired and actual room temperatures
 B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
-outside temperature: 10 @0.5: 8.5 @1: 7 @1.5: 5.5 @2: 4 @2.5: 2 @3: 0 @3.5: -1.5 @4: -3 @4.5: -5 @5: -4 @5.5: -3 @6: 0 @6.5: 2 @7: 4 @7.5: 5.5 @8: 7 @8.5: 8.5 @9: 10 -> discrepancy between inside and outside temperatures`
+outside temperature: (2.5 + 7.5 * cos(2 * pi * t / 10)) -> discrepancy between inside and outside temperatures`
     },
     {
         label: 'figure 21 & 22',
@@ -149,13 +149,14 @@ fertility: 0.21 -> births
 mortality: 0.3 -> deaths`
     },
     {
-        // The fertility transition rides a half-unit @ staircase down the
-        // old straight ramp (0.21 to replacement 0.09 over two decades).
+        // The fertility transition is the book's straight ramp itself:
+        // 0.21 down to replacement 0.09 over two decades, flat after —
+        // max() holds the floor.
         label: 'figure 21 & 24',
         content: `| =>births [population: 6.6] =>deaths |
 R(births <- population)
 B(deaths <- population)
-fertility: 0.21 @0.5: 0.18 @1: 0.15 @1.5: 0.12 @2: 0.09 -> births
+fertility: (max(0.09, 0.21 - 0.06 * t)) -> births
 mortality: 0.09 -> deaths`
     },
     {
@@ -173,18 +174,19 @@ mortality b: 0.3 -> deaths b
 | =>births c [stabilization: 6.6] =>deaths c |
 R(births c <- stabilization)
 B(deaths c <- stabilization)
-fertility c: 0.21 @0.5: 0.18 @1: 0.15 @1.5: 0.12 @2: 0.09 -> births c
+fertility c: (max(0.09, 0.21 - 0.06 * t)) -> births c
 mortality c: 0.09 -> deaths c`
     },
     {
-        // The rebound scenario's fertility curve as a half-unit @
-        // staircase: down to replacement by 2.5, flat to 4.5, then the
-        // climb to 0.36 (values sampled off the old monotone curve).
+        // The rebound scenario's fertility as ramp-down plus quarter-wave
+        // climb: down to replacement by 2.5, flat to 5 (both maxes hold
+        // their floors), then the sin carries it to 0.36 at t=10 — grow,
+        // hold, grow again, ending near the book's ≈18 billion.
         label: 'figure 21 & 26',
         content: `| =>births [population: 6.6] =>deaths |
 R(births <- population)
 B(deaths <- population)
-fertility: 0.21 @0.5: 0.182 @1: 0.15 @1.5: 0.121 @2: 0.099 @2.5: 0.09 @5: 0.105 @5.5: 0.143 @6: 0.191 @6.5: 0.238 @7: 0.27 @7.5: 0.289 @8: 0.306 @8.5: 0.32 @9: 0.333 @9.5: 0.346 @10: 0.36 -> births
+fertility: (max(0.09, 0.21 - 0.048 * t) + max(0, 0.27 * sin(pi * (t - 5) / 10))) -> births
 mortality: 0.09 -> deaths`
     },
     {
@@ -759,6 +761,70 @@ air drag: (0.02 speed^2)
 [altitude: 180] =>falling |
 falling: (speed)
 B(air drag <- speed)`
+    },
+
+    // Keyword showcases (not from the book): one button per reserved word
+    // of the formula language — t, pi, cos, sin, min, max — each a small
+    // model whose story hinges on that keyword, tuned to the T_END = 10
+    // horizon.
+    {
+        // Bare `t` as a rate law: arrivals grow with the clock while
+        // departures hold at 8, so the road stays empty until the rates
+        // cross at t=4 — then the jam compounds quadratically (to ~36).
+        label: 'rush hour (t)',
+        content: `| =>cars arriving: (2t) [cars on the road: 0] =>cars leaving: 8 |`
+    },
+    {
+        // `pi` where it lives: circumference. Distance accrues at
+        // 2πr × cadence — the formula's implied arrows wire the two
+        // constants in, and the line runs dead straight to 2π·0.35·3·10
+        // ≈ 66.
+        label: 'odometer (pi)',
+        content: `| =>rolling [distance: 0]
+wheel radius: 0.35
+cadence: 3
+rolling: (2 * pi * wheel radius * cadence)`
+    },
+    {
+        // `cos` as a moving goal: the sea runs two full tide cycles
+        // (period 5) and the basin chases it through a fill/drain faucet
+        // pair — attenuated to ±1.2 and lagging about half a unit, the
+        // classic tracking signature, under the smooth dashed goal curve.
+        label: 'tides (cos)',
+        content: `| =>flood tide: 1.5 [harbor basin: 3] =>ebb tide: 1.5 |
+B(flood tide <- gap <- harbor basin)
+B(ebb tide <- gap)
+sea level: (3 + 1.5 * cos(2 * pi * t / 5)) -> gap`
+    },
+    {
+        // `sin` as a season: one half-wave of rain over the whole horizon
+        // against a steady river draw. The reservoir dips to ~14 before
+        // the rains beat the river (t≈1), crests ~148 as they fall back
+        // under it (t=9), and recedes — the wet season passing through.
+        label: 'monsoon (sin)',
+        content: `| =>rainfall [reservoir: 20] =>river outflow: 12 |
+rainfall: (38 * sin(pi * t / 10))`
+    },
+    {
+        // `min` as a capacity clamp: real chargers are constant-current
+        // then constant-voltage — flat out at 25 until the gap-
+        // proportional trickle undercuts it (≈72% full at t≈2.8), then
+        // the exponential taper onto exactly full.
+        label: 'phone charger (min)',
+        content: `| =>charging [battery: 10]
+full charge: 100
+charging: (min(25, 1.2 * (full charge - battery)))
+B(charging <- battery)`
+    },
+    {
+        // `max` as a floor: while water is plentiful the town drinks in
+        // proportion (an exponential coast), but essential use never
+        // drops below 6 — the floor breaks the balancing loop below
+        // level 24 and crashes the reservoir to exactly 0 at t≈9.7.
+        label: 'drought (max)',
+        content: `[town reservoir: 100] =>consumption |
+consumption: (max(6, 0.25 * town reservoir))
+B(consumption <- town reservoir)`
     },
 
 ]
