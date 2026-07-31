@@ -292,7 +292,7 @@ delivery delay: 0.5`
         // figure 33's panels — sales vs perceived sales (the perception
         // pair), orders vs deliveries (the delivery pair).
         label: 'figure 31 & 33',
-        flows: true,
+        flows: false,
         content: `| =>deliveries [inventory of cars on the lot: 200] =>sales |
 B(deliveries <- orders to factory <- discrepancy <- inventory of cars on the lot)
 orders to factory: (perceived sales + discrepancy / response delay)
@@ -303,7 +303,7 @@ perceived sales: (sales(t - perception delay))
 sales: (customer demand)
 customer demand: 200 @2.5: 220
 perception delay: 0.5
-response delay: 0.3
+response delay: 0.2
 delivery delay: 0.5`
     },
     {
@@ -322,7 +322,7 @@ perceived sales: (sales(t - perception delay))
 sales: (customer demand)
 customer demand: 200 @2.5: 220
 perception delay: 0.5
-response delay: 0.3
+response delay: 0.25
 delivery delay: 0.5`
     },
     {
@@ -340,7 +340,7 @@ perceived sales: (sales(t - perception delay))
 sales: (customer demand)
 customer demand: 200 @2.5: 220
 perception delay: 0.5
-response delay: 0.2
+response delay: 0.1
 delivery delay: 0.5`
     },
     {
