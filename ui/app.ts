@@ -152,7 +152,14 @@ const css = `
   /* Stylesheet rules beat SVG presentation attributes: one font for the
      diagram labels without touching the render code. */
   svg.svg text { font-family: var(--sans); }
-  svg.svg circle, svg.svg rect, svg.svg image { cursor: grab; }
+  /* Empty canvas pans (grab, grabbing mid-pan); a shape instead moves under
+     the cursor (drag pins the node), so it shows the move cursor — a distinct
+     affordance from the pan hand. The panning class flips every mark to
+     grabbing for the duration of a canvas pan (it outranks the shape rule:
+     two classes to one). */
+  svg.svg { cursor: grab; }
+  svg.svg circle, svg.svg rect, svg.svg image { cursor: move; }
+  svg.svg.panning, svg.svg.panning * { cursor: grabbing; }
   .examples {
     display: flex;
     flex-wrap: wrap;
@@ -308,6 +315,11 @@ let viewX = 0, viewY = 0, viewW = svgWidth, viewH = svgHeight;
 // Button-driven zoom factor on top of the auto-fit: 1 = the fit itself,
 // >1 closer, <1 further out.
 let userZoom = 1;
+// Drag-driven pan offset (viewBox user units) added to the auto-fit target
+// center by easeView(); set by dragging empty canvas, cleared by the "1×"
+// reset. Riding on the auto-fit target (rather than an absolute viewBox)
+// keeps it composable with the zoom and the layout's own settling.
+let panX = 0, panY = 0;
 
 // The diagram panel: a positioned wrapper (see .diagram) so the zoom
 // cluster can overlay the svg's top-right corner.
@@ -319,7 +331,7 @@ const svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, any> = diagram
   .append('svg')
   .attr('class', 'svg')
   .attr("viewBox", `0 0 ${svgWidth} ${svgHeight}`)
-  .on("click", click)
+  .call(canvasPan())
 // Zoom controls: zoom in, reset to the auto-fit, zoom out — 1.25× steps
 // about the view center, clamped; ensureViewEase animates the change even
 // while the simulation is idle.
@@ -338,7 +350,7 @@ zoomButtons.append('button')
 zoomButtons.append('button')
   .attr('title', 'reset zoom').attr('aria-label', 'reset zoom')
   .text('1×')
-  .on('click', () => setZoom(1));
+  .on('click', () => { panX = 0; panY = 0; setZoom(1); });
 zoomButtons.append('button')
   .attr('title', 'zoom out').attr('aria-label', 'zoom out')
   .text('−')
@@ -745,8 +757,6 @@ const simulation = d3.forceSimulation<Node, Link>(systemNodes)
   .force("y", d3.forceY<Node>(d => d.gy ?? svgHeight / 2).strength(d => d.type === "stock" ? 1.0 : d.inFlow ? 0.9 : 0.01))
   .on("tick", ticked);
 
-let nextId = systemNodes.length;
-
 update(system);
 
 function update(system: System) {
@@ -765,8 +775,8 @@ function update(system: System) {
   // (the node joins below render labels).
   labelById = new Map(nodes.map(n => [n.id, n.label]));
   // Link endpoints arrive from the compiler as id strings, but d3's link force
-  // rewrites them to node objects once it has seen them (the click-to-add path
-  // re-updates with such links) — normalize before using one as a key.
+  // rewrites them to node objects once it has seen them (a recycled node from
+  // a prior update carries such links) — normalize before using one as a key.
   const endId = (e: Link["source"]): string =>
     typeof e === "object" && e !== null ? (e as Node).id : String(e);
   const nodeById = new Map(nodes.map(n => [n.id, n] as [string, Node]));
@@ -1503,7 +1513,8 @@ function ticked() {
 // nominal canvas and the padded node bbox — the auto-fit, which on its own
 // only ever zooms OUT so all nodes stay visible — scaled about its center by
 // the button-driven userZoom (>1 = closer; nodes may then clip past the
-// panel, which is the point of zooming in). Pads follow each node's own
+// panel, which is the point of zooming in) and shifted by the drag-driven
+// pan offset (panX/panY). Pads follow each node's own
 // size; the x-pad also grows with the label so wide names ("yield per unit
 // capital") never clip — ~3px per char ≈ half the rendered width at
 // font-size 10; the y-pad leaves room for the labels that sit above dots and
@@ -1533,8 +1544,8 @@ function easeView(): boolean {
   });
   const tw = (x1 - x0) / userZoom;
   const th = (y1 - y0) / userZoom;
-  const tx = (x0 + x1 - tw) / 2;
-  const ty = (y0 + y1 - th) / 2;
+  const tx = (x0 + x1 - tw) / 2 + panX;
+  const ty = (y0 + y1 - th) / 2 + panY;
   const ease = 0.2;
   viewX += (tx - viewX) * ease;
   viewY += (ty - viewY) * ease;
@@ -1560,20 +1571,27 @@ function ensureViewEase() {
   });
 }
 
-function click(event: MouseEvent) {
-  // Only EMPTY space adds a node: a click that lands on a shape bubbles up
-  // here too, but that gesture now means "release the pin" (see drag) and
-  // must not also spawn a linked dot.
-  if (event.target !== svg.node()) return;
-  const [x, y] = d3.pointer(event);
-  nextId++;
-  const newNode: Node = { type: "dot", id: `${nextId}`, label: `${nextId}`, x, y };
-  const nearest = systemNodes[systemNodes.length - 1];
-  if (nearest) {
-    systemLinks.push({ source: nearest.id, target: newNode.id, type: "arrow" });
-  }
-  systemNodes.push(newNode);
-  update({ ...system });
+// Dragging empty canvas pans the view: the whole diagram follows the cursor.
+// The pan is an offset on easeView()'s auto-fit target (panX/panY, viewBox
+// user units), so it rides along as the layout settles and composes with the
+// zoom buttons; the "1×" reset clears it back to the auto-fit framing. Node
+// and port drags stopPropagation on pointerdown, so grabbing a shape starts
+// that gesture instead of a pan. Pixel deltas convert to user units through
+// the live CTM scale (the letterboxed viewBox's own screen scale), so a
+// grabbed point tracks the cursor 1:1 at any zoom. Like the zoom buttons it
+// eases toward the new target via ensureViewEase() rather than writing the
+// viewBox itself, keeping easeView() the sole viewBox owner.
+function canvasPan() {
+  return d3.drag<SVGSVGElement, unknown>()
+    .on("start", () => { svg.classed("panning", true); })
+    .on("drag", (event) => {
+      const ctm = svg.node()?.getScreenCTM();
+      if (!ctm || !ctm.a || !ctm.d) return;
+      panX -= event.dx / ctm.a;
+      panY -= event.dy / ctm.d;
+      ensureViewEase();
+    })
+    .on("end", () => { svg.classed("panning", false); });
 }
 
 function loadExample(ex: { content: string; flows?: boolean }) {

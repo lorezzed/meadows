@@ -396,9 +396,18 @@ simulation is idle). Almost everything lives in **`app.ts`**:
   releases the pin (and clicking a port clears its hand-set `portAngle`). The
   two gestures share d3-drag start/end and are told apart by whether any drag
   movement landed between them.
-- Clicking empty svg space (the svg itself, not a shape) adds a dot node linked
-  from the previous node (a manual editing affordance separate from the DSL
-  path).
+- Dragging empty svg space (not a shape) pans the diagram: the whole canvas
+  follows the cursor. The pan is an offset (`panX`/`panY`, viewBox user units)
+  on `easeView()`'s auto-fit target center, so it composes with the button
+  zoom and rides along as the layout settles; the `1×` reset clears it (and the
+  zoom) back to the auto-fit framing. Node/port drags `stopPropagation` on
+  pointerdown, so grabbing a shape starts that gesture, never a pan. Pixel
+  deltas convert to user units through the live CTM scale, so a grabbed point
+  tracks the cursor 1:1 at any zoom; like the buttons it eases toward the new
+  target via `ensureViewEase()` rather than writing the viewBox itself, keeping
+  `easeView()` the sole viewBox owner. The cursor distinguishes the two
+  gestures: the canvas is `grab` (`grabbing` mid-pan, via a `panning` class),
+  a shape is `move`.
 
 Two sibling modules add the **behavior-over-time chart** (the book's figure 6 to
 the diagram's figure 5):
@@ -531,7 +540,6 @@ and calls print as written).
 `d3.SimulationNodeDatum` / `SimulationLinkDatum`). `ui/declarations.d.ts` lets `*.svg`
 imports resolve to a URL string.
 
-Node ids are **strings** everywhere (`"dot#3"` from the backend; the click handler's
-manually-added nodes stringify their counter). The d3 force link uses `.id(d => d.id)` to
-match links to nodes, so keep node ids and link `source`/`target` endpoints as consistent
-strings when touching either side.
+Node ids are **strings** everywhere (`"dot#3"` from the backend). The d3 force link uses
+`.id(d => d.id)` to match links to nodes, so keep node ids and link `source`/`target`
+endpoints as consistent strings when touching either side.
