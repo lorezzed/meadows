@@ -72,15 +72,79 @@ export function hasNumbers(system: System): boolean {
   return system.nodes.some(n => n.value != null || n.expr != null);
 }
 
+// Every node id an expr reads, anywhere in the tree (shift inputs and
+// times included — this is the reachability walk, not the eager one).
+const exprRefIds = (e: Expr): string[] => {
+  switch (e.kind) {
+    case "num": case "t": case "pi": return [];
+    case "ref": return [e.id];
+    case "delay": return [...exprRefIds(e.input), ...exprRefIds(e.time)];
+    case "cos": case "sin": return exprRefIds(e.arg);
+    default: return [...exprRefIds(e.left), ...exprRefIds(e.right)];
+  }
+};
+
+// A node's formula when it references NOTHING — a closed curve of time
+// (numbers, t, pi, functions, self-contained shifts). Closed formulas are
+// the driving-variable form: they count as "valued" in the goal/factor
+// walk exactly like constants and schedules do, while a formula WITH refs
+// stays a walk-through relay (a computed auxiliary must not end the walk).
+const closedExpr = (n: Node): Expr | null =>
+  n.expr != null && exprRefIds(n.expr).length === 0 ? n.expr : null;
+
+// Evaluate a CLOSED expr at wall-clock t — no levels, no memo, no ring
+// state. A shift over a closed input has an analytic pipeline: its value
+// is the input at t − max(1, round(T/DT))·DT, clamped at the t=0 priming
+// read — exactly what the engine's ring buffer computes step by step, so
+// the chart and the run can never disagree. Same non-finite-reads-as-0
+// guard as the live evaluator.
+const evalClosed = (e: Expr, t: number): number => {
+  switch (e.kind) {
+    case "num": return e.value;
+    case "t": return t;
+    case "pi": return Math.PI;
+    case "ref": return 0; // unreachable: closedExpr admits no refs
+    case "delay": {
+      const T = evalClosed(e.time, t);
+      const n = Math.max(1, Math.round((Number.isFinite(T) ? Math.max(0, T) : 0) / DT));
+      return evalClosed(e.input, Math.max(0, t - n * DT));
+    }
+    case "cos": case "sin": {
+      const v = Math[e.kind](evalClosed(e.arg, t));
+      return Number.isFinite(v) ? v : 0;
+    }
+    case "min": case "max": {
+      const v = Math[e.kind](evalClosed(e.left, t), evalClosed(e.right, t));
+      return Number.isFinite(v) ? v : 0;
+    }
+    default: {
+      const l = evalClosed(e.left, t), r = evalClosed(e.right, t);
+      const v = e.kind === "+" ? l + r : e.kind === "-" ? l - r : e.kind === "*" ? l * r : e.kind === "/" ? l / r : l ** r;
+      return Number.isFinite(v) ? v : 0;
+    }
+  }
+};
+
+// The one sampler for every annotated quantity: a closed formula evaluates
+// as the curve it writes; anything else reads its schedule (a constant is
+// a one-point schedule). Goals, factors, and the chart's goal paths all
+// read through here, so the engine and the chart share one interpolant.
+export function annotFn(n: Node): (t: number) => number {
+  const ce = closedExpr(n);
+  return ce ? (t: number) => evalClosed(ce, t) : scheduleFn(n);
+}
+
 // A faucet's attached stock side(s) — the first stock→faucet flow link and
 // the first faucet→stock one; further attachments are ignored (v1 rule) —
 // plus the feedback reading of its info-arrow web, when one matches. The
-// web is walked backwards from the faucet, straight through value-less
-// relay dots; anything else (stocks, faucets, clouds) ends a branch.
-// Exactly one valued dot reached arms a feedback rate — which one depends
-// on where the number sits (a faucet with stocks on both sides keeps the
-// plain constant-rate reading: no single level to feed back — as does an
-// ambiguous web with two constants):
+// web is walked backwards from the faucet, straight through relay dots
+// (value-less, or carrying a ref-bearing formula — a computed auxiliary);
+// anything else (stocks, faucets, clouds) ends a branch. A dot counts as
+// VALUED when it carries a constant, a schedule, or a closed formula (a
+// driving curve of time). Exactly one valued dot reached arms a feedback
+// rate — which one depends on where the number sits (a faucet with stocks
+// on both sides keeps the plain constant-rate reading: no single level to
+// feed back — as does an ambiguous web with two constants):
 //   - a faucet with its own annotation reads the dot as its GOAL and the
 //     annotation as a gain (figures 10 & 11): rate = gain × discrepancy.
 //   - a bare faucet whose web also reaches its own attached stock — the
@@ -126,7 +190,7 @@ function faucetWiring(system: System): Wiring[] {
       if (id === attached) loops = true;
       const n = nodeById.get(id);
       if (!n || n.type !== "dot") continue;
-      if (n.value != null) dots.add(n);
+      if (n.value != null || closedExpr(n) != null) dots.add(n);
       else stack.push(...(arrowsInto.get(id) ?? []));
     }
     const [only] = dots;
@@ -149,20 +213,36 @@ function faucetWiring(system: System): Wiring[] {
 
 // The chart's dashed reference rules: each constant serving as at least one
 // goal-seeking faucet's goal, once, in parser-id order. A scheduled goal
-// carries its steps too, so the chart can draw the moving target exactly
-// as the simulator reads it.
-export type GoalRef = { id: string; label: string; value: number; steps?: { at: number; value: number }[] };
+// carries its steps (the chart draws the stepped target); a closed-formula
+// goal carries its sampler instead (the chart draws the smooth curve) —
+// both exactly the reading the simulator integrates.
+export type GoalRef = {
+  id: string;
+  label: string;
+  // The t=0 reading (a formula goal samples its curve there).
+  value: number;
+  // Schedule goals only: the steps behind the stepped dashed path.
+  steps?: { at: number; value: number }[];
+  // Closed-formula goals only: the curve, for the smooth dashed path.
+  fn?: (t: number) => number;
+};
 
 export function goalRefs(system: System): GoalRef[] {
   const seen = new Map<string, GoalRef>();
   for (const w of faucetWiring(system)) {
-    if (w.goal && w.goal.value != null && !seen.has(w.goal.id))
+    if (!w.goal || seen.has(w.goal.id)) continue;
+    const ce = closedExpr(w.goal);
+    if (ce) {
+      const fn = (t: number) => evalClosed(ce, t);
+      seen.set(w.goal.id, { id: w.goal.id, label: w.goal.label, value: fn(0), fn });
+    } else if (w.goal.value != null) {
       seen.set(w.goal.id, {
         id: w.goal.id,
         label: w.goal.label,
         value: w.goal.value,
         ...(w.goal.steps ? { steps: w.goal.steps } : {}),
       });
+    }
   }
   return [...seen.values()].sort((a, b) => parserId(a.id) - parserId(b.id));
 }
@@ -202,11 +282,14 @@ type CallSite = { key: string; input: Expr; time: Expr };
 
 const collectCalls = (e: Expr, key: string, out: CallSite[]): void => {
   switch (e.kind) {
-    case "num": case "ref": return;
+    case "num": case "ref": case "t": case "pi": return;
     case "delay":
       collectCalls(e.input, key + "I", out);
       collectCalls(e.time, key + "T", out);
       out.push({ key, input: e.input, time: e.time });
+      return;
+    case "cos": case "sin":
+      collectCalls(e.arg, key + "A", out);
       return;
     default:
       collectCalls(e.left, key + "L", out);
@@ -241,10 +324,11 @@ function run(system: System, tEnd: number): { stocks: StockSeries[]; flows: Flow
 
   // Each faucet moves rate(t)·DT per step from its source stock to its sink
   // stock (see faucetWiring); a side with no stock is an infinite reservoir.
-  // Every annotated quantity is a schedule read through scheduleFn — stepped
-  // sampled at each step's start. A faucet reads its own schedule as a rate (or as a gain when
-  // goal-seeking); a goal or factor dot's schedule is the value compared
-  // against or multiplied by, so a scheduled goal (figure 19's outside
+  // Every annotated quantity is read through annotFn — a schedule sampled
+  // stepped at each step's start, or a closed formula's curve. A faucet
+  // reads its own schedule as a rate (or as a gain when goal-seeking); a
+  // goal or factor dot's reading is the value compared against or
+  // multiplied by, so a scheduled or formula goal (figure 19's outside
   // temperature) is a moving target.
   const wireById = new Map(faucetWiring(system).map(w => [w.id, w] as [string, Wiring]));
   const faucets = system.nodes
@@ -257,8 +341,8 @@ function run(system: System, tEnd: number): { stocks: StockSeries[]; flows: Flow
         expr: f.expr ?? null,
         source: w?.source ?? null,
         sink: w?.sink ?? null,
-        goalFn: w?.goal ? scheduleFn(w.goal) : null,
-        factorFn: w?.factor ? scheduleFn(w.factor) : null,
+        goalFn: w?.goal ? annotFn(w.goal) : null,
+        factorFn: w?.factor ? annotFn(w.factor) : null,
       };
     });
   type FaucetEntry = (typeof faucets)[number];
@@ -292,6 +376,8 @@ function run(system: System, tEnd: number): { stocks: StockSeries[]; flows: Flow
   const evalExpr = (e: Expr, t: number, memo: Map<string, number>, key: string): number => {
     switch (e.kind) {
       case "num": return e.value;
+      case "t": return t;
+      case "pi": return Math.PI;
       case "ref": return valueOf(e.id, t, memo);
       // A shift's value is its STATE — the ring buffer's oldest sample —
       // never a recursion into its input; primeCall fills a missing state
@@ -299,6 +385,14 @@ function run(system: System, tEnd: number): { stocks: StockSeries[]; flows: Flow
       case "delay": {
         const st = delayState.get(key);
         return st ? st.buf[st.ptr]! : primeCall(key, e, t, memo);
+      }
+      case "cos": case "sin": {
+        const v = Math[e.kind](evalExpr(e.arg, t, memo, key + "A"));
+        return Number.isFinite(v) ? v : 0;
+      }
+      case "min": case "max": {
+        const v = Math[e.kind](evalExpr(e.left, t, memo, key + "L"), evalExpr(e.right, t, memo, key + "R"));
+        return Number.isFinite(v) ? v : 0;
       }
       default: {
         const l = evalExpr(e.left, t, memo, key + "L"), r = evalExpr(e.right, t, memo, key + "R");
