@@ -146,7 +146,7 @@ arrowLeftOp = ArrowL <$ string "<-"
 arrowRightOp :: Parser String Operator
 arrowRightOp = ArrowR <$ string "->"
 faucetRightOp :: Parser String Operator
-faucetRightOp = FaucetR <$ (try (string "=>") <|> string "=")
+faucetRightOp = FaucetR <$ string "=>"
 faucetLeftOp :: Parser String Operator
 faucetLeftOp = FaucetL <$ string "<="
 

@@ -255,7 +255,7 @@ real lexer and reprints the token stream (so it can never disagree with the
 syntax): one statement per line (blank lines collapse), tokens space-separated
 except where a lexeme glues to its neighbor — brackets hug their stock, a colon
 hugs the name before it, faucet ops take their name (`| =>tree growth [wood in
-living trees]`; a bare `=` reprints as `=>`), schedule markers take their time
+living trees]`), schedule markers take their time
 (`@5: 5`), loop-opens and parens hug inward, a comma hugs its left and
 breathes right (`min(0.09, 0.21 - 0.06t)`), `^` is
 tight on both sides (`2x^2`), and juxtaposed multiplication stays

@@ -43,7 +43,7 @@ expect('function calls glue, commas hug left and breathe right',
 expect('the cosine driver reprints in source spelling',
   'outside temperature: (2.5+7.5*cos(2*pi*t/10))',
   'outside temperature: (2.5 + 7.5 * cos(2 * pi * t / 10))');
-expect('bare = canonicalizes to =>', 'a=j', 'a =>j');
+expect('a lone = no longer lexes, so format returns it untouched', 'a=j', 'a=j');
 expect('multi-space name normalizes', 'water   in   tub', 'water in tub');
 expect('blank lines collapse', 'a->b\n\n\nc->d', 'a->b\nc->d'.replace(/->/g, ' -> '));
 expect('integral numbers reprint bare', '[a: 50.0]=>out: 2.50|', '[a: 50] =>out: 2.5 |');

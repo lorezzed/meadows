@@ -94,9 +94,8 @@ tests =
   [ expectEq "lexes idents and arrows"
       (Right (TokIdent "a" : TokOp ArrowR : TokIdent "b" : Nil))
       (toksOf "a->b")
-  , expectEq "lone = is an alias for =>"
-      (Right (TokIdent "a" : TokOp FaucetR : TokIdent "b" : Nil))
-      (toksOf "a=b")
+  , expectErrorAt "a lone = no longer lexes (only => and <= are faucets)"
+      "line 1, column 2" (toksOf "a=b")
   , expectEq "multi-word identifier is one token"
       (Right (TokIdent "wood in living trees" : Nil))
       (toksOf "wood in living trees")

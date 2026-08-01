@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path';
 
 const goldensPath = join(dirname(fileURLToPath(import.meta.url)), 'goldens.json');
 
-const EX_BIG = `|=>investment[capital]=depreciation|
+const EX_BIG = `|=>investment[capital]=>depreciation|
 capital->profit->investment
 [resource]=>extraction|
 resource->yield per unit capital->extraction
@@ -639,6 +639,7 @@ const errorCases = [
   ['(a->b',     /^Parsing error: line 1, column 5: /],
   ['a->b\nc->', /^Parsing error: line 2, column 2: /],
   ['a > b',     /^Tokenization error: line 1, column 3: /],
+  ['a=b',       /^Tokenization error: line 1, column 2: /],  // a bare = is no longer a => alias
   // Errors buried in otherwise-valid multi-statement programs
   ['[a]=>f[b]\nb->c\nc->[',  /^Parsing error: line 3, column 4: /],
   ['[a]=>f[b]\nb->\nc',      /^Parsing error: line 2, column 4: /],
