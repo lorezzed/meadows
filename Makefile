@@ -1,4 +1,4 @@
-.PHONY: init done shell code setup lock hash dev build run run-with test
+.PHONY: init done shell code setup lock hash dev dist build run run-with test
 
 # ---------------------------------------------------------------------------
 # One-time setup (run once, or whenever esbuild/d3 deps change in package.json)
@@ -40,6 +40,20 @@ code:
 # by `spago build`. Run this after editing any src/*.purs before `make dev`.
 build:
 	nix --experimental-features 'nix-command flakes' develop --command spago build
+
+# Build the self-contained static site into ./dist (for GitHub Pages). esbuild
+# bundles ui/index.js — inlining app.ts, d3, the compiled backend, and the
+# shape SVGs as data URLs — into ./dist, a throwaway dir. It must NOT write to
+# ./ui: a one-shot bundle there would clobber the checked-in one-line
+# ui/index.js entrypoint (see the `make dev` note). The HTML shell is copied
+# alongside; it loads ./index.js relatively, so the site works from any base
+# path (e.g. the project-pages /meadows/ subpath). Depends on `build` so
+# output/Main is fresh.
+dist: build
+	rm -rf dist
+	mkdir -p dist
+	nix --experimental-features 'nix-command flakes' develop --command esbuild ui/index.js --bundle --minify --outfile=dist/index.js --loader:.svg=dataurl
+	cp ui/index.html dist/index.html
 
 # Compiler tests: the PureScript unit suite (test/Main.purs — token streams &
 # positions, exact Tree shapes, evaluator identity/links/groups) plus the golden
