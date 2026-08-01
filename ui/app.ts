@@ -222,7 +222,32 @@ const css = `
      shared click). */
   svg.svg .link-hit { pointer-events: none; }
   svg.svg.delete-armed .link-hit { pointer-events: stroke; }
+  /* The examples area stacks two collapsible <details> sections (figures
+     from the book, and the extra examples); each holds a wrapping row of
+     pills in an .example-group. */
   .examples {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .examples details {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+    padding: 7px 10px;
+  }
+  .examples summary {
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 650;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--secondary);
+    user-select: none;
+  }
+  .examples summary:hover { color: var(--ink); }
+  .examples details[open] summary { margin-bottom: 8px; }
+  .example-group {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
@@ -375,16 +400,25 @@ const pre = side
   .attr('class', 'pre-output')
   .style('order', 3)
   .style('display', 'none')
-exampleList.map(x => {
-  // The datum is the content's canonical reprint — the match key for the
-  // active-pill highlight (see updateActiveExamples).
-  examples.append('button')
-    .datum(interpreter.format(x.content))
-    .text(x.label)
-    .on('click', function () {
-      loadExample(x);
-    });
-})
+// The examples split into two collapsible <details> sections: every "figure
+// N" entry (the book's diagrams) and everything else (the extra examples).
+// Each pill's datum is its content's canonical reprint — the match key for
+// the active-pill highlight (updateActiveExamples selects every button under
+// `.examples`, so the nesting is transparent to it).
+const addExampleSection = (title: string, items: typeof exampleList, open: boolean) => {
+  const details = examples.append('details')
+  if (open) details.attr('open', '')
+  details.append('summary').text(title)
+  const group = details.append('div').attr('class', 'example-group')
+  items.forEach(x => {
+    group.append('button')
+      .datum(interpreter.format(x.content))
+      .text(x.label)
+      .on('click', () => loadExample(x))
+  })
+}
+addExampleSection('figures from the book', exampleList.filter(x => x.label.startsWith('figure')), true)
+addExampleSection('examples', exampleList.filter(x => !x.label.startsWith('figure')), true)
 
 
 const svgWidth = 700
