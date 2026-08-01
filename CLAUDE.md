@@ -22,8 +22,10 @@ Toolchain is pinned via a Nix flake (`flake.nix`): `purescript`, `spago`, `nodej
 and `esbuild`. Nearly every command is meant to run inside `nix develop`, which the
 `Makefile` wraps. Entering the shell runs `npm install` automatically (shellHook).
 
-Note: `package.json` mentions `parcel` and the ambient `ui/declarations.d.ts` comment
-references Parcel, but the actual bundler in use is **esbuild** (via `make dev`).
+The bundler is **esbuild** (`make dev` to serve, `make dist` to build the static
+site), pulled from the flake. `package.json` carries only the runtime/dev deps the
+UI actually uses — `d3` plus `@types/d3` and `typescript` for the `tsc` typecheck;
+the old Parcel toolchain and its `events`/`process` polyfills have been removed.
 
 Careful: `make dev`'s esbuild flags (`--outdir=./ui` + `--servedir`) are safe only
 because serve mode builds in memory and writes nothing. Never run the same command
