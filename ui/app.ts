@@ -108,6 +108,51 @@ const css = `
   }
   .zoom button:hover { color: var(--ink); border-color: var(--faint); }
   .zoom button:active { background: var(--paper); }
+  /* The build palette overlays the diagram's top-left corner (the zoom
+     cluster's mirror): one picker per node kind and per link kind. An armed
+     picker turns canvas clicks into placements — each lands as an appended
+     DSL statement through the editor's own input dispatch, keeping the text
+     the one source of truth — and the hint card narrates the link tools'
+     two-click source→target gesture. */
+  .palette {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+    /* The column's layout box is wider than its visible marks (the hint card
+       stretches it): only the buttons take clicks, so the canvas underneath
+       stays a placement surface right up to the visible pixels. */
+    pointer-events: none;
+  }
+  .palette button {
+    pointer-events: auto;
+    width: 32px;
+    height: 28px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .palette button:hover { border-color: var(--faint); }
+  .palette button.active { border-color: var(--ink); background: var(--paper); }
+  .palette .sep { width: 32px; height: 1px; margin: 2px 0; background: var(--line); }
+  .palette-hint {
+    max-width: 150px;
+    padding: 4px 8px;
+    font-size: 11px;
+    line-height: 1.35;
+    color: var(--secondary);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+  }
   svg.chart { width: 100%; aspect-ratio: 700 / 260; }
   svg.chart:focus-visible {
     outline: 2px solid var(--faint);
@@ -159,7 +204,24 @@ const css = `
      two classes to one). */
   svg.svg { cursor: grab; }
   svg.svg circle, svg.svg rect, svg.svg image { cursor: move; }
+  /* A node's name label reads as editable (click to rename); before the
+     panning/placing rules so those still win when active. */
+  svg.svg text.node-label { cursor: text; }
   svg.svg.panning, svg.svg.panning * { cursor: grabbing; }
+  /* An armed palette picker turns the whole canvas into a placement surface
+     (after the panning rule, so the crosshair wins while a tool is armed). */
+  svg.svg.placing, svg.svg.placing * { cursor: crosshair; }
+  /* A node in the select tool's multi-selection wears the glow filter (a
+     zero-offset colored halo — see the sel-glow def). */
+  svg.svg g.selected { filter: url(#sel-glow); }
+  /* A node picked into a loop tool's in-progress chain wears a distinct
+     (violet) glow, so building a loop reads apart from a selection. */
+  svg.svg g.loop-pick { filter: url(#loop-glow); }
+  /* The link-delete hit twins are inert until the delete tool arms, then
+     their fat stroke becomes clickable (nodes, drawn above them, still win a
+     shared click). */
+  svg.svg .link-hit { pointer-events: none; }
+  svg.svg.delete-armed .link-hit { pointer-events: stroke; }
   .examples {
     display: flex;
     flex-wrap: wrap;
@@ -257,6 +319,24 @@ const css = `
     white-space: pre-wrap;
     word-wrap: break-word;
   }
+  /* The inline rename box: a small fixed-position input floated over a node's
+     name label (see startRename), styled like the editor chrome. */
+  .rename-input {
+    position: fixed;
+    z-index: 1000;
+    height: 22px;
+    padding: 1px 6px;
+    font-family: var(--sans);
+    font-size: 12px;
+    text-align: center;
+    color: var(--ink);
+    background: var(--panel);
+    border: 1.5px solid var(--secondary);
+    border-radius: 5px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+    outline: none;
+  }
+  .rename-input.invalid { border-color: var(--error); }
   /* Narrow windows: back to one ordinary scrolling document column. */
   @media (max-width: 760px) {
     body { height: auto; min-height: 100vh; overflow: visible; }
@@ -355,6 +435,154 @@ zoomButtons.append('button')
   .attr('title', 'zoom out').attr('aria-label', 'zoom out')
   .text('−')
   .on('click', () => setZoom(userZoom / zoomStep));
+
+// The build palette overlaying the svg's top-left corner: one picker per
+// node kind (dot, stock, faucet — placed as a minimal cloud-to-cloud flow,
+// since a faucet can't stand alone — and cloud) and per link kind (info
+// arrow, flow pipe). A placement is really a text edit: each appends one
+// DSL statement through the editor's own input dispatch (see
+// appendStatement), so compile, diagram recycle, accents, highlight, and
+// the chart all follow, and the placed node pins at the drop point exactly
+// like a hand drag (a later click releases it). Link tools run a two-click
+// source→target pick (see pickLinkEnd); Escape or re-clicking the armed
+// picker disarms.
+type ToolName = 'dot' | 'stock' | 'faucet' | 'cloud' | 'arrow' | 'flow'
+  | 'reinforcing' | 'balancing' | 'select' | 'delete';
+// A link tool's picked source: a named node, or (flow tool only) a canvas
+// point standing for a new cloud.
+type CanvasEnd = { x: number; y: number };
+let armedTool: ToolName | null = null;
+let linkSource: Node | CanvasEnd | null = null;
+const isNodeEnd = (v: Node | CanvasEnd): v is Node => 'id' in v;
+// The ordered node ids a loop tool (reinforcing/balancing) has picked so
+// far, drawn with the loop-pick glow; committed as `R(a -> b -> …)` /
+// `B(...)`. Reset on arm/disarm; update() prunes vanished ids.
+let loopChain: string[] = [];
+// The multi-selection built by the select tool: node ids, drawn with a glow
+// (see renderSelection). Persists across edits — update() prunes ids that
+// vanish — and across arming other tools, so you can select, then arm delete
+// and remove the whole set at once. Cleared by a canvas-click while
+// selecting, by a delete, and by an example load.
+const selected = new Set<string>();
+const palette = diagram.append('div').attr('class', 'palette');
+const toolButton = (tool: ToolName, title: string) => palette
+  .append('button')
+  .datum(tool)
+  .attr('title', title)
+  .on('click', () => armTool(tool))
+  .append<SVGSVGElement>('svg')
+  .attr('width', 22).attr('height', 18)
+  .attr('viewBox', '0 0 22 18');
+// Each icon is a miniature of the diagram's own mark, so a picker reads as
+// what it places.
+toolButton('dot', 'place a dot (auxiliary variable)')
+  .append('circle')
+  .attr('cx', 11).attr('cy', 9).attr('r', 4)
+  .attr('fill', '#fff').attr('stroke', '#000').attr('stroke-width', 1.5);
+toolButton('stock', 'place a stock')
+  .append('rect')
+  .attr('x', 3.5).attr('y', 4.5).attr('width', 15).attr('height', 9)
+  .attr('fill', '#fff').attr('stroke', '#000').attr('stroke-width', 1.5);
+toolButton('faucet', 'place a faucet (a tap fed from a source cloud)')
+  .append('image')
+  .attr('href', faucetSvg)
+  .attr('x', 3).attr('y', 1).attr('width', 16).attr('height', 16);
+toolButton('cloud', 'place a cloud (a source or sink beyond the model)')
+  .append('image')
+  .attr('href', cloudSvg)
+  .attr('x', 2).attr('y', 0).attr('width', 18).attr('height', 18);
+palette.append('div').attr('class', 'sep');
+toolButton('arrow', 'draw an info arrow: pick the source node, then the target')
+  .call(icon => icon.append('path')
+    .attr('d', 'M3,14 Q10,12.5 15.5,7.5')
+    .attr('fill', 'none').attr('stroke', '#000').attr('stroke-width', 1.5))
+  .call(icon => icon.append('path')
+    .attr('d', 'M18.6,5 L16.9,9.2 L14.1,5.8 Z')
+    .attr('fill', '#000'));
+toolButton('flow', 'draw a flow pipe: pick stocks or faucets, or empty canvas for a cloud')
+  .call(icon => icon.append('path')
+    .attr('d', 'M2,9 L13,9')
+    .attr('stroke', '#999').attr('stroke-width', 5))
+  .call(icon => icon.append('path')
+    .attr('d', 'M13,4.5 L20.5,9 L13,13.5 Z')
+    .attr('fill', '#999'));
+// The loop tools mark a feedback loop: click its nodes in order, then close
+// it. Each writes an `R(...)`/`B(...)` annotation — a circular-arrow icon
+// carrying the loop's letter, mirroring the diagram's floating R/B glyph.
+const loopIcon = (letter: string) => (icon: d3.Selection<SVGSVGElement, ToolName, HTMLElement, any>) => {
+  icon.append('path')
+    .attr('d', 'M15.6,4.6 A6,6 0 1 0 17,9')
+    .attr('fill', 'none').attr('stroke', '#444').attr('stroke-width', 1.4);
+  icon.append('path')
+    .attr('d', 'M13.2,4 L16.4,4.6 L15,7.5 Z')
+    .attr('fill', '#444');
+  icon.append('text')
+    .attr('x', 10.5).attr('y', 9.4).attr('text-anchor', 'middle').attr('dy', '0.35em')
+    .attr('font-size', 8).attr('font-weight', 700).attr('font-family', 'sans-serif')
+    .attr('fill', '#444').text(letter);
+};
+toolButton('reinforcing', 'mark a reinforcing loop: click its nodes in order, then close it')
+  .call(loopIcon('R'));
+toolButton('balancing', 'mark a balancing loop: click its nodes in order, then close it')
+  .call(loopIcon('B'));
+palette.append('div').attr('class', 'sep');
+// The edit tools act on existing nodes rather than adding one. Select builds
+// a multi-selection (a dashed marquee icon); delete removes nodes and the
+// statements that name them (a trash-can icon).
+toolButton('select', 'select nodes: click to toggle, click canvas to clear')
+  .append('rect')
+  .attr('x', 3).attr('y', 4).attr('width', 16).attr('height', 10)
+  .attr('rx', 1)
+  .attr('fill', 'none').attr('stroke', '#000').attr('stroke-width', 1.3)
+  .attr('stroke-dasharray', '2.5 2');
+toolButton('delete', 'delete a node or a link (and the statement behind it), or a selection')
+  .call(icon => icon.append('path')
+    .attr('d', 'M5,5 H17')
+    .attr('stroke', '#b00020').attr('stroke-width', 1.4).attr('stroke-linecap', 'round'))
+  .call(icon => icon.append('path')
+    .attr('d', 'M9,5 V3.6 H13 V5')
+    .attr('fill', 'none').attr('stroke', '#b00020').attr('stroke-width', 1.4))
+  .call(icon => icon.append('path')
+    .attr('d', 'M6.6,5 L7.4,16 H14.6 L15.4,5 Z')
+    .attr('fill', 'none').attr('stroke', '#b00020').attr('stroke-width', 1.4).attr('stroke-linejoin', 'round'))
+  .call(icon => icon.append('path')
+    .attr('d', 'M9.2,7.5 V13.5 M11,7.5 V13.5 M12.8,7.5 V13.5')
+    .attr('stroke', '#b00020').attr('stroke-width', 1).attr('stroke-linecap', 'round'));
+const paletteHint = palette.append('div')
+  .attr('class', 'palette-hint')
+  .style('display', 'none');
+
+// Canvas clicks place the armed tool. A click on a link-hit twin (only
+// hittable while the delete tool is armed) deletes that link — handled here
+// rather than on the path itself, because a per-path click listener gets
+// eaten by the canvas pan drag, while this bubble-phase svg handler fires
+// reliably with the path as its target. Otherwise, only a background click
+// (target is the svg itself) acts — a click on a shape has that shape as its
+// target and routes through the node gestures. d3.pointer maps through the
+// viewBox CTM, so the drop lands under the cursor at any zoom/pan.
+svg.on('click', (event: MouseEvent) => {
+  if (armedTool == null) return;
+  const target = event.target as Element;
+  if (armedTool === 'delete' && target instanceof SVGPathElement && target.classList.contains('link-hit')) {
+    const d = d3.select<SVGPathElement, Link>(target).datum();
+    if (d) deleteLink(d);
+    return;
+  }
+  if (target !== svg.node()) return;
+  const [x, y] = d3.pointer(event, svg.node());
+  placeAt(x ?? 0, y ?? 0);
+});
+// Escape abandons the armed tool (and any half-picked link source or loop
+// chain); Enter closes an in-progress loop. Both are ignored while typing in
+// the editor, so editing text never trips them.
+window.addEventListener('keydown', (event: KeyboardEvent) => {
+  if (event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLInputElement) return;
+  if (event.key === 'Escape' && armedTool != null) disarmTool();
+  else if (event.key === 'Enter' && (armedTool === 'reinforcing' || armedTool === 'balancing')) {
+    event.preventDefault();
+    commitLoop();
+  }
+});
 // The behavior-over-time panel, at the bottom of the left-hand column: its
 // order 9 sorts after the examples' and editor's order 2; the t= horizon
 // field footers it at order 10.
@@ -582,9 +810,33 @@ defs.append("marker")
 // There is deliberately no tail marker on info arcs: every arrow tail meets
 // a drawn node whose own glyph is the Meadows open circle (a dot's circle, a
 // port's) — a marker would just double it.
+// The selection glow: a zero-offset colored drop-shadow the select tool
+// paints around a chosen node's whole group (see the .selected CSS rule and
+// renderSelection). The wide filter region keeps the halo from clipping.
+const glowFilter = (id: string, color: string) => defs.append("filter")
+  .attr("id", id)
+  .attr("x", "-60%").attr("y", "-60%")
+  .attr("width", "220%").attr("height", "220%")
+  .append("feDropShadow")
+  .attr("dx", 0).attr("dy", 0)
+  .attr("stdDeviation", 3)
+  .attr("flood-color", color)
+  .attr("flood-opacity", 1);
+glowFilter("sel-glow", "#2f6fed");   // select tool: blue
+glowFilter("loop-glow", "#7c3aed");  // loop tools: violet
 
 // Flow pipes render BELOW the nodes (a faucet must sit on top of its pipe).
 let flowLink = svg.append("g")
+  .attr("fill", "none")
+  .selectAll<SVGPathElement, Link>("path");
+// A transparent wide-stroke twin of every link (flow and info), for the
+// delete tool to click: thin info arcs are near-impossible to hit on their
+// 1.5px stroke. It sits just above the flow pipes but BELOW the node layers,
+// so a node click still wins over a link that passes near it. Inert
+// (pointer-events none) until the delete tool arms — see the .delete-armed
+// CSS rule — so it never steals pan or other-tool clicks. Its `d` is the
+// same path as the visible link (set in ticked()).
+let linkHit = svg.append("g")
   .attr("fill", "none")
   .selectAll<SVGPathElement, Link>("path");
 
@@ -757,6 +1009,14 @@ const simulation = d3.forceSimulation<Node, Link>(systemNodes)
   .force("y", d3.forceY<Node>(d => d.gy ?? svgHeight / 2).strength(d => d.type === "stock" ? 1.0 : d.inFlow ? 0.9 : 0.01))
   .on("tick", ticked);
 
+// The integer the compiler minted into an id ("dot#3" -> 3): update()'s slot
+// ordering and accent assignment order by it, and the palette matches fresh
+// clouds to their canvas clicks through it (mint order is statement order).
+const parserId = (id: string): number => {
+  const n = parseInt(id.slice(id.indexOf("#") + 1), 10);
+  return isNaN(n) ? 0 : n;
+};
+
 update(system);
 
 function update(system: System) {
@@ -808,6 +1068,21 @@ function update(system: System) {
     .data(links.filter(l => l.type !== "flow"))
     .join("path")
     .attr("fill", "none");
+  // The delete-hit twins cover every link with a wide transparent stroke — a
+  // fat click target, since a 1.5px info arc is near-impossible to hit. The
+  // click itself is handled by the svg's own click handler (which fires
+  // reliably on bubble, where a per-path click listener gets eaten by the
+  // canvas pan drag): it reads the clicked path's datum. Gated to the delete
+  // tool by the .delete-armed pointer-events rule, so these are inert (and
+  // never steal pan/other-tool clicks) otherwise.
+  linkHit = linkHit
+    .data(links)
+    .join("path")
+    .attr("class", "link-hit")
+    .attr("fill", "none")
+    .attr("stroke", "transparent")
+    .attr("stroke-width", 16)
+    .attr("stroke-linecap", "round");
   nodeDot = nodeDot
     .data(nodes.filter(x => x.type === 'dot'), d => d.id)
     .join(enter => {
@@ -973,10 +1248,6 @@ function update(system: System) {
   // pipe and nothing overlaps: each slot is wide enough for the node's icon,
   // label and collision radius; main rows are centred, branch rows hang off
   // their parent stock, and the auto-fit viewBox zooms to fit.
-  const parserId = (id: string) => {
-    const n = parseInt(id.slice(id.indexOf("#") + 1), 10);
-    return isNaN(n) ? 0 : n;
-  };
   const slotHalf = (d: Node) => {
     const icon = d.type === "stock" ? stockWidth / 2 : d.type === "cloud" ? cloudWidth / 2 : d.type === "dot" ? dotRadius : faucetWidth / 2;
     const collide = d.type === "stock" ? 62 : d.type === "cloud" ? 30 : d.type === "dot" ? 26 : 24;
@@ -1258,6 +1529,21 @@ function update(system: System) {
   // diagram update.
   lastChart = { system, colorOf, plottable: numeric && stockIds.length > 0 };
   refreshChart();
+
+  // Carry the select tool's highlight and any in-progress loop chain across
+  // this rebuild: drop ids that no longer exist (a delete, or a name edited
+  // away), then repaint the glows on the recycled groups the joins rebound.
+  for (const id of [...selected]) if (!nodeById.has(id)) selected.delete(id);
+  loopChain = loopChain.filter(id => nodeById.has(id));
+  renderSelection();
+  renderLoopChain();
+
+  // Path everything synchronously now. `linkForce.links()` above already
+  // resolved each link's endpoints to seeded node objects, so ticked() can
+  // draw a complete frame immediately — the animation ticks then take over.
+  // Without this the delete-hit twins can sit with an empty `d` until the
+  // first tick lands, leaving links briefly unclickable right after a load.
+  ticked();
 }
 
 // How round the info arcs are: arc radius = chord length × this factor, so it
@@ -1505,6 +1791,7 @@ function ticked() {
   };
   flowLink.attr("d", pathFor);
   infoLink.attr("d", pathFor);
+  linkHit.attr("d", pathFor);
 
   easeView();
 }
@@ -1583,6 +1870,9 @@ function ensureViewEase() {
 // viewBox itself, keeping easeView() the sole viewBox owner.
 function canvasPan() {
   return d3.drag<SVGSVGElement, unknown>()
+    // A slightly jittery click still counts as a click (fires placement)
+    // rather than being swallowed as a 2px pan.
+    .clickDistance(4)
     .on("start", () => { svg.classed("panning", true); })
     .on("drag", (event) => {
       const ctm = svg.node()?.getScreenCTM();
@@ -1594,11 +1884,474 @@ function canvasPan() {
     .on("end", () => { svg.classed("panning", false); });
 }
 
+// Arm (or toggle off) a palette picker. Arming resets any half-done link
+// pick; the hint card narrates the next click and the canvas cursor flips
+// to the placement crosshair.
+const armHint: Record<ToolName, string> = {
+  dot: 'click the canvas to place a dot',
+  stock: 'click the canvas to place a stock',
+  faucet: 'click the canvas to place a flow',
+  cloud: 'click the canvas to place a cloud',
+  arrow: 'pick the arrow source node',
+  flow: 'pick the flow source: a stock, a faucet, or empty canvas',
+  reinforcing: 'reinforcing loop: click its nodes in order',
+  balancing: 'balancing loop: click its nodes in order',
+  select: 'click nodes to select; click canvas to clear',
+  delete: 'click a node or a link to delete it (and the statement behind it)',
+};
+function armTool(tool: ToolName): void {
+  if (armedTool === tool) return disarmTool();
+  armedTool = tool;
+  linkSource = null;
+  loopChain = [];
+  renderLoopChain();
+  palette.selectAll<HTMLButtonElement, ToolName>('button').classed('active', d => d === tool);
+  svg.classed('placing', true);
+  // Only the delete tool makes links clickable (see the .delete-armed CSS).
+  svg.classed('delete-armed', tool === 'delete');
+  // Arming delete with a selection already standing announces the batch it
+  // will remove; select announces its running count.
+  if (tool === 'select') setHint(selectHint());
+  else if (tool === 'delete' && selected.size) setHint(`click a selected node to delete all ${selected.size}, or any node to delete it`);
+  else setHint(armHint[tool]);
+}
+function disarmTool(): void {
+  armedTool = null;
+  linkSource = null;
+  loopChain = [];
+  renderLoopChain();
+  palette.selectAll('button').classed('active', false);
+  svg.classed('placing', false);
+  svg.classed('delete-armed', false);
+  setHint(null);
+}
+function setHint(text: string | null): void {
+  if (text == null) paletteHint.style('display', 'none').text('');
+  else paletteHint.style('display', null).text(text);
+}
+
+// Mint a fresh node name for a placement — the first free "<prefix>N", the
+// digit glued to the word ("stock 1" would lex as a name then a number).
+// Checked against the compiled graph's labels AND the raw editor text, so a
+// draft that doesn't compile yet still can't collide-and-coalesce.
+function mintName(prefix: string): string {
+  const labels = new Set(simulation.nodes().map(n => n.label));
+  const text = textInput.node()?.value ?? '';
+  for (let i = 1; ; i++) {
+    const name = `${prefix}${i}`;
+    if (!labels.has(name) && !new RegExp(`(^|[^a-z0-9])${name}([^a-z0-9]|$)`, 'i').test(text)) {
+      return name;
+    }
+  }
+}
+
+// A placement is a text edit: append the statement and dispatch the editor's
+// own input event, so compile, diagram recycle, accents, highlight, and the
+// chart all refresh through the one path typing uses.
+function appendStatement(stmt: string): void {
+  const ta = textInput.node();
+  if (!ta) return;
+  const sep = ta.value === '' || ta.value.endsWith('\n') ? '' : '\n';
+  textInput.property('value', ta.value + sep + stmt + '\n');
+  ta.dispatchEvent(new Event('input'));
+}
+
+// Pin a just-placed node at its drop point — the same fx/fy pin a hand drag
+// writes, so clicking the node later releases it. The lookup runs after the
+// dispatch compiled and update() rebuilt the simulation; if the placement
+// landed in a draft that doesn't compile, there is nothing to pin yet and
+// the statement simply waits in the text.
+function pinPlaced(n: Node | undefined, x: number, y: number): void {
+  if (!n) return;
+  n.x = x;
+  n.y = y;
+  n.fx = x;
+  n.fy = y;
+}
+const nodeByLabel = (label: string): Node | undefined =>
+  simulation.nodes().find(n => n.label === label);
+
+// An armed canvas click. Node tools append their one-statement spelling and
+// pin the new node at the drop point; the flow tool reads a canvas click as
+// a cloud endpoint (spelled `|`); the arrow tool has no canvas reading.
+function placeAt(x: number, y: number): void {
+  switch (armedTool) {
+    case 'dot': {
+      const name = mintName('dot');
+      appendStatement(name);
+      pinPlaced(nodeByLabel(name), x, y);
+      return disarmTool();
+    }
+    case 'stock': {
+      const name = mintName('stock');
+      appendStatement(`[${name}]`);
+      pinPlaced(nodeByLabel(name), x, y);
+      return disarmTool();
+    }
+    case 'faucet': {
+      // A faucet can't stand alone (`=>f` needs a source term), so it comes
+      // with the minimal single SOURCE cloud: `| =>f`, a tap fed from a
+      // cloud with an open output. One cloud, one statement — wire the
+      // output to a stock (or a second cloud) with the flow tool. Pin the
+      // tap at the drop point and its source cloud to the left, so the pipe
+      // reads left→right.
+      const name = mintName('flow');
+      const before = new Set(simulation.nodes().filter(n => n.type === 'cloud').map(n => n.id));
+      appendStatement(`| =>${name}`);
+      pinPlaced(nodeByLabel(name), x, y);
+      const fresh = simulation.nodes().find(n => n.type === 'cloud' && !before.has(n.id));
+      if (fresh) pinPlaced(fresh, x - stockWidth, y); // source cloud, left
+      return disarmTool();
+    }
+    case 'cloud': {
+      // Clouds are anonymous — find the placed one by diffing ids.
+      const before = new Set(simulation.nodes().filter(n => n.type === 'cloud').map(n => n.id));
+      appendStatement('|');
+      pinPlaced(simulation.nodes().find(n => n.type === 'cloud' && !before.has(n.id)), x, y);
+      return disarmTool();
+    }
+    case 'flow':
+      if (linkSource == null) {
+        linkSource = { x, y };
+        setHint('pick the flow target: a stock, a faucet, or empty canvas');
+      } else {
+        completeFlow(linkSource, { x, y });
+      }
+      return;
+    case 'arrow':
+      setHint('arrows link named nodes — pick a dot, a stock, or a faucet');
+      return;
+    case 'select':
+      // Empty-canvas click clears the running selection (the marquee's
+      // "click away to deselect").
+      if (selected.size) {
+        selected.clear();
+        renderSelection();
+      }
+      setHint(selectHint());
+      return;
+    case 'delete':
+      setHint(selected.size
+        ? `click a selected node to delete all ${selected.size}, or any node to delete it`
+        : armHint.delete);
+      return;
+    case 'reinforcing':
+    case 'balancing':
+      // Empty-canvas click closes the loop (an alternative to clicking back
+      // to a picked node, or pressing Enter).
+      commitLoop();
+      return;
+  }
+}
+
+// A node click while a link tool is armed picks the link's next endpoint
+// (drag()'s no-move path routes here instead of releasing the pin).
+function pickLinkEnd(d: Node): void {
+  if (armedTool === 'arrow') {
+    if (d.type !== 'dot' && d.type !== 'stock' && d.type !== 'faucet') {
+      setHint('arrows link named nodes — pick a dot, a stock, or a faucet');
+    } else if (linkSource == null) {
+      linkSource = d;
+      setHint('pick the arrow target node');
+    } else if (isNodeEnd(linkSource) && linkSource.id === d.id) {
+      setHint('that is the source — pick a different node');
+    } else if (isNodeEnd(linkSource)) {
+      // Bare names: the registry resolves a mention to the one node the name
+      // already is, whatever its kind (stocks included — figure 8's
+      // `stock2 -> outflow`).
+      appendStatement(`${linkSource.label} -> ${d.label}`);
+      disarmTool();
+    }
+  } else if (armedTool === 'flow') {
+    if (d.type !== 'stock' && d.type !== 'faucet') {
+      setHint('flows connect stocks and faucets — click empty canvas for a cloud');
+    } else if (linkSource == null) {
+      linkSource = d;
+      setHint('pick the flow target: a stock, a faucet, or empty canvas');
+    } else if (isNodeEnd(linkSource) && linkSource.id === d.id) {
+      setHint('that is the source — pick a different node');
+    } else {
+      completeFlow(linkSource, d);
+    }
+  }
+}
+
+// Write the flow statement for a picked source→target pair, each end a
+// stock, a faucet, or a canvas point (a new cloud, spelled `|`). Between
+// stocks/clouds a fresh faucet is minted (`[a] =>flow1 [b]` — a flow IS a
+// faucet); an existing faucet endpoint is re-mentioned instead — `[a] =>f`
+// gives f another source, `[b] <=f` another target (the registry makes the
+// name the same tap; both source-only and target-only mentions parse).
+// Faucet-to-faucet has no pipe spelling — one end must hold the vessel.
+// Fresh clouds pin at their clicked canvas points: their ids arrive in
+// parser order, which is statement order, so the two lists zip.
+function completeFlow(src: Node | CanvasEnd, tgt: Node | CanvasEnd): void {
+  const srcFaucet = isNodeEnd(src) && src.type === 'faucet';
+  const tgtFaucet = isNodeEnd(tgt) && tgt.type === 'faucet';
+  if (srcFaucet && tgtFaucet) {
+    setHint('a pipe cannot join two faucets — one end must be a stock or canvas');
+    return;
+  }
+  const spell = (e: Node | CanvasEnd): string => (isNodeEnd(e) ? `[${e.label}]` : '|');
+  const canvasPins: CanvasEnd[] = [];
+  const pushCanvas = (e: Node | CanvasEnd) => { if (!isNodeEnd(e)) canvasPins.push(e); };
+  let stmt: string;
+  if (srcFaucet) {
+    pushCanvas(tgt);
+    stmt = `${spell(tgt)} <=${(src as Node).label}`;
+  } else if (tgtFaucet) {
+    pushCanvas(src);
+    stmt = `${spell(src)} =>${(tgt as Node).label}`;
+  } else {
+    pushCanvas(src);
+    pushCanvas(tgt);
+    stmt = `${spell(src)} =>${mintName('flow')} ${spell(tgt)}`;
+  }
+  const before = new Set(simulation.nodes().filter(n => n.type === 'cloud').map(n => n.id));
+  appendStatement(stmt);
+  simulation.nodes()
+    .filter(n => n.type === 'cloud' && !before.has(n.id))
+    .sort((a, b) => parserId(a.id) - parserId(b.id))
+    .forEach((c, i) => {
+      const p = canvasPins[i];
+      if (p) pinPlaced(c, p.x, p.y);
+    });
+  disarmTool();
+}
+
+// The select tool's running-count hint.
+const selectHint = (): string =>
+  selected.size
+    ? `${selected.size} selected — click more, click canvas to clear, then arm delete`
+    : 'click nodes to select; click canvas to clear';
+
+// A node click while the select tool is armed toggles it in the selection
+// (drag()'s no-move path routes here). Ports are structural — not selectable.
+function toggleSelect(d: Node): void {
+  if (d.type === 'port') {
+    setHint('ports are drawn automatically — select a dot, stock, faucet, or cloud');
+    return;
+  }
+  if (selected.has(d.id)) selected.delete(d.id);
+  else selected.add(d.id);
+  renderSelection();
+  setHint(selectHint());
+}
+
+// Paint the current selection: the glow filter rides every node group whose
+// id is in the set. Called on each toggle and at the end of update() (the
+// joins rebind data, so recycled groups need the class reapplied). Ports
+// carry no selection.
+function renderSelection(): void {
+  for (const sel of [nodeDot, nodeStock, nodeFaucet, nodeCloud]) {
+    sel.classed('selected', (d: Node) => selected.has(d.id));
+  }
+}
+
+// The loop tools (reinforcing/balancing) trace a feedback path: each node
+// click appends to `loopChain`, and clicking a node already in the chain (or
+// empty canvas, or Enter) closes it into an `R(...)`/`B(...)` annotation.
+// Only named nodes carry a loop tag — clouds are anonymous, ports structural.
+function pickLoopNode(d: Node): void {
+  if (d.type !== 'dot' && d.type !== 'stock' && d.type !== 'faucet') {
+    setHint('loops run through named nodes — pick a dot, a stock, or a faucet');
+    return;
+  }
+  // Clicking a node already in the chain closes the loop there (the natural
+  // "click back to the start" gesture), as long as there are ≥2 members.
+  if (loopChain.includes(d.id)) {
+    if (loopChain.length >= 2) commitLoop();
+    else setHint('a loop needs at least two nodes — pick another');
+    return;
+  }
+  loopChain.push(d.id);
+  renderLoopChain();
+  setHint(loopHint());
+}
+
+// The running hint for a loop tool: the chain so far, in the letter of the
+// armed kind, with how to finish.
+function loopHint(): string {
+  const kind = armedTool === 'balancing' ? 'B' : 'R';
+  const names = loopChain.map(id => labelById.get(id) ?? '?');
+  if (names.length === 0) return `${kind} loop: click its nodes in order`;
+  const chain = names.join(' → ');
+  if (names.length < 2) return `${kind}(${chain} → …) — pick the next node`;
+  return `${kind}(${chain}) — click a picked node, canvas, or Enter to close`;
+}
+
+// Paint the in-progress loop chain with the loop-pick glow (distinct from the
+// select tool's). Called on each pick and at the end of update().
+function renderLoopChain(): void {
+  const picked = new Set(loopChain);
+  for (const sel of [nodeDot, nodeStock, nodeFaucet]) {
+    sel.classed('loop-pick', (d: Node) => picked.has(d.id));
+  }
+}
+
+// Close the current loop chain into a statement. Needs ≥2 members; writes
+// `R(a -> b -> c)` / `B(...)` with the members in click order (the info
+// arrows it implies dedup against any already drawn), then disarms.
+function commitLoop(): void {
+  if (loopChain.length < 2) {
+    setHint('a loop needs at least two nodes — keep picking, or Esc to cancel');
+    return;
+  }
+  const kind = armedTool === 'balancing' ? 'B' : 'R';
+  const names = loopChain.map(id => labelById.get(id)).filter((n): n is string => n != null);
+  if (names.length < 2) { disarmTool(); return; }
+  appendStatement(`${kind}(${names.join(' -> ')})`);
+  disarmTool();
+}
+
+// A node click while the delete tool is armed. Clicking a member of the
+// standing selection removes the WHOLE selection; clicking anything else
+// removes just that node. Either way, removal is line-based (see
+// linesNaming) and the tool disarms after — deletion is destructive, so it
+// is one-shot (re-arm, or select-then-delete for a batch).
+function deleteAt(d: Node): void {
+  if (d.type === 'port') {
+    setHint('ports are drawn automatically — delete the stock or the arrow instead');
+    return;
+  }
+  const targets = selected.has(d.id) ? [...selected] : [d.id];
+  deleteNodes(targets);
+  disarmTool();
+}
+
+// Remove a set of nodes from the model by deleting every source LINE that
+// names any of them, then dispatching the editor's own input event (so
+// compile, diagram, accents, highlight, and chart all refresh through the
+// typing path — the text stays the one source of truth). Line-based rather
+// than token-surgical: it can never leave a half-statement that fails to
+// parse. A named node's lines are found by compiling each line alone and
+// matching its label (multi-word-safe, substring-proof — the lexer does the
+// tokenizing); an anonymous cloud maps to the source `|` at its ordinal
+// (cloud ids run in `|`-token order). Ports carry no text and are skipped.
+function deleteNodes(ids: string[]): void {
+  const ta = textInput.node();
+  if (!ta) return;
+  const lines = ta.value.split('\n');
+  const nodes = simulation.nodes();
+  const byId = new Map(nodes.map(n => [n.id, n] as [string, Node]));
+  const cloudIds = nodes.filter(n => n.type === 'cloud').map(n => n.id)
+    .sort((a, b) => parserId(a) - parserId(b));
+
+  const labels = new Set<string>();
+  const cloudRanks: number[] = [];
+  for (const id of ids) {
+    const n = byId.get(id);
+    if (!n || n.type === 'port') continue;
+    if (n.type === 'cloud') {
+      const rank = cloudIds.indexOf(id);
+      if (rank >= 0) cloudRanks.push(rank);
+    } else if (n.label) {
+      labels.add(n.label);
+    }
+  }
+
+  const remove = new Set<number>();
+  // Named nodes: a line names the target when its solo compilation yields a
+  // node with that label. A line of a compiling model always parses alone
+  // (statements are newline-independent); a stray non-compiling line just
+  // matches nothing.
+  if (labels.size) {
+    lines.forEach((line, i) => {
+      if (line.trim() === '') return;
+      try {
+        const r = JSON.parse(interpreter.go(line)) as unknown;
+        if (r && typeof r === 'object' && Array.isArray((r as System).nodes) &&
+            (r as System).nodes.some(nd => labels.has(nd.label))) {
+          remove.add(i);
+        }
+      } catch { /* a line that won't parse names nothing */ }
+    });
+  }
+  // Clouds: the k-th `|` character across the source (top-to-bottom) is the
+  // k-th cloud by ascending id; remove the line it sits on.
+  if (cloudRanks.length) {
+    const lineOfPipe: number[] = [];
+    lines.forEach((line, i) => { for (const ch of line) if (ch === '|') lineOfPipe.push(i); });
+    for (const rank of cloudRanks) {
+      const li = lineOfPipe[rank];
+      if (li != null) remove.add(li);
+    }
+  }
+
+  if (remove.size === 0) {
+    setHint('nothing in the text to delete for that item');
+    return;
+  }
+  selected.clear();
+  textInput.property('value', lines.filter((_, i) => !remove.has(i)).join('\n'));
+  ta.dispatchEvent(new Event('input'));
+}
+
+// A link click while the delete tool is armed (routed from the link-hit
+// twin). Removes every source LINE that draws a link between the same
+// logical endpoints (a stock resolved through its port), same direction and
+// kind (flow vs arrow) — the same line-based, whole-statement removal as
+// nodes. So a flow pipe takes its faucet's whole statement (a flow is a
+// unit; a lone pipe can't be spelled), and an arrow that a formula or loop
+// draws takes that statement (consistent with deleting a node the formula
+// names). Matching by resolved LABELS keeps it robust across the per-line
+// recompile's fresh ids. Then disarms (one-shot, like node delete).
+function deleteLink(l: Link): void {
+  const ta = textInput.node();
+  if (!ta) return;
+  const byId = new Map(simulation.nodes().map(n => [n.id, n] as [string, Node]));
+  // A link's logical endpoint label: an info arrow's stock end is a port,
+  // whose parent stock is the real endpoint.
+  const endLabel = (e: Link["source"]): string | undefined => {
+    const n = typeof e === "object" && e !== null ? e as Node : byId.get(String(e));
+    if (!n) return undefined;
+    return n.type === "port" && n.parent != null ? byId.get(n.parent)?.label : n.label;
+  };
+  const sL = endLabel(l.source), tL = endLabel(l.target), ty = l.type;
+  if (sL == null || tL == null) { setHint("could not resolve that link"); return; }
+
+  const lines = ta.value.split("\n");
+  const remove = new Set<number>();
+  lines.forEach((line, i) => {
+    if (line.trim() === "") return;
+    try {
+      const r = JSON.parse(interpreter.go(line)) as System;
+      if (!r || !Array.isArray(r.nodes) || !Array.isArray(r.links)) return;
+      const m = new Map(r.nodes.map(n => [n.id, n] as [string, Node]));
+      const lg = (id: string): string | undefined => {
+        const n = m.get(id);
+        return n && n.type === "port" && n.parent != null ? m.get(n.parent)?.label : n?.label;
+      };
+      if (r.links.some(k => k.type === ty
+          && lg(k.source as string) === sL && lg(k.target as string) === tL)) {
+        remove.add(i);
+      }
+    } catch { /* a non-parsing line draws nothing */ }
+  });
+
+  if (remove.size === 0) {
+    setHint(ty === "flow"
+      ? "that pipe belongs to a flow — delete its faucet to remove it"
+      : "that arrow is only implied — edit its formula or loop to remove it");
+    return;
+  }
+  selected.clear();
+  textInput.property("value", lines.filter((_, i) => !remove.has(i)).join("\n"));
+  ta.dispatchEvent(new Event("input"));
+  disarmTool();
+}
+
 function loadExample(ex: { content: string; flows?: boolean }) {
   // A button load replaces the whole diagram, so don't recycle the previous
   // example's positions (ids like "stock#2" recur across examples, and nodes
   // migrating across the canvas jam on each other's collision discs) — start
-  // every node fresh at its layout slot. Typing edits still recycle.
+  // every node fresh at its layout slot. Typing edits still recycle. An
+  // armed palette tool (and any half-picked link source, about to go stale)
+  // disarms with the model it belonged to, and the selection (ids about to
+  // be replaced) clears.
+  disarmTool();
+  closeRename();
+  selected.clear();
   simulation.nodes([]);
   // Each button lands on the view its figure shows: the flows toggle resets
   // to the entry's declared flag ("figure 31 & 33" presets it on, everything
@@ -1610,18 +2363,108 @@ function loadExample(ex: { content: string; flows?: boolean }) {
   textInput.node()?.dispatchEvent(new Event('input'));
 }
 
+// The open inline rename editor, if any (only one at a time). `cancel`
+// discards it without renaming — used to tear it down on an example load.
+let renameEditor: { input: HTMLInputElement; cancel: () => void } | null = null;
+function closeRename(): void { renameEditor?.cancel(); }
+
+// Is `name` usable as a node name? It must lex as exactly one identifier —
+// compiling it alone yields a single node with that very label and no links
+// (so brackets, operators, or a bare number are rejected) — and must not be
+// a formula reserved word, which would silently change meaning inside a
+// `: (…)` formula (a reference becoming the time variable, or a call).
+function isValidName(name: string): boolean {
+  if (["t", "pi", "cos", "sin", "min", "max"].includes(name)) return false;
+  try {
+    const r = JSON.parse(interpreter.go(name)) as System;
+    return !!r && Array.isArray(r.nodes) && r.nodes.length === 1
+      && r.nodes[0]?.label === name && (!Array.isArray(r.links) || r.links.length === 0);
+  } catch { return false; }
+}
+
+// Rename every mention of `oldName` to `raw` in the source. Robust against
+// multi-word names and substrings: `nameSpans` (the highlighter's scanner,
+// which mirrors the lexer) tiles the text into spans tagged with their
+// normalized name, so only whole-name identifier runs are replaced —
+// operators, formula reserved words, and unrelated text pass through. Then
+// the edit dispatches through the editor's own input path (compile, diagram,
+// chart, highlight). Renaming leaves the token COUNT unchanged, so parser
+// ids — and thus node ids and positions — survive.
+function renameNode(oldName: string, raw: string): void {
+  const ta = textInput.node();
+  if (!ta) return;
+  const cleaned = raw.trim().replace(/\s+/g, ' ');
+  if (cleaned === '' || cleaned === oldName || !isValidName(cleaned)) return;
+  const renamed = nameSpans(ta.value).map(s => (s.name === oldName ? cleaned : s.text)).join('');
+  textInput.property('value', renamed);
+  ta.dispatchEvent(new Event('input'));
+}
+
+// Open the inline rename box over a node's name label. An HTML <input>
+// floats (position: fixed) at the label's screen rect, pre-filled with the
+// bare name (not the ": value" suffix). Enter commits (keeping the box open
+// with a red flag if the name is invalid); Escape discards; blur commits a
+// valid change or discards. Committing routes through renameNode.
+function startRename(d: Node, labelEl: SVGTextElement): void {
+  closeRename();
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = d.label;
+  input.className = 'rename-input';
+  input.spellcheck = false;
+  const rect = labelEl.getBoundingClientRect();
+  const w = Math.max(rect.width + 20, 72);
+  input.style.left = `${Math.round(rect.left + rect.width / 2 - w / 2)}px`;
+  input.style.top = `${Math.round(rect.top - 3)}px`;
+  input.style.width = `${w}px`;
+
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    input.remove();
+    if (renameEditor?.input === input) renameEditor = null;
+  };
+  // Enter: commit if valid/changed, keep open (flagged) if invalid. blur:
+  // commit a valid change, else just discard (no nagging).
+  const attempt = (keepOpenOnInvalid: boolean) => {
+    if (done) return;
+    const cleaned = input.value.trim().replace(/\s+/g, ' ');
+    if (cleaned === '' || cleaned === d.label) { finish(); return; }
+    if (!isValidName(cleaned)) { if (keepOpenOnInvalid) input.classList.add('invalid'); else finish(); return; }
+    finish();
+    renameNode(d.label, cleaned);
+  };
+  input.addEventListener('keydown', e => {
+    e.stopPropagation(); // don't reach the global Escape/Enter tool handlers
+    if (e.key === 'Enter') { e.preventDefault(); attempt(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); finish(); }
+  });
+  input.addEventListener('input', () => input.classList.remove('invalid'));
+  input.addEventListener('blur', () => attempt(false));
+
+  renameEditor = { input, cancel: finish };
+  document.body.appendChild(input);
+  input.focus();
+  input.select();
+}
+
 // Append a centered text label to a per-node <g>; the text moves with the
 // shape (the group carries the transform). `y` shifts the label off the shape
-// (negative = above); 0 keeps it vertically centered on the node.
+// (negative = above); 0 keeps it vertically centered on the node. The label
+// is `pointer-events auto` and tagged `node-label` so pressing it starts the
+// node's own drag (a bigger grab target than a tiny dot), and a no-move
+// click on it with no tool armed opens the rename editor (see drag()).
 function appendLabel(g: d3.Selection<SVGGElement, Node, SVGGElement, unknown>, y = 0, fontSize = 10) {
   g.append("text")
+    .attr("class", "node-label")
     .attr("text-anchor", "middle")
     .attr("y", y)
     .attr("dy", "0.32em")
     .attr("font-size", fontSize)
     .attr("font-family", "sans-serif")
     .attr("fill", "#000")
-    .attr("pointer-events", "none");
+    .attr("pointer-events", "auto");
 }
 
 // Dragging a port slides it along its stock's inset boundary: the pointer's
@@ -1633,16 +2476,21 @@ function appendLabel(g: d3.Selection<SVGGElement, Node, SVGGElement, unknown>, y
 // node: the hand-set bearing clears and the port returns to its automatic
 // placement.
 function portDrag() {
-  let moved = false;
+  // Same client-pixel click test as drag(): phantom in-svg movement (a tick
+  // easing the viewBox mid-press) must not read as a slide.
+  let dist = 0;
+  let pressAt = { x: 0, y: 0 };
   return d3.drag<any, Node>()
     .on("start", (event) => {
-      moved = false;
+      dist = 0;
+      pressAt = clientPoint(event.sourceEvent);
       if (!event.active) {
         simulation.alphaTarget(0.3).restart();
       }
     })
     .on("drag", (event, d) => {
-      moved = true;
+      const cp = clientPoint(event.sourceEvent);
+      dist = Math.max(dist, Math.hypot(cp.x - pressAt.x, cp.y - pressAt.y));
       const p = d.portParent;
       if (!p) return;
       d.portAngle = Math.atan2(event.y - (p.y ?? 0), event.x - (p.x ?? 0));
@@ -1651,7 +2499,7 @@ function portDrag() {
       if (!event.active) {
         simulation.alphaTarget(0);
       }
-      if (!moved) delete d.portAngle;
+      if (dist <= 3) delete d.portAngle;
     });
 }
 
@@ -1660,11 +2508,34 @@ function portDrag() {
 // A plain click releases the pin — fx/fy unset, the node rejoins the
 // simulation. d3.drag fires start/end for clicks too, so the two gestures
 // are told apart by whether any drag (movement) event landed between them.
+// Screen-truth pointer position of a d3 gesture's source event (touch or
+// mouse), for the click-vs-drag test below. Client pixels, deliberately NOT
+// svg user coordinates: the press itself kicks the simulation, so a tick can
+// ease the viewBox mid-gesture and shift what user coords a stationary
+// pointer maps to — d3's event.dx/dy then report phantom movement (and
+// browsers can slip a zero-distance mousemove inside a click, which d3
+// forwards as a "drag" event even though nothing moved).
+const clientPoint = (e: any): { x: number; y: number } => {
+  const p = e?.changedTouches?.[0] ?? e?.touches?.[0] ?? e;
+  return { x: p?.clientX ?? 0, y: p?.clientY ?? 0 };
+};
+
 function drag() {
-  let moved = false;
+  // Click vs drag is decided by real pointer travel in client pixels (d3's
+  // own clickDistance idea — see clientPoint above), not by whether any
+  // "drag" event fired.
+  let dist = 0;
+  let pressAt = { x: 0, y: 0 };
+  let wasPinned = false;
+  // The element the press landed on — a name label vs the shape — decides a
+  // no-move, no-tool click: rename vs release the pin.
+  let pressEl: EventTarget | null = null;
   return d3.drag<any, Node>()
     .on("start", (event, d) => {
-      moved = false;
+      dist = 0;
+      pressAt = clientPoint(event.sourceEvent);
+      pressEl = event.sourceEvent?.target ?? null;
+      wasPinned = d.fx != null;
       if (!event.active) {
         simulation.alphaTarget(0.3).restart();
       }
@@ -1672,7 +2543,8 @@ function drag() {
       d.fy = d.y;
     })
     .on("drag", (event, d) => {
-      moved = true;
+      const p = clientPoint(event.sourceEvent);
+      dist = Math.max(dist, Math.hypot(p.x - pressAt.x, p.y - pressAt.y));
       d.fx = event.x;
       d.fy = event.y;
     })
@@ -1680,10 +2552,35 @@ function drag() {
       if (!event.active) {
         simulation.alphaTarget(0);
       }
-      // A drag keeps the pin; a click (no movement) removes it. The brief
-      // alphaTarget kick above doubles as the resettle that shows a released
-      // node drifting back to where the forces want it.
-      if (!moved) {
+      // A drag keeps the pin; a click (no meaningful movement) removes it.
+      // The brief alphaTarget kick above doubles as the resettle that shows
+      // a released node drifting back to where the forces want it. While an
+      // edit tool (arrow/flow/loop/select/delete) is armed the click acts on
+      // this node instead — undoing the pin the press just wrote (unless the
+      // node was already hand-pinned), so acting never nails a free node down.
+      if (dist <= 3) {
+        const editTool = armedTool === "arrow" || armedTool === "flow"
+          || armedTool === "reinforcing" || armedTool === "balancing"
+          || armedTool === "select" || armedTool === "delete";
+        if (editTool) {
+          if (!wasPinned) {
+            d.fx = null;
+            d.fy = null;
+          }
+          if (armedTool === "arrow" || armedTool === "flow") pickLinkEnd(d);
+          else if (armedTool === "reinforcing" || armedTool === "balancing") pickLoopNode(d);
+          else if (armedTool === "select") toggleSelect(d);
+          else deleteAt(d);
+          return;
+        }
+        // No tool: a click on the node's NAME label opens the rename editor
+        // (restoring the pre-press pin state first, so renaming never nails a
+        // free node down); a click on its shape releases the pin.
+        if (armedTool == null && pressEl instanceof SVGTextElement) {
+          if (!wasPinned) { d.fx = null; d.fy = null; }
+          startRename(d, pressEl);
+          return;
+        }
         d.fx = null;
         d.fy = null;
       }

@@ -396,6 +396,24 @@ simulation is idle). Almost everything lives in **`app.ts`**:
   releases the pin (and clicking a port clears its hand-set `portAngle`). The
   two gestures share d3-drag start/end and are told apart by whether any drag
   movement landed between them.
+- A node's name label is **editable in place**: the label `<text>` is
+  `pointer-events auto` and tagged `node-label`, so pressing it starts the
+  node's own drag (a bigger grab target than a tiny dot), and a no-move click
+  on it with NO tool armed opens an inline rename box (`startRename`) — an
+  HTML `<input>` floated over the label, seeded with the bare name. Enter
+  commits (keeping the box open with a red flag if the name is invalid),
+  Escape discards, blur commits a valid change else discards. `renameNode`
+  rewrites the source by running the highlighter's `nameSpans` scanner (which
+  mirrors the lexer) and replacing every identifier run whose normalized name
+  matches — multi-word- and substring-safe, leaving operators, formula
+  reserved words, and unrelated text untouched — then dispatches through the
+  editor's input path; the token count is unchanged, so parser ids (hence
+  node ids and positions) survive. `isValidName` gates the new name: it must
+  compile alone to exactly one node with that label and no links (rejecting
+  brackets, operators, a bare number) and must not be a formula reserved word
+  (`t`/`pi`/`cos`/`sin`/`min`/`max`, which would change meaning inside a
+  `: (…)`). With a tool armed the label click routes to the tool instead
+  (delete the node, pick a loop member, …), never renaming.
 - Dragging empty svg space (not a shape) pans the diagram: the whole canvas
   follows the cursor. The pan is an offset (`panX`/`panY`, viewBox user units)
   on `easeView()`'s auto-fit target center, so it composes with the button
@@ -408,6 +426,78 @@ simulation is idle). Almost everything lives in **`app.ts`**:
   `easeView()` the sole viewBox owner. The cursor distinguishes the two
   gestures: the canvas is `grab` (`grabbing` mid-pan, via a `panning` class),
   a shape is `move`.
+- A build **palette** overlays the svg's top-left corner (the zoom cluster's
+  mirror): one picker per node kind — dot, stock, faucet (placed as the
+  minimal single-source-cloud flow `| =>flowN`, a tap fed from a cloud with
+  an open output, since a bare `=>f` doesn't parse; wire the output to a
+  stock with the flow tool), cloud — and per link kind (info arrow, flow
+  pipe), with a hint card narrating the armed tool's next click. Escape,
+  re-clicking the picker, or an example load disarms; arming flips the
+  canvas cursor to a crosshair (`placing` class). Every placement is a TEXT
+  edit: the tool appends its DSL statement (names minted
+  `dot1`/`stock1`/`flow1` — digit
+  glued, since `stock 1` would lex as name-then-number; checked against both
+  graph labels and the raw draft) through the editor's own input-dispatch
+  path, then pins the new node at the drop point with the drag gesture's
+  own `fx`/`fy` pin (so a later click releases it; fresh anonymous clouds
+  are matched to their canvas clicks in parser-id = statement order). Link
+  tools run a two-click source→target pick riding `drag()`'s no-move click
+  path — picking never unpins (the press-pin is undone unless the node was
+  already hand-pinned) — writing bare-name arrow statements (`a -> b`; the
+  registry's identity rule resolves any named kind, stocks included) and
+  flow spellings that mint a fresh faucet between stocks/canvas clouds
+  (`[a] =>flow1 [b]`, `|` for a canvas end) or re-mention an existing
+  faucet endpoint (`[a] =>f` adds a source, `[b] <=f` a target;
+  faucet↔faucet is rejected — hints double as the error surface). The
+  canvas click handler fires only when `event.target` is the svg itself, so
+  shape clicks stay with their own gestures; `canvasPan` carries
+  `clickDistance(4)` so a jittery click still places.
+  Two **loop tools** beside the link tools (circular-arrow icons carrying the
+  diagram's R/B letter) mark a feedback loop: each click appends a named node
+  to an ordered `loopChain` (only dots/stocks/faucets — clouds/ports are
+  rejected), drawn with a distinct violet glow (`loop-glow`, `.loop-pick`),
+  and the hint shows the chain building. Closing it — clicking a
+  already-picked node, empty canvas, or Enter — writes an
+  `R(a -> b -> c)` / `B(...)` annotation in click order (needs ≥2 nodes; the
+  implied info arrows dedup against any already drawn, so tracing an existing
+  formula/flow path just adds the loop tag). The chain resolves ids→labels
+  through `labelById`, survives recompiles (`update()` prunes vanished ids),
+  and clears on disarm.
+  Two **edit tools** past a second separator act on existing nodes rather
+  than adding one, riding the same `drag()` no-move click path. **Select**
+  (a dashed-marquee icon) is sticky: each node click toggles the node's id
+  in a `selected` set drawn with a glow (a zero-offset blue drop-shadow
+  filter, `sel-glow`, applied by `renderSelection` as a `.selected` class on
+  the node `<g>`); a canvas click clears the set, and the hint tracks the
+  count. The set persists across edits (`update()` prunes vanished ids and
+  repaints) and across arming other tools, so you select, then arm delete.
+  **Delete** (a trash-can icon) is one-shot: clicking a node removes it, or —
+  if the click lands on a member of the standing selection — the whole
+  selection, then disarms (deletion is destructive, so no accidental
+  repeats; batch-delete is select-then-delete). Removal is **line-based**
+  (`deleteNodes`): every source LINE that names a target is dropped, never
+  token-surgical (which could leave a half-statement that fails to parse). A
+  named node's lines are found by compiling each line ALONE and matching its
+  label — multi-word-safe and substring-proof, since the lexer tokenizes
+  (`warming discrepancy` survives deleting `discrepancy`); an anonymous cloud
+  maps to the `|` at its ordinal (cloud ids run in `|`-token order, so the
+  k-th cloud is the k-th `|` across the source); ports carry no text and are
+  skipped (they vanish with their stock or arrow). Ports are never
+  selectable. The delete tool also removes **links**: a transparent
+  wide-stroke twin of every link (`linkHit`, `d` mirrored from the visible
+  path in `ticked()`) sits just above the flow pipes but below the nodes, so
+  a node click still wins; it is inert (`pointer-events: none`) until the
+  delete tool arms (`.delete-armed` CSS), then clickable. The click is
+  handled in the svg's own click handler — reading the hit path's datum —
+  because a per-path listener gets eaten by the canvas pan drag while the
+  bubble-phase svg handler fires reliably. `deleteLink` is the same
+  line-based removal keyed on the link's **logical endpoints** (a stock
+  resolved through its port) + direction + kind: a flow pipe takes its
+  faucet's whole statement (a flow is a unit — a lone pipe can't be spelled),
+  an arrow a formula/loop draws takes that statement, and re-mentions delete
+  surgically (clicking `[b] =>f`'s pipe drops only that line, not `| =>f
+  [a]`). Both tools clear the selection appropriately — delete on success,
+  an example load alongside `disarmTool`.
 
 Two sibling modules add the **behavior-over-time chart** (the book's figure 6 to
 the diagram's figure 5):
