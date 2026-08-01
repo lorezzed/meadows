@@ -1,0 +1,37 @@
+# Continuous integration: compile the PureScript backend, run the full test
+# battery, and typecheck the frontend on every push to main and every PR.
+#
+# The toolchain (purescript, spago, node 22, esbuild) is pinned by flake.nix, so
+# CI just installs Nix and runs everything INSIDE `nix develop`. That matters:
+# the Makefile's `node test/*.mjs` lines invoke `node` directly (not wrapped in
+# `nix develop`), so they need the nix-provided node on PATH — running the whole
+# `make test` inside one `nix develop` supplies it. Entering the dev shell also
+# runs its shellHook (`npm install`) for the d3/esbuild deps.
+#
+# Speed-up follow-up: add a Nix store cache (e.g. FlakeHub Cache, or
+# nix-community/cache-nix-action) so the toolchain isn't re-fetched each run.
+# Omitted here to keep the workflow dependency- and token-free / robust.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix (flakes enabled)
+        uses: DeterminateSystems/nix-installer-action@main
+
+      # spago build -> spago test (183 unit checks) -> golden battery ->
+      # simulate / highlight / format / layout headless suites.
+      - name: make test
+        run: nix --experimental-features 'nix-command flakes' develop --command make test
+
+      # Frontend type-check (tsconfig has noEmit); not part of `make test`.
+      - name: Typecheck frontend (tsc)
+        run: nix --experimental-features 'nix-command flakes' develop --command npx tsc

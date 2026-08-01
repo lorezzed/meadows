@@ -46,7 +46,9 @@ build:
 # battery (byte-exact graph JSON + positioned error messages) plus the headless
 # frontend checks (ui/simulate.ts and ui/highlight.ts run directly via node's
 # type stripping) plus the formatter contract (test/format.mjs: reference
-# style, graph preservation, idempotence).
+# style, graph preservation, idempotence) plus the layout contract
+# (test/layout.mjs: band flatness, stock slots, cloud edges, and post-settle
+# clearance, driving ui/layout.ts's real computeLayout + force simulation).
 # After an INTENDED output change: node test/golden.mjs --capture
 test: build
 	nix --experimental-features 'nix-command flakes' develop --command spago test
@@ -54,10 +56,14 @@ test: build
 	node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/simulate.mjs
 	node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/highlight.mjs
 	node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/format.mjs
+	node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/layout.mjs
 
-# Run the esbuild dev server against ui/index.html
+# Run the esbuild dev server against ui/index.html. Uses `--watch=forever` (not
+# plain `--watch`) so the watcher survives a closed stdin — backgrounded or
+# otherwise non-interactive runs don't stop on the first rebuild; an interactive
+# run still exits when its terminal/parent process is killed.
 dev:
-	nix --experimental-features 'nix-command flakes' develop --command esbuild ui/index.js --bundle --watch --outdir=./ui --servedir=./ui --loader:.svg=dataurl
+	nix --experimental-features 'nix-command flakes' develop --command esbuild ui/index.js --bundle --watch=forever --outdir=./ui --servedir=./ui --loader:.svg=dataurl
 # 	nix --experimental-features 'nix-command flakes' develop --command esbuild ui/index.ts --bundle --watch --outdir=./ui --servedir=./ui
 # Compile and run the CLI entrypoint (src/CLI.purs); with no input it prints usage
 run:
