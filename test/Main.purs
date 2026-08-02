@@ -16,9 +16,10 @@ import Data.Tuple (Tuple(..), fst)
 import Effect (Effect)
 import Effect.Console (log)
 import Effect.Exception (throw)
-import Evaluator (Graph, Link, NodeType(..), RFormula(..), evaluate)
+import Evaluator (Graph, Link, NodeType(..), RFormula, evaluate)
+import Expr (Expr(..), FormOp(..), Ref(..))
 import Lexer (LoopKind(..), Operator(..), Token(..), tokenize)
-import Parser (Annot(..), Formula(..), FormOp(..), Tree(..), parse)
+import Parser (Annot(..), Dir(..), Tree(..), parse)
 import Parsing (Position(..))
 
 -- | Nothing = pass; Just = failure report.
@@ -167,32 +168,32 @@ tests =
   -- Parser: tree shapes and exact ids (mint order: atoms after their tokens,
   -- operators after op+name before the right operand, parens before the body)
   , expectEq "arrow AST (ids: left 0, operator 1, right 2)"
-      (Right (ArrowRExpr 1 (NodeExpr 0 "a" Nothing) (NodeExpr 2 "b" Nothing) : Nil))
+      (Right (ArrowExpr 1 Rightward (NodeExpr 0 "a" Nothing) (NodeExpr 2 "b" Nothing) : Nil))
       (parseAll "a->b")
   , expectEq "dangling faucet has no target"
-      (Right (FaucetRExpr 1 "j" Nothing (NodeExpr 0 "a" Nothing) Nothing : Nil))
+      (Right (FaucetExpr 1 Rightward "j" Nothing (NodeExpr 0 "a" Nothing) Nothing : Nil))
       (parseAll "a=>j")
   , expectEq "faucet with a stock target"
-      (Right (FaucetRExpr 1 "j" Nothing (NodeExpr 0 "a" Nothing) (Just (StockExpr 2 "b" Nothing)) : Nil))
+      (Right (FaucetExpr 1 Rightward "j" Nothing (NodeExpr 0 "a" Nothing) (Just (StockExpr 2 "b" Nothing)) : Nil))
       (parseAll "a=>j[b]")
   , expectEq "leftward faucet mirrors the rightward one"
-      (Right (FaucetLExpr 1 "j" Nothing (NodeExpr 0 "a" Nothing) Nothing : Nil))
+      (Right (FaucetExpr 1 Leftward "j" Nothing (NodeExpr 0 "a" Nothing) Nothing : Nil))
       (parseAll "a<=j")
   , expectEq "an operator after a dangling faucet applies to the faucet"
-      (Right (ArrowRExpr 2 (FaucetRExpr 1 "b" Nothing (NodeExpr 0 "a" Nothing) Nothing) (NodeExpr 3 "c" Nothing) : Nil))
+      (Right (ArrowExpr 2 Rightward (FaucetExpr 1 Rightward "b" Nothing (NodeExpr 0 "a" Nothing) Nothing) (NodeExpr 3 "c" Nothing) : Nil))
       (parseAll "a=>b->c")
   , expectEq "with a target present the operator belongs to the target"
-      (Right (FaucetRExpr 1 "b" Nothing (NodeExpr 0 "a" Nothing)
-                (Just (ArrowRExpr 3 (StockExpr 2 "x" Nothing) (NodeExpr 4 "c" Nothing))) : Nil))
+      (Right (FaucetExpr 1 Rightward "b" Nothing (NodeExpr 0 "a" Nothing)
+                (Just (ArrowExpr 3 Rightward (StockExpr 2 "x" Nothing) (NodeExpr 4 "c" Nothing))) : Nil))
       (parseAll "a=>b[x]->c")
   , expectEq "paren mints before its body"
-      (Right (ArrowRExpr 3 (ParenExpr 0 (FaucetRExpr 2 "f" Nothing (NodeExpr 1 "a" Nothing) Nothing)) (NodeExpr 4 "b" Nothing) : Nil))
+      (Right (ArrowExpr 3 Rightward (ParenExpr 0 (FaucetExpr 2 Rightward "f" Nothing (NodeExpr 1 "a" Nothing) Nothing)) (NodeExpr 4 "b" Nothing) : Nil))
       (parseAll "(a=>f)->b")
   , expectEq "loop AST: the annotation mints before its body"
-      (Right (LoopExpr 0 Reinforcing (ArrowRExpr 2 (NodeExpr 1 "a" Nothing) (NodeExpr 3 "b" Nothing)) : Nil))
+      (Right (LoopExpr 0 Reinforcing (ArrowExpr 2 Rightward (NodeExpr 1 "a" Nothing) (NodeExpr 3 "b" Nothing)) : Nil))
       (parseAll "R(a->b)")
   , expectEq "statements share one id counter"
-      (Right (ArrowRExpr 1 (NodeExpr 0 "a" Nothing) (NodeExpr 2 "b" Nothing) : NodeExpr 3 "c" Nothing : Nil))
+      (Right (ArrowExpr 1 Rightward (NodeExpr 0 "a" Nothing) (NodeExpr 2 "b" Nothing) : NodeExpr 3 "c" Nothing : Nil))
       (parseAll "a->b\nc")
   , expectEq "blank lines yield no empty statements"
       (Right (NodeExpr 0 "a" Nothing : NodeExpr 1 "b" Nothing : Nil))
@@ -204,28 +205,28 @@ tests =
       (Right (StockExpr 0 "a" (Just 50.0) : Nil))
       (parseAll "[a: 50]")
   , expectEq "faucet with a rate, no target"
-      (Right (FaucetRExpr 1 "f" (Just (SchedAnnot { initial: 5.0, steps: [] })) (NodeExpr 0 "a" Nothing) Nothing : Nil))
+      (Right (FaucetExpr 1 Rightward "f" (Just (SchedAnnot { initial: 5.0, steps: [] })) (NodeExpr 0 "a" Nothing) Nothing : Nil))
       (parseAll "a=>f: 5")
   , expectEq "leftward faucet with a rate"
-      (Right (FaucetLExpr 1 "f" (Just (SchedAnnot { initial: 5.0, steps: [] })) (NodeExpr 0 "a" Nothing) Nothing : Nil))
+      (Right (FaucetExpr 1 Leftward "f" (Just (SchedAnnot { initial: 5.0, steps: [] })) (NodeExpr 0 "a" Nothing) Nothing : Nil))
       (parseAll "a<=f: 5")
   , expectEq "an operator after a valued faucet still applies to the faucet"
-      (Right (ArrowRExpr 2 (FaucetRExpr 1 "f" (Just (SchedAnnot { initial: 5.0, steps: [] })) (NodeExpr 0 "a" Nothing) Nothing) (NodeExpr 3 "c" Nothing) : Nil))
+      (Right (ArrowExpr 2 Rightward (FaucetExpr 1 Rightward "f" (Just (SchedAnnot { initial: 5.0, steps: [] })) (NodeExpr 0 "a" Nothing) Nothing) (NodeExpr 3 "c" Nothing) : Nil))
       (parseAll "a=>f: 5->c")
   , expectEq "the figure 5 statement parses with its values"
-      (Right (FaucetRExpr 1 "inflow" Nothing (CloudExpr 0)
-                (Just (FaucetRExpr 3 "outflow" (Just (SchedAnnot { initial: 5.0, steps: [] })) (StockExpr 2 "water in tub" (Just 50.0))
+      (Right (FaucetExpr 1 Rightward "inflow" Nothing (CloudExpr 0)
+                (Just (FaucetExpr 3 Rightward "outflow" (Just (SchedAnnot { initial: 5.0, steps: [] })) (StockExpr 2 "water in tub" (Just 50.0))
                   (Just (CloudExpr 4)))) : Nil))
       (parseAll "|=>inflow[water in tub: 50]=>outflow: 5|")
   -- Parser: faucet rate schedules (`@time: rate` steps)
   , expectEq "a faucet schedule parses its steps in order"
-      (Right (FaucetRExpr 1 "f" (Just (SchedAnnot { initial: 0.0, steps: [ { at: 5.0, value: 5.0 } ] })) (NodeExpr 0 "a" Nothing) Nothing : Nil))
+      (Right (FaucetExpr 1 Rightward "f" (Just (SchedAnnot { initial: 0.0, steps: [ { at: 5.0, value: 5.0 } ] })) (NodeExpr 0 "a" Nothing) Nothing : Nil))
       (parseAll "a=>f: 0 @5: 5")
   , expectEq "schedules chain and allow decimals"
-      (Right (FaucetRExpr 1 "f" (Just (SchedAnnot { initial: 0.0, steps: [ { at: 2.5, value: 1.0 }, { at: 7.0, value: 4.0 } ] })) (NodeExpr 0 "a" Nothing) Nothing : Nil))
+      (Right (FaucetExpr 1 Rightward "f" (Just (SchedAnnot { initial: 0.0, steps: [ { at: 2.5, value: 1.0 }, { at: 7.0, value: 4.0 } ] })) (NodeExpr 0 "a" Nothing) Nothing : Nil))
       (parseAll "a=>f: 0 @2.5: 1 @7: 4")
   , expectEq "a target may follow a schedule"
-      (Right (FaucetRExpr 1 "f" (Just (SchedAnnot { initial: 0.0, steps: [ { at: 5.0, value: 5.0 } ] })) (NodeExpr 0 "a" Nothing)
+      (Right (FaucetExpr 1 Rightward "f" (Just (SchedAnnot { initial: 0.0, steps: [ { at: 5.0, value: 5.0 } ] })) (NodeExpr 0 "a" Nothing)
                 (Just (StockExpr 2 "b" Nothing)) : Nil))
       (parseAll "a=>f: 0 @5: 5[b]")
   , expectErrorAt "a step needs a time"
@@ -242,7 +243,7 @@ tests =
       (Right (NodeExpr 0 "a" (Just (SchedAnnot { initial: 5.0, steps: [] })) : Nil))
       (parseAll "a: 5")
   , expectEq "a dot constant composes with arrows (ids: dot 0, arrow 1, dot 2)"
-      (Right (ArrowRExpr 1 (NodeExpr 0 "room" (Just (SchedAnnot { initial: 18.0, steps: [] }))) (NodeExpr 2 "d" Nothing) : Nil))
+      (Right (ArrowExpr 1 Rightward (NodeExpr 0 "room" (Just (SchedAnnot { initial: 18.0, steps: [] }))) (NodeExpr 2 "d" Nothing) : Nil))
       (parseAll "room: 18 -> d")
   , expectEq "a dot takes a schedule, negative values included"
       (Right (NodeExpr 0 "out" (Just (SchedAnnot { initial: 10.0, steps: [ { at: 2.0, value: -5.0 } ] })) : Nil))
@@ -257,43 +258,43 @@ tests =
   -- and precedence (* / bind tighter). Reference ids mint left to right.
   , expectEq "formula AST: (2x * y + 3) — implicit mult, precedence"
       (Right (NodeExpr 2 "a"
-        (Just (FormulaAnnot (FBin FAdd
-          (FBin FMul (FBin FMul (FNum 2.0) (FRef 0 "x")) (FRef 1 "y"))
-          (FNum 3.0)))) : Nil))
+        (Just (FormulaAnnot (EBin FAdd
+          (EBin FMul (EBin FMul (ENum 2.0) (ERef (Ref 0 "x"))) (ERef (Ref 1 "y")))
+          (ENum 3.0)))) : Nil))
       (parseAll "a: (2x * y + 3)")
   , expectEq "formula: division and multi-word references"
       (Right (NodeExpr 1 "output"
-        (Just (FormulaAnnot (FBin FDiv (FRef 0 "capital stock") (FNum 3.0)))) : Nil))
+        (Just (FormulaAnnot (EBin FDiv (ERef (Ref 0 "capital stock")) (ENum 3.0)))) : Nil))
       (parseAll "output: (capital stock / 3)")
   , expectEq "formula: a juxtaposed negative literal is subtraction"
       (Right (NodeExpr 1 "a"
-        (Just (FormulaAnnot (FBin FAdd (FRef 0 "x") (FNum (-5.0))))) : Nil))
+        (Just (FormulaAnnot (EBin FAdd (ERef (Ref 0 "x")) (ENum (-5.0))))) : Nil))
       (parseAll "a: (x -5)")
   , expectEq "formula: explicit '-' subtracts"
       (Right (NodeExpr 2 "a"
-        (Just (FormulaAnnot (FBin FSub (FRef 0 "x") (FRef 1 "y")))) : Nil))
+        (Just (FormulaAnnot (EBin FSub (ERef (Ref 0 "x")) (ERef (Ref 1 "y"))))) : Nil))
       (parseAll "a: (x - y)")
   , expectEq "formula: parens group ((x + 1) / y)"
       (Right (NodeExpr 2 "a"
-        (Just (FormulaAnnot (FBin FDiv (FBin FAdd (FRef 0 "x") (FNum 1.0)) (FRef 1 "y")))) : Nil))
+        (Just (FormulaAnnot (EBin FDiv (EBin FAdd (ERef (Ref 0 "x")) (ENum 1.0)) (ERef (Ref 1 "y"))))) : Nil))
       (parseAll "a: ((x + 1) / y)")
   , expectEq "formula: ^ binds tighter than juxtaposition and +: (2x^2) + 3"
       (Right (NodeExpr 1 "a"
-        (Just (FormulaAnnot (FBin FAdd
-          (FBin FMul (FNum 2.0) (FBin FPow (FRef 0 "x") (FNum 2.0)))
-          (FNum 3.0)))) : Nil))
+        (Just (FormulaAnnot (EBin FAdd
+          (EBin FMul (ENum 2.0) (EBin FPow (ERef (Ref 0 "x")) (ENum 2.0)))
+          (ENum 3.0)))) : Nil))
       (parseAll "a: ((2x^2) + 3)")
   , expectEq "formula: ^ is right-associative"
       (Right (NodeExpr 1 "a"
-        (Just (FormulaAnnot (FBin FPow (FRef 0 "x") (FBin FPow (FNum 2.0) (FNum 3.0))))) : Nil))
+        (Just (FormulaAnnot (EBin FPow (ERef (Ref 0 "x")) (EBin FPow (ENum 2.0) (ENum 3.0))))) : Nil))
       (parseAll "a: (x^2^3)")
   , expectEq "formula: x^2y is (x^2) * y, the paper convention"
       (Right (NodeExpr 2 "a"
-        (Just (FormulaAnnot (FBin FMul (FBin FPow (FRef 0 "x") (FNum 2.0)) (FRef 1 "y")))) : Nil))
+        (Just (FormulaAnnot (EBin FMul (EBin FPow (ERef (Ref 0 "x")) (ENum 2.0)) (ERef (Ref 1 "y"))))) : Nil))
       (parseAll "a: (x^2y)")
   , expectEq "formula on a faucet"
-      (Right (FaucetRExpr 2 "f"
-        (Just (FormulaAnnot (FRef 1 "x"))) (NodeExpr 0 "a" Nothing) Nothing : Nil))
+      (Right (FaucetExpr 2 Rightward "f"
+        (Just (FormulaAnnot (ERef (Ref 1 "x")))) (NodeExpr 0 "a" Nothing) Nothing : Nil))
       (parseAll "a=>f: (x)")
   , expectErrorAt "an empty formula needs an expression"
       "line 1, column 5" (parseAll "a: ()")
@@ -308,28 +309,28 @@ tests =
   -- (a pipeline delay). Any other '(' stays juxtaposed multiplication;
   -- shifts mint no id of their own.
   , expectEq "a delay shift takes a named time (ids: input 0, time 1, owner 2)"
-      (Right (NodeExpr 2 "a" (Just (FormulaAnnot (FCall (FRef 0 "x") (FRef 1 "d")))) : Nil))
+      (Right (NodeExpr 2 "a" (Just (FormulaAnnot (EShift (ERef (Ref 0 "x")) (ERef (Ref 1 "d"))))) : Nil))
       (parseAll "a: (x(t - d))")
   , expectEq "shifts chain left to right (the input's refs mint first)"
       (Right (NodeExpr 2 "a" (Just (FormulaAnnot
-        (FCall (FCall (FRef 0 "x") (FNum 1.0)) (FRef 1 "d")))) : Nil))
+        (EShift (EShift (ERef (Ref 0 "x")) (ENum 1.0)) (ERef (Ref 1 "d"))))) : Nil))
       (parseAll "a: (x(t - 1)(t - d))")
   , expectEq "a paren group takes a shift"
       (Right (NodeExpr 2 "a" (Just (FormulaAnnot
-        (FCall (FBin FAdd (FRef 0 "x") (FRef 1 "y")) (FNum 1.0)))) : Nil))
+        (EShift (EBin FAdd (ERef (Ref 0 "x")) (ERef (Ref 1 "y"))) (ENum 1.0)))) : Nil))
       (parseAll "a: ((x + y)(t - 1))")
   , expectEq "x(t) is just x"
-      (Right (NodeExpr 1 "a" (Just (FormulaAnnot (FRef 0 "x"))) : Nil))
+      (Right (NodeExpr 1 "a" (Just (FormulaAnnot (ERef (Ref 0 "x")))) : Nil))
       (parseAll "a: (x(t))")
   , expectEq "a signed literal folds into a delay: x(t -3) is x(t - 3)"
-      (Right (NodeExpr 1 "a" (Just (FormulaAnnot (FCall (FRef 0 "x") (FNum 3.0)))) : Nil))
+      (Right (NodeExpr 1 "a" (Just (FormulaAnnot (EShift (ERef (Ref 0 "x")) (ENum 3.0)))) : Nil))
       (parseAll "a: (x(t -3))")
   , expectEq "a paren not opening with t stays juxtaposed multiplication"
       (Right (NodeExpr 2 "a" (Just (FormulaAnnot
-        (FBin FMul (FRef 0 "x") (FBin FAdd (FRef 1 "y") (FNum 1.0))))) : Nil))
+        (EBin FMul (ERef (Ref 0 "x")) (EBin FAdd (ERef (Ref 1 "y")) (ENum 1.0))))) : Nil))
       (parseAll "a: (x(y + 1))")
   , expectEq "smooth and delay are ordinary names"
-      (Right (NodeExpr 2 "a" (Just (FormulaAnnot (FBin FMul (FRef 0 "smooth") (FRef 1 "delay")))) : Nil))
+      (Right (NodeExpr 2 "a" (Just (FormulaAnnot (EBin FMul (ERef (Ref 0 "smooth")) (ERef (Ref 1 "delay"))))) : Nil))
       (parseAll "a: (smooth * delay)")
   , expectErrorAt "only - shifts time"
       "line 1, column 9" (parseAll "a: (x(t + 1))")
@@ -341,42 +342,42 @@ tests =
   -- `t`/`pi` are complete atoms (no mint, no shift tail); cos/sin/min/max
   -- open calls exactly when followed by '('; none of the forms mints an id.
   , expectEq "t is a formula term: a: (t) is the time itself"
-      (Right (NodeExpr 0 "a" (Just (FormulaAnnot FTime)) : Nil))
+      (Right (NodeExpr 0 "a" (Just (FormulaAnnot ETime)) : Nil))
       (parseAll "a: (t)")
   , expectEq "t multiplies like any term: (2t)"
-      (Right (NodeExpr 0 "a" (Just (FormulaAnnot (FBin FMul (FNum 2.0) FTime))) : Nil))
+      (Right (NodeExpr 0 "a" (Just (FormulaAnnot (EBin FMul (ENum 2.0) ETime))) : Nil))
       (parseAll "a: (2t)")
   , expectEq "pi is a constant term"
-      (Right (NodeExpr 0 "a" (Just (FormulaAnnot FPi)) : Nil))
+      (Right (NodeExpr 0 "a" (Just (FormulaAnnot EPi)) : Nil))
       (parseAll "a: (pi)")
   , expectEq "multi-word joining still wins: pi t is ONE name"
-      (Right (NodeExpr 1 "a" (Just (FormulaAnnot (FRef 0 "pi t"))) : Nil))
+      (Right (NodeExpr 1 "a" (Just (FormulaAnnot (ERef (Ref 0 "pi t")))) : Nil))
       (parseAll "a: (pi t)")
   , expectEq "cos( opens a call, minting nothing of its own"
-      (Right (NodeExpr 1 "a" (Just (FormulaAnnot (FFun1 "cos" (FRef 0 "x")))) : Nil))
+      (Right (NodeExpr 1 "a" (Just (FormulaAnnot (EFun1 "cos" (ERef (Ref 0 "x"))))) : Nil))
       (parseAll "a: (cos(x))")
   , expectEq "min takes two comma-separated args (ids left to right)"
-      (Right (NodeExpr 2 "a" (Just (FormulaAnnot (FFun2 "min" (FRef 0 "x") (FRef 1 "y")))) : Nil))
+      (Right (NodeExpr 2 "a" (Just (FormulaAnnot (EFun2 "min" (ERef (Ref 0 "x")) (ERef (Ref 1 "y"))))) : Nil))
       (parseAll "a: (min(x, y))")
   , expectEq "cos(t / 24) is a call, never a shift of a node named cos"
       (Right (NodeExpr 0 "a" (Just (FormulaAnnot
-        (FFun1 "cos" (FBin FDiv FTime (FNum 24.0))))) : Nil))
+        (EFun1 "cos" (EBin FDiv ETime (ENum 24.0))))) : Nil))
       (parseAll "a: (cos(t / 24))")
   , expectEq "the ramp-and-hold shape: max(0, 0.054 * (t - 5))"
       (Right (NodeExpr 0 "a" (Just (FormulaAnnot
-        (FFun2 "max" (FNum 0.0)
-          (FBin FMul (FNum 0.054) (FBin FSub FTime (FNum 5.0)))))) : Nil))
+        (EFun2 "max" (ENum 0.0)
+          (EBin FMul (ENum 0.054) (EBin FSub ETime (ENum 5.0)))))) : Nil))
       (parseAll "a: (max(0, 0.054 * (t - 5)))")
   , expectEq "a bare reserved function name is an ordinary reference"
-      (Right (NodeExpr 2 "a" (Just (FormulaAnnot (FBin FMul (FRef 0 "cos") (FRef 1 "x")))) : Nil))
+      (Right (NodeExpr 2 "a" (Just (FormulaAnnot (EBin FMul (ERef (Ref 0 "cos")) (ERef (Ref 1 "x"))))) : Nil))
       (parseAll "a: (cos * x)")
   , expectEq "a call takes a shift tail like a paren group"
       (Right (NodeExpr 1 "a" (Just (FormulaAnnot
-        (FCall (FFun1 "cos" (FRef 0 "x")) (FNum 1.0)))) : Nil))
+        (EShift (EFun1 "cos" (ERef (Ref 0 "x"))) (ENum 1.0)))) : Nil))
       (parseAll "a: (cos(x)(t - 1))")
   , expectEq "t opens no shift: t(t - 1) is juxtaposed multiplication"
       (Right (NodeExpr 0 "a" (Just (FormulaAnnot
-        (FBin FMul FTime (FBin FSub FTime (FNum 1.0))))) : Nil))
+        (EBin FMul ETime (EBin FSub ETime (ENum 1.0))))) : Nil))
       (parseAll "a: (t(t - 1))")
   , expectErrorAt "a 1-arg call refuses a comma"
       "line 1, column 10" (parseAll "a: (cos(x, y))")
@@ -418,7 +419,7 @@ tests =
   -- `B(...) <- thermostat setting`); the loop still mints before its body,
   -- the tail's operator after the ')'.
   , expectEq "an operator may follow a loop: R(a)->b == (R(a))->b"
-      (Right (ArrowRExpr 2 (LoopExpr 0 Reinforcing (NodeExpr 1 "a" Nothing)) (NodeExpr 3 "b" Nothing) : Nil))
+      (Right (ArrowExpr 2 Rightward (LoopExpr 0 Reinforcing (NodeExpr 1 "a" Nothing)) (NodeExpr 3 "b" Nothing) : Nil))
       (parseAll "R(a)->b")
   , expectEq "a tail after a loop stays outside the membership"
       (Right [ Tuple "a" (Just [ "B0" ]), Tuple "b" (Just [ "B0" ]), Tuple "c" Nothing ])
@@ -520,7 +521,7 @@ tests =
   -- Evaluator: formulas resolve refs to ids, draw their arrows, and are
   -- first-wins with every other annotation kind
   , expectEq "a formula stores its resolved tree on the node"
-      (Right [ Tuple "a" Nothing, Tuple "b" (Just (RBin "+" (RRef "dot#0") (RNum 1.0))) ])
+      (Right [ Tuple "a" Nothing, Tuple "b" (Just (EBin FAdd (ERef "dot#0") (ENum 1.0))) ])
       (labelExprs "a\nb: (a + 1)")
   , expectEq "a formula draws the arrows its references imply"
       (Right [ { type: "arrow", source: "dot#0", target: "dot#2" } ])
@@ -529,7 +530,7 @@ tests =
       (Right [ { type: "arrow", source: "dot#0", target: "dot#2" } ])
       (linksOf "a -> b\nb: (a)")
   , expectEq "a formula may reference a stock (arrow attached through a port)"
-      (Right [ Tuple "" Nothing, Tuple "f" (Just (RBin "*" (RRef "stock#0") (RNum 2.0))), Tuple "s" Nothing ])
+      (Right [ Tuple "" Nothing, Tuple "f" (Just (EBin FMul (ERef "stock#0") (ENum 2.0))), Tuple "s" Nothing ])
       (labelExprs "[s: 4]\nf: (s * 2)")
   , expectEq "the first annotation wins: a value blocks a later formula"
       (Right [ Tuple "a" Nothing, Tuple "b" Nothing ])
@@ -548,35 +549,35 @@ tests =
   -- as their input, and break dependency cycles (their value is state,
   -- not a recursion into the input).
   , expectEq "a shift serializes with input and time resolved"
-      (Right [ Tuple "a" (Just (RCall (RRef "dot#0") (RNum 1.0))), Tuple "x" Nothing ])
+      (Right [ Tuple "a" (Just (EShift (ERef "dot#0") (ENum 1.0))), Tuple "x" Nothing ])
       (labelExprs "x\na: (x(t - 1))")
   , expectEq "a shift draws the arrows its input and time imply"
       (Right [ { type: "arrow", source: "dot#1", target: "dot#3" }
              , { type: "arrow", source: "dot#0", target: "dot#3" } ])
       (linksOf "d: 2\na: (x(t - d))")
   , expectEq "a shift's input may read a faucet (the delayed flow)"
-      (Right [ Tuple "a" (Just (RCall (RRef "faucet#1") (RNum 1.0)))
+      (Right [ Tuple "a" (Just (EShift (ERef "faucet#1") (ENum 1.0)))
              , Tuple "f" Nothing, Tuple "s" Nothing ])
       (labelExprs "s=>f\na: (f(t - 1))")
   , expectErrorAt "a shift's time may not read a faucet"
       "is a faucet" (graphOf "s=>f\na: (x(t - f))")
   , expectEq "a loop through a shift is legal (state breaks the cycle)"
-      (Right [ Tuple "a" (Just (RCall (RRef "dot#1") (RNum 1.0))) ])
+      (Right [ Tuple "a" (Just (EShift (ERef "dot#1") (ENum 1.0))) ])
       (labelExprs "a: (a(t - 1))")
   , expectErrorAt "an eager cycle beside a shift is still rejected"
       "cycle" (graphOf "a: (b + x(t - 1))\nb: (a)")
   -- Evaluator: the time vocabulary serializes and composes with the
   -- reference rules (arrows from function args, eager cycles through
   -- args, faucet rules riding the shift flag through arguments).
-  , expectEq "a function serializes resolved: RFun1 over the arg tree"
-      (Right [ Tuple "a" (Just (RBin "+" (RFun1 "cos" (RRef "dot#0")) (RNum 1.0))), Tuple "x" Nothing ])
+  , expectEq "a function serializes resolved: EFun1 over the arg tree"
+      (Right [ Tuple "a" (Just (EBin FAdd (EFun1 "cos" (ERef "dot#0")) (ENum 1.0))), Tuple "x" Nothing ])
       (labelExprs "x\na: (cos(x) + 1)")
   , expectEq "a max ramp serializes with t as its own kind"
-      (Right [ Tuple "a" (Just (RFun2 "max" (RNum 0.09)
-        (RBin "-" (RNum 0.21) (RBin "*" (RNum 0.06) RTime)))) ])
+      (Right [ Tuple "a" (Just (EFun2 "max" (ENum 0.09)
+        (EBin FSub (ENum 0.21) (EBin FMul (ENum 0.06) ETime)))) ])
       (labelExprs "a: (max(0.09, 0.21 - 0.06 * t))")
   , expectEq "pi serializes as its own kind"
-      (Right [ Tuple "a" (Just (RBin "*" (RNum 2.0) RPi)) ])
+      (Right [ Tuple "a" (Just (EBin FMul (ENum 2.0) EPi)) ])
       (labelExprs "a: (2 * pi)")
   , expectEq "a function arg's reference draws the implied arrow"
       (Right [ { type: "arrow", source: "dot#0", target: "dot#2" } ])
@@ -584,7 +585,7 @@ tests =
   , expectErrorAt "an eager cycle through a function arg is rejected"
       "cycle" (graphOf "a: (min(b, 1))\nb: (a)")
   , expectEq "a shift under a function still breaks its cycle"
-      (Right [ Tuple "a" (Just (RFun1 "cos" (RCall (RRef "dot#1") (RNum 1.0)))) ])
+      (Right [ Tuple "a" (Just (EFun1 "cos" (EShift (ERef "dot#1") (ENum 1.0)))) ])
       (labelExprs "a: (cos(a(t - 1)))")
   , expectErrorAt "a function arg may not read a faucet outside a shift"
       "is a faucet" (graphOf "s=>f\na: (cos(f))")

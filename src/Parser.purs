@@ -1,8 +1,7 @@
 module Parser
   ( Annot(..)
-  , Formula(..)
-  , FormOp(..)
-  , opString
+  , Dir(..)
+  , Formula
   , Tree(..)
   , Id
   , Step
@@ -14,10 +13,10 @@ import Control.Lazy (defer)
 import Control.Monad.State (State, evalState, state)
 import Data.Array as Array
 import Data.Either (Either(..))
-import Data.Generic.Rep (class Generic)
 import Data.List (List(..), (:))
 import Data.Maybe (Maybe(..))
 import Data.Tuple (Tuple(..), fst)
+import Expr (Expr(..), FormOp(..), Ref(..))
 import Lexer (LoopKind, Operator(..), PosToken, Token(..), describeToken, formatParseError, loopLetter)
 import Parsing (ParseState(..), ParserT, fail, failWithPosition, getParserT, initialPos, runParserT', stateParserT)
 import Parsing.Combinators (choice, many, optionMaybe, optional, sepEndBy, (<?>))
@@ -30,50 +29,13 @@ type Step = { at :: Number, value :: Number }
 -- | piecewise-constant (`inflow: 0 @5: 5` = closed until t=5, then 5 -- a
 -- | tap being turned); a curve is written as a denser staircase of steps.
 type Sched = { initial :: Number, steps :: Array Step }
--- | Formula operators, usual precedence (`^` binds tightest, then `*`/`/`,
--- | then `+`/`-`).
-data FormOp = FAdd | FSub | FMul | FDiv | FPow
-derive instance eqFormOp :: Eq FormOp
-opString :: FormOp -> String
-opString FAdd = "+"
-opString FSub = "-"
-opString FMul = "*"
-opString FDiv = "/"
-opString FPow = "^"
 -- | A value formula (`investment: (output * fraction of output invested)`):
--- | arithmetic over numbers and named nodes. Each reference mints a parser
--- | id like any other name mention, so the evaluator resolves it through
--- | the registry -- identity, not spelling. Beyond arithmetic there are:
--- | the reserved time variable `t` (a complete term -- `outside
--- | temperature: (2.5 + 7.5 * cos(2 * pi * t / 10))` is a driving curve),
--- | the constant `pi`, function calls `cos`/`sin` (one argument) and
--- | `min`/`max` (two, comma-separated) -- a reserved name is a call exactly
--- | when its next token is `(`, so a bare `cos` stays an ordinary name --
--- | and the pipeline time shift `x(t - T)`, the value x had exactly T ago,
--- | written as function notation over `t`. A shift opens with the exact
--- | token pair `(t` after a name or group, so `x(a + b)` stays juxtaposed
--- | multiplication. None of these forms mints an id of its own: they create
--- | no graph nodes (the simulator keys shift state by the owning node and
--- | position instead), and only the references inside arguments mint.
-data Formula
-  = FNum Number
-  | FRef Id String
-  | FBin FormOp Formula Formula
-  | FCall Formula Formula
-  | FTime
-  | FPi
-  | FFun1 String Formula
-  | FFun2 String Formula Formula
-derive instance eqFormula :: Eq Formula
-instance showFormula :: Show Formula where
-  show (FNum n) = show n
-  show (FRef i s) = s <> "#" <> show i
-  show (FBin op l r) = "(" <> show l <> " " <> opString op <> " " <> show r <> ")"
-  show (FCall input time) = show input <> "(t - " <> show time <> ")"
-  show FTime = "t"
-  show FPi = "pi"
-  show (FFun1 name a) = name <> "(" <> show a <> ")"
-  show (FFun2 name l r) = name <> "(" <> show l <> ", " <> show r <> ")"
+-- | arithmetic over numbers and named nodes, plus the time vocabulary (see
+-- | `Expr`, which owns the shape and is shared with the evaluator's resolved
+-- | form). Each reference mints a parser id like any other name mention, so
+-- | the evaluator resolves it through the registry -- identity, not spelling
+-- | -- and that is exactly what the `Ref` payload carries.
+type Formula = Expr Ref
 -- | A node's annotation: a schedule (a constant or `@` steps) or a
 -- | parenthesized formula.
 data Annot = SchedAnnot Sched | FormulaAnnot Formula
@@ -81,26 +43,40 @@ derive instance eqAnnot :: Eq Annot
 instance showAnnot :: Show Annot where
   show (SchedAnnot sch) = "Sched" <> showSched (Just sch)
   show (FormulaAnnot f) = "Formula: " <> show f
+-- | Which way an arrow or a flow runs: `->`/`=>` read left to right,
+-- | `<-`/`<=` right to left. The two spellings share one production and one
+-- | evaluator case, so direction travels as DATA -- every rule that depends
+-- | on it (which endpoint is the source, which end a chain resolves to) is
+-- | then written once instead of twice, and cannot drift apart.
+data Dir = Rightward | Leftward
+derive instance eqDir :: Eq Dir
+instance showDir :: Show Dir where
+  show = dirLetter
+
+dirLetter :: Dir -> String
+dirLetter Rightward = "R"
+dirLetter Leftward = "L"
+
+-- | How the direction reads in a rendered tree (and in the surface syntax).
+dirGlyph :: Dir -> String
+dirGlyph Rightward = " -> "
+dirGlyph Leftward = " <- "
+
 data Tree
   = NodeExpr Id String (Maybe Annot)
   | CloudExpr Id
   | StockExpr Id String (Maybe Number)
-  | FaucetRExpr Id String (Maybe Annot) Tree (Maybe Tree)
-  | FaucetLExpr Id String (Maybe Annot) Tree (Maybe Tree)
-  | ArrowRExpr Id Tree Tree
-  | ArrowLExpr Id Tree Tree
+  | FaucetExpr Id Dir String (Maybe Annot) Tree (Maybe Tree)
+  | ArrowExpr Id Dir Tree Tree
   | ParenExpr Id Tree
   | LoopExpr Id LoopKind Tree
 derive instance eqTree :: Eq Tree
-derive instance genericTree :: Generic Tree _
 instance showTree :: Show Tree where
   show (NodeExpr i s v) = "Node#" <> show i <> "(" <> s <> showAnnotM v <> ")"
   show (StockExpr i s v) = "Stock#" <> show i <> "(" <> show s <> showValue v <> ")"
   show (CloudExpr i) = "Cloud#" <> show i
-  show (FaucetRExpr i s v l r) = "FaucetR#" <> show i <> "[" <> show s <> showAnnotM v <> "](" <> show l <> " -> " <> show r <> " )"
-  show (FaucetLExpr i s v l r) = "FaucetL#" <> show i <> "[" <> show s <> showAnnotM v <> "](" <> show l <> " <- " <> show r <> " )"
-  show (ArrowRExpr i l r) = "ArrowR#" <> show i <> "(" <> show l <> " -> " <> show r <> ")"
-  show (ArrowLExpr i l r) = "ArrowL#" <> show i <> "(" <> show l <> " <- " <> show r <> ")"
+  show (FaucetExpr i d s v l r) = "Faucet" <> dirLetter d <> "#" <> show i <> "[" <> show s <> showAnnotM v <> "](" <> show l <> dirGlyph d <> show r <> " )"
+  show (ArrowExpr i d l r) = "Arrow" <> dirLetter d <> "#" <> show i <> "(" <> show l <> dirGlyph d <> show r <> ")"
   show (ParenExpr i expr) = "Paren#" <> show i <> "(" <> show expr <> ")"
   show (LoopExpr i k expr) = "Loop#" <> show i <> "(" <> loopLetter k <> " " <> show expr <> ")"
 
@@ -121,6 +97,13 @@ showSched (Just s) = ": " <> show s.initial
 -- | ParserT's MonadState instance routes `state` to the base monad, so
 -- | `fresh` mints AST ids directly inside parsing code.
 type P a = ParserT (List PosToken) (State Id) a
+-- | Mint this node's id. THE minting rule, stated once: an id is taken the
+-- | moment the node's own lexemes are consumed and BEFORE any sub-expression
+-- | is parsed. Every production obeys it -- leaves mint after their own
+-- | tokens, `(` and `R(` mint before their body, an operator mints after the
+-- | operator (and a faucet's name and annotation) and before the right
+-- | operand -- so ids run in source order as a consequence of the grammar's
+-- | shape, not of call ordering. test/golden.mjs pins the result byte-exactly.
 fresh :: P Id
 fresh = state \n -> Tuple n (n + 1)
 parse :: List PosToken -> Either String (List Tree)
@@ -230,8 +213,8 @@ formula = defer \_ -> do
 
 fAddTail :: Formula -> P Formula
 fAddTail left = defer \_ -> choice
-  [ tk TokPlus *> (fMult >>= \r -> fAddTail (FBin FAdd left r))
-  , tk TokMinus *> (fMult >>= \r -> fAddTail (FBin FSub left r))
+  [ tk TokPlus *> (fMult >>= \r -> fAddTail (EBin FAdd left r))
+  , tk TokMinus *> (fMult >>= \r -> fAddTail (EBin FSub left r))
   , negJuxt
   , pure left
   ]
@@ -240,8 +223,8 @@ fAddTail left = defer \_ -> choice
     n <- satisfyMap case _ of
       TokNumber x | x < 0.0 -> Just x
       _ -> Nothing
-    r <- fMultTail (FNum n)
-    fAddTail (FBin FAdd left r)
+    r <- fMultTail (ENum n)
+    fAddTail (EBin FAdd left r)
 
 -- | multiplicative := power (('*' | '/') power | juxtaposed power)*.
 -- | Juxtaposition is implicit multiplication and only a name or a '('
@@ -258,8 +241,8 @@ fMult = defer \_ -> do
 
 fMultTail :: Formula -> P Formula
 fMultTail left = defer \_ -> choice
-  [ tk TokStar *> (fPow >>= \r -> fMultTail (FBin FMul left r))
-  , tk TokSlash *> (fPow >>= \r -> fMultTail (FBin FDiv left r))
+  [ tk TokStar *> (fPow >>= \r -> fMultTail (EBin FMul left r))
+  , tk TokSlash *> (fPow >>= \r -> fMultTail (EBin FDiv left r))
   , juxt
   , pure left
   ]
@@ -267,7 +250,7 @@ fMultTail left = defer \_ -> choice
   juxt = do
     base <- choice [ fAtom, fParen ]
     r <- powTail base
-    fMultTail (FBin FMul left r)
+    fMultTail (EBin FMul left r)
 
 -- | power := factor ('^' power)? -- right-associative (`x^2^3` is
 -- | x^(2^3)) and tighter than multiplication and juxtaposition (`x^2y` is
@@ -279,14 +262,14 @@ fPow = defer \_ -> do
 
 powTail :: Formula -> P Formula
 powTail base = defer \_ -> choice
-  [ tk TokCaret *> (FBin FPow base <$> fPow)
+  [ tk TokCaret *> (EBin FPow base <$> fPow)
   , pure base
   ]
 
 -- | factor := NUMBER | atom | '(' formula ')'
 fFactor :: P Formula
 fFactor = defer \_ -> choice
-  [ FNum <$> numberTok
+  [ ENum <$> numberTok
   , fAtom
   , fParen
   ] <?> "a number, a name, or '(' in the formula"
@@ -306,15 +289,15 @@ fFactor = defer \_ -> choice
 fAtom :: P Formula
 fAtom = defer \_ -> do
   name <- identTok
-  if name == "t" then pure FTime
-  else if name == "pi" then pure FPi
+  if name == "t" then pure ETime
+  else if name == "pi" then pure EPi
   else do
     call <- peekLParen
     if call && Array.elem name [ "cos", "sin" ] then fFun1 name >>= fShiftTail
     else if call && Array.elem name [ "min", "max" ] then fFun2 name >>= fShiftTail
     else do
       i <- fresh
-      fShiftTail (FRef i name)
+      fShiftTail (ERef (Ref i name))
 
 -- | Peek: is the next token a '('? Consumes nothing either way. Decides
 -- | whether a reserved function name opens a call.
@@ -333,7 +316,7 @@ fFun1 name = do
   tk TokLParen
   a <- formula
   tk TokRParen <?> ("a closing ')' after " <> name <> "'s argument")
-  pure (FFun1 name a)
+  pure (EFun1 name a)
 
 -- | call := FUNC2 '(' formula ',' formula ')'   (min, max)
 -- | The comma lives only here: `formula` never consumes one, so it ends
@@ -345,7 +328,7 @@ fFun2 name = do
   tk TokComma <?> ("a ',' between " <> name <> "'s two arguments")
   b <- formula
   tk TokRParen <?> ("a closing ')' after " <> name <> "'s arguments")
-  pure (FFun2 name a b)
+  pure (EFun2 name a b)
 
 -- | shift := '(' 't' ('-' time | NEGNUMBER)? ')'
 -- | Postfix time shifts, chaining left to right: after a name or a paren
@@ -357,15 +340,15 @@ fFun2 name = do
 -- | error -- parenthesize the compound time, `x(t - (3 + d))`. A signed
 -- | literal folds exactly like the additive level's negative
 -- | juxtaposition: `x(t -3)` is `x(t - 3)`. A shift mints no id of its
--- | own (see FCall).
+-- | own (see EShift).
 fShiftTail :: Formula -> P Formula
 fShiftTail base = defer \_ -> peekShift >>=
   if _ then do
     tk TokLParen
     _ <- identTok -- the peeked `t`
     shifted <- choice
-      [ tk TokMinus *> (FCall base <$> fMult)
-      , negLiteral <#> \n -> FCall base (FNum (negate n))
+      [ tk TokMinus *> (EShift base <$> fMult)
+      , negLiteral <#> \n -> EShift base (ENum (negate n))
       , pure base -- `x(t)`: the signal right now
       ]
     tk TokRParen <?> "a closing ')' after the time shift (parenthesize a compound time: x(t - (3 + d)))"
@@ -434,20 +417,20 @@ expression = defer \_ -> do
 -- | fallback must stay last.
 exprTail :: Tree -> P Tree
 exprTail left = choice
-  [ opTok ArrowR *> arrowTail ArrowRExpr "->" left
-  , opTok ArrowL *> arrowTail ArrowLExpr "<-" left
-  , opTok FaucetR *> faucetTail FaucetRExpr "=>" left
-  , opTok FaucetL *> faucetTail FaucetLExpr "<=" left
+  [ opTok ArrowR *> arrowTail Rightward "->" left
+  , opTok ArrowL *> arrowTail Leftward "<-" left
+  , opTok FaucetR *> faucetTail Rightward "=>" left
+  , opTok FaucetL *> faucetTail Leftward "<=" left
   , pure left
   ]
 -- | arrow tail := expression  (operator already consumed). The id mints
--- | after the operator and before the right operand -- minting order is
--- | pinned byte-exactly by test/golden.mjs, so don't reorder.
-arrowTail :: (Id -> Tree -> Tree -> Tree) -> String -> Tree -> P Tree
-arrowTail mk opName left = do
+-- | after the operator and before the right operand -- the one minting rule
+-- | (see `fresh`), and pinned byte-exactly by test/golden.mjs.
+arrowTail :: Dir -> String -> Tree -> P Tree
+arrowTail dir opName left = do
   i <- fresh
   right <- expression <?> ("an expression after '" <> opName <> "'")
-  pure (mk i left right)
+  pure (ArrowExpr i dir left right)
 -- | faucet tail := NAME expression? tail  (operator already consumed). The
 -- | target is optional -- a flow may end at its faucet (`a=>j`). optionMaybe
 -- | does not backtrack partial consumption, so a malformed *started* target
@@ -456,13 +439,13 @@ arrowTail mk opName left = do
 -- | the faucet itself (`a=>b->c` == `(a=>b)->c`); a present target has
 -- | already consumed any trailing operators, so exprTail then falls through
 -- | its bare-term alternative -- one path serves both shapes.
-faucetTail :: (Id -> String -> Maybe Annot -> Tree -> Maybe Tree -> Tree) -> String -> Tree -> P Tree
-faucetTail mk opName left = do
+faucetTail :: Dir -> String -> Tree -> P Tree
+faucetTail dir opName left = do
   name <- identTok <?> ("a faucet name after '" <> opName <> "'")
   mval <- annotTail
   i <- fresh
   mtarget <- optionMaybe expression
-  exprTail (mk i name mval left mtarget)
+  exprTail (FaucetExpr i dir name mval left mtarget)
 -- | term := '[' NAME ']' | '|' | '(' expression ')' | NAME
 -- | The alternatives dispatch on disjoint first tokens and satisfyMap never
 -- | consumes on failure, so the grammar needs no `try` anywhere.

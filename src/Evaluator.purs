@@ -1,9 +1,9 @@
-module Evaluator 
+module Evaluator
   ( Graph
   , Node
   , NodeType(..)
   , Link
-  , RFormula(..)
+  , RFormula
   , evaluate
   ) where
 
@@ -22,8 +22,9 @@ import Data.String (Pattern(..), split)
 import Data.Tuple (Tuple(..), fst)
 import Control.Alt ((<|>))
 import Control.Monad.State (State, runState, gets, modify_)
+import Expr (Expr(..), Ref(..), children, refsWhere, traverseRefs)
 import Lexer (loopLetter)
-import Parser (Annot(..), Formula(..), Tree(..), Id, Sched, Step, opString)
+import Parser (Annot(..), Dir(..), Formula, Tree(..), Id, Sched, Step)
 import Simple.JSON (class WriteForeign, writeImpl)
 
 data NodeType = Dot | Stock | Faucet | Cloud | Port
@@ -38,69 +39,30 @@ instance writeForeignNodeType :: WriteForeign NodeType where
   writeImpl = writeImpl <<< show
 
 -- | A formula with its references resolved to node ids (identity, not
--- | spelling -- the same seam rule as links). Serializes as nested objects:
--- | {kind: "num", value}, {kind: "ref", id}, {kind: "+"|"-"|"*"|"/", left,
--- | right}, {kind: "delay", input, time}, {kind: "t"}, {kind: "pi"},
--- | {kind: "cos"|"sin", arg}, {kind: "min"|"max", left, right} -- directly
--- | evaluable by the simulator with no re-parsing.
-data RFormula
-  = RNum Number
-  | RRef String
-  | RBin String RFormula RFormula
-  | RCall RFormula RFormula
-  | RTime
-  | RPi
-  | RFun1 String RFormula
-  | RFun2 String RFormula RFormula
-derive instance eqRFormula :: Eq RFormula
-instance showRFormula :: Show RFormula where
-  show (RNum n) = "RNum " <> show n
-  show (RRef id) = "RRef " <> id
-  show (RBin op l r) = "(" <> show l <> " " <> op <> " " <> show r <> ")"
-  show (RCall input time) = show input <> "(t - " <> show time <> ")"
-  show RTime = "t"
-  show RPi = "pi"
-  show (RFun1 name a) = name <> "(" <> show a <> ")"
-  show (RFun2 name l r) = name <> "(" <> show l <> ", " <> show r <> ")"
-instance writeForeignRFormula :: WriteForeign RFormula where
-  writeImpl (RNum n) = writeImpl { kind: "num", value: n }
-  writeImpl (RRef id) = writeImpl { kind: "ref", id }
-  writeImpl (RBin op l r) = writeImpl { kind: op, left: l, right: r }
-  writeImpl (RCall input time) = writeImpl { kind: "delay", input, time }
-  writeImpl RTime = writeImpl { kind: "t" }
-  writeImpl RPi = writeImpl { kind: "pi" }
-  writeImpl (RFun1 name a) = writeImpl { kind: name, arg: a }
-  writeImpl (RFun2 name l r) = writeImpl { kind: name, left: l, right: r }
+-- | spelling -- the same seam rule as links). The shape, and the JSON the
+-- | simulator evaluates, live in `Expr`: this is that shape with node ids in
+-- | its reference slots, the parser's `Formula` being the same tree with
+-- | unresolved mentions in them.
+type RFormula = Expr String
 
 -- | The ids a formula references, in reference order, deduplicated. Time
 -- | shifts count both sides: `orders(t - delivery delay)` implies arrows
 -- | from the delayed flow and the delay constant (figure 31 draws both).
 -- | Function arguments count too: `cos(x)` implies an arrow from x.
 refIds :: RFormula -> Array String
-refIds (RNum _) = []
-refIds (RRef id) = [ id ]
-refIds (RBin _ l r) = Array.nub (refIds l <> refIds r)
-refIds (RCall input time) = Array.nub (refIds input <> refIds time)
-refIds RTime = []
-refIds RPi = []
-refIds (RFun1 _ a) = refIds a
-refIds (RFun2 _ l r) = Array.nub (refIds l <> refIds r)
+refIds = refsWhere children
 
 -- | The ids whose CURRENT value a formula reads when evaluated -- the edges
 -- | that matter for cycle detection. A time shift reads its own state (the
 -- | delay buffer), never its input's current value, so shifts break
 -- | dependency cycles: `deliveries: (orders to factory(t - ...))` may sit
 -- | on a loop that winds back to deliveries. Function arguments are eager
--- | (a `min` reads both sides right now) -- shifts stay the only skip.
+-- | (a `min` reads both sides right now), so refusing to descend into a
+-- | shift is the WHOLE difference between this walk and `refIds`.
 eagerRefIds :: RFormula -> Array String
-eagerRefIds (RNum _) = []
-eagerRefIds (RRef id) = [ id ]
-eagerRefIds (RBin _ l r) = Array.nub (eagerRefIds l <> eagerRefIds r)
-eagerRefIds (RCall _ _) = []
-eagerRefIds RTime = []
-eagerRefIds RPi = []
-eagerRefIds (RFun1 _ a) = eagerRefIds a
-eagerRefIds (RFun2 _ l r) = Array.nub (eagerRefIds l <> eagerRefIds r)
+eagerRefIds = refsWhere case _ of
+  EShift _ _ -> []
+  e -> children e
 
 type NodeRec = { ty :: NodeType, label :: String, value :: Maybe Number, steps :: Maybe (Array Step), expr :: Maybe RFormula, parent :: Maybe String }
 
@@ -143,6 +105,31 @@ addLink :: String -> String -> String -> Evaluator Unit
 addLink source target linkType = modify_ \s ->
   s { links = Array.snoc s.links { source, target, type: linkType } }
 
+flowLink :: String -> String -> Evaluator Unit
+flowLink source target = addLink source target "flow"
+
+-- | Emit something between two endpoints the way the operator points:
+-- | `->`/`=>` left-to-right, `<-`/`<=` swapped. Every directional emission
+-- | goes through here, so the swap lives in one place for both link kinds.
+directed :: (String -> String -> Evaluator Unit) -> Dir -> String -> String -> Evaluator Unit
+directed emit Rightward a b = emit a b
+directed emit Leftward a b = emit b a
+
+-- | A node with nothing attached yet -- every node is born here and is filled
+-- | in afterwards by the annotation setters (a port stamps its `parent` on
+-- | top). The one place the empty record is spelled out.
+blank :: NodeType -> String -> NodeRec
+blank ty label = { ty, label, value: Nothing, steps: Nothing, expr: Nothing, parent: Nothing }
+
+-- | The two node-table primitives: every creation and every mutation goes
+-- | through one of these, so `nodes` is written in exactly two places and the
+-- | record-update noise stays out of the rules above them.
+putNode :: String -> NodeRec -> Evaluator Unit
+putNode id rec = modify_ \s -> s { nodes = Map.insert id rec s.nodes }
+
+updateNode :: String -> (NodeRec -> NodeRec) -> Evaluator Unit
+updateNode id f = modify_ \s -> s { nodes = Map.update (Just <<< f) id s.nodes }
+
 -- | Named nodes: reuse the id from the registry if this name has been
 -- | seen before, otherwise mint one from this occurrence's parser Id.
 resolveNamed :: NodeType -> Id -> String -> Evaluator String
@@ -152,10 +139,8 @@ resolveNamed ty i name = do
     Just existingId -> pure existingId
     Nothing -> do
       let newId = prefixFor ty <> show i
-      modify_ \s -> s
-        { registry = Map.insert name newId s.registry
-        , nodes = Map.insert newId { ty, label: name, value: Nothing, steps: Nothing, expr: Nothing, parent: Nothing } s.nodes
-        }
+      modify_ \s -> s { registry = Map.insert name newId s.registry }
+      putNode newId (blank ty name)
       pure newId
 
 -- | Clouds are anonymous, so the evaluator picks their display label.
@@ -167,38 +152,43 @@ cloudLabel = "|"
 freshAnon :: NodeType -> Id -> String -> Evaluator String
 freshAnon ty i label = do
   let newId = prefixFor ty <> show i
-  modify_ \s -> s { nodes = Map.insert newId { ty, label, value: Nothing, steps: Nothing, expr: Nothing, parent: Nothing } s.nodes }
+  putNode newId (blank ty label)
   pure newId
 
--- | Attach a value annotation (a stock's initial level, a faucet's rate, a
--- | dot's auxiliary constant) to
--- | an already-resolved node. First explicit value wins: a valueless mention
--- | is a no-op, and later values never overwrite an existing one (`<|>`
--- | keeps the first Just) -- mirroring the registry's first-mention-wins
--- | identity rule while still letting `[a] ... [a: 5]` fill the blank in.
+-- | Attach a stock's initial level to an already-resolved node -- through the
+-- | same first-wins guard as every other annotation, so a valueless mention is
+-- | a no-op, `[a] ... [a: 5]` still fills the blank in, and a name that was
+-- | given a formula first (`b: (a)` then `[b: 5]`) keeps it instead of
+-- | acquiring a second, contradictory reading.
 setValue :: String -> Maybe Number -> Evaluator Unit
 setValue _ Nothing = pure unit
-setValue id mval = modify_ \s ->
-  s { nodes = Map.update (\rec -> Just rec { value = rec.value <|> mval }) id s.nodes }
+setValue id mval = annotate id _ { value = mval }
 
 -- | Attach a schedule (a faucet's rate, a dot's constant or driving curve).
--- | Same first-wins spirit, but as a unit: the first mention carrying any
--- | annotation fixes the initial (`value`) and the steps together; later
--- | annotations never overwrite either. An empty steps list serializes as
--- | no `steps` key at all.
+-- | The initial (`value`) and the steps land together, under the one
+-- | first-wins rule below. An empty steps list serializes as no `steps` key
+-- | at all.
 setSched :: String -> Sched -> Evaluator Unit
-setSched id sch = modify_ \s ->
-  s { nodes = Map.update upd id s.nodes }
-  where
-  upd rec = Just $ if annotated rec then rec else rec
-    { value = Just sch.initial
-    , steps = if Array.null sch.steps then Nothing else Just sch.steps
-    }
+setSched id sch = annotate id \rec -> rec
+  { value = Just sch.initial
+  , steps = if Array.null sch.steps then Nothing else Just sch.steps
+  }
+
+-- | The annotation rule, in one place: the FIRST explicit annotation wins, as
+-- | a UNIT -- a value-less mention never erases, and a later annotation (of
+-- | any kind: value, schedule, or formula) never overwrites one already
+-- | there. `setFormula` consults the same predicate one step earlier, before
+-- | resolving its references, so a losing formula mints nothing.
+annotate :: String -> (NodeRec -> NodeRec) -> Evaluator Unit
+annotate id f = updateNode id \rec -> if annotated rec then rec else f rec
 
 -- | Already carrying an annotation? (a plain/scheduled value or a formula
 -- | -- either blocks later annotations, as a unit)
 annotated :: NodeRec -> Boolean
 annotated rec = isJust rec.value || isJust rec.expr
+
+isAnnotated :: String -> Evaluator Boolean
+isAnnotated id = gets \s -> maybe false annotated (Map.lookup id s.nodes)
 
 -- | Record the first model-level error; later ones keep the first.
 setErr :: String -> Evaluator Unit
@@ -221,10 +211,8 @@ portFor id = do
     Just Stock -> do
       n <- gets _.portCount
       let pid = prefixFor Port <> show n
-      modify_ \s -> s
-        { portCount = n + 1
-        , nodes = Map.insert pid { ty: Port, label: "", value: Nothing, steps: Nothing, expr: Nothing, parent: Just id } s.nodes
-        }
+      modify_ \s -> s { portCount = n + 1 }
+      putNode pid ((blank Port "") { parent = Just id })
       pure pid
     _ -> pure id
 
@@ -246,29 +234,22 @@ drawArrow source target = do
     addLink src tgt "arrow"
 
 -- | Resolve a formula's references through the registry (minting dots for
--- | unseen names, exactly like a bare mention). A reference must land on a
--- | stock or a dot -- a faucet has no value to read (v1) -- EXCEPT as a
--- | time shift's input, where a faucet reference reads the flow's rate:
--- | that is how `orders(t - ...)` reads a delayed flow. The flag rides
--- | down through arithmetic; a shift's time resets it (a delay time is a
--- | value, not a flow).
-resolveFormula :: Boolean -> Formula -> Evaluator RFormula
-resolveFormula _ (FNum n) = pure (RNum n)
-resolveFormula _ FTime = pure RTime
-resolveFormula _ FPi = pure RPi
-resolveFormula inShift (FBin op l r) = RBin (opString op) <$> resolveFormula inShift l <*> resolveFormula inShift r
-resolveFormula inShift (FFun1 name a) = RFun1 name <$> resolveFormula inShift a
-resolveFormula inShift (FFun2 name l r) = RFun2 name <$> resolveFormula inShift l <*> resolveFormula inShift r
-resolveFormula _ (FCall input time) =
-  RCall <$> resolveFormula true input <*> resolveFormula false time
-resolveFormula inShift (FRef i name) = do
+-- | unseen names, exactly like a bare mention) -- the whole walk is `Expr`'s,
+-- | so this says only what a single reference MEANS. A reference must land on
+-- | a stock or a dot -- a faucet has no value to read (v1) -- EXCEPT as a
+-- | time shift's input, where a faucet reference reads the flow's rate: that
+-- | is how `orders(t - ...)` reads a delayed flow (`traverseRefs` carries the
+-- | in-a-shift flag down for us, resetting it for a shift's time, which is a
+-- | value and not a flow).
+resolveFormula :: Formula -> Evaluator RFormula
+resolveFormula = traverseRefs \inShift (Ref i name) -> do
   id <- resolveNamed Dot i name
   tyM <- gets \s -> map _.ty (Map.lookup id s.nodes)
   case tyM of
     Just Faucet | not inShift ->
       setErr ("a formula may only reference stocks and dots; '" <> name <> "' is a faucet (a time shift like " <> name <> "(t - T) may read one)")
     _ -> pure unit
-  pure (RRef id)
+  pure id
 
 -- | Attach a formula annotation: resolve its references, store the resolved
 -- | tree, and draw the info arrows the equation implies (each referenced
@@ -277,11 +258,11 @@ resolveFormula inShift (FRef i name) = do
 -- | refs minted, no arrows).
 setFormula :: String -> Formula -> Evaluator Unit
 setFormula id f = do
-  already <- gets \s -> maybe false annotated (Map.lookup id s.nodes)
+  already <- isAnnotated id
   if already then pure unit
   else do
-    rf <- resolveFormula false f
-    modify_ \s -> s { nodes = Map.update (\rec -> Just rec { expr = Just rf }) id s.nodes }
+    rf <- resolveFormula f
+    updateNode id _ { expr = Just rf }
     traverse_ (\src -> drawArrow src id) (refIds rf)
 
 -- | Dispatch an annotation to its setter.
@@ -292,110 +273,92 @@ setAnnot id (Just (FormulaAnnot f)) = setFormula id f
 
 -- | Resolve (registering as needed) the id of the leftmost leaf of a
 -- | subtree, without walking the rest of the subtree's internal links.
+-- |
+-- | It looks like duplicated work -- the caller evaluates that subtree
+-- | immediately afterwards -- but running it FIRST is load-bearing: the link
+-- | it lets the caller draw lands between the subtree's own links (the arrow
+-- | in `([s]=>f)->([t]=>g)` sits between the two flows) and fixes port
+-- | numbering. Both are pinned byte-exactly by test/golden.mjs.
 leftmostId :: Tree -> Evaluator String
 leftmostId (NodeExpr i s _) = resolveNamed Dot i s
 leftmostId (StockExpr i s _) = resolveNamed Stock i s
 leftmostId (CloudExpr i) = freshAnon Cloud i cloudLabel
-leftmostId (FaucetRExpr _ _ _ left _) = leftmostId left
-leftmostId (FaucetLExpr _ _ _ left _) = leftmostId left
-leftmostId (ArrowRExpr _ left _) = leftmostId left
-leftmostId (ArrowLExpr _ left _) = leftmostId left
+leftmostId (FaucetExpr _ _ _ _ left _) = leftmostId left
+leftmostId (ArrowExpr _ _ left _) = leftmostId left
 leftmostId (ParenExpr _ expr) = leftmostId expr
 leftmostId (LoopExpr _ _ expr) = leftmostId expr
 
--- | Evaluate a subtree, registering nodes/links as a side effect, and
--- | return the id (never the label) of the node it resolves to.
-evaluateNode :: Tree -> Evaluator String
+-- | What evaluating a subtree yields: the id it RESOLVES TO (never a label --
+-- | see the sink rule on the arrow cases) and, in source order, the ids of
+-- | every node the subtree mentions. The membership is collected on the way
+-- | through, so a loop annotation reads it straight off its body instead of
+-- | re-walking the same tree with a second family of functions.
+type Eval = { id :: String, members :: Array String }
+
+leaf :: String -> Eval
+leaf id = { id, members: [ id ] }
+
+-- | Evaluate a subtree, registering nodes/links as a side effect.
+evaluateNode :: Tree -> Evaluator Eval
 evaluateNode (NodeExpr i s v) = do
   did <- resolveNamed Dot i s
   setAnnot did v
-  pure did
+  pure (leaf did)
 evaluateNode (StockExpr i s v) = do
   sid <- resolveNamed Stock i s
   setValue sid v
-  pure sid
-evaluateNode (CloudExpr i) = freshAnon Cloud i cloudLabel
-evaluateNode (FaucetRExpr i name v left right) = do
+  pure (leaf sid)
+evaluateNode (CloudExpr i) = leaf <$> freshAnon Cloud i cloudLabel
+-- | A flow: the left operand feeds the faucet, which pours into the target.
+-- | `<=` reverses both hops (the right operand feeds, the left receives), and
+-- | that is the ONLY difference between the two spellings -- `directed` holds
+-- | the swap, so neither hop can be reversed in one direction and forgotten
+-- | in the other.
+evaluateNode (FaucetExpr i dir name v left right) = do
   l <- evaluateNode left
   fid <- resolveNamed Faucet i name
   setAnnot fid v
-  addLink l fid "flow"
+  directed flowLink dir l.id fid
   case right of
-    Nothing -> pure fid
+    Nothing -> pure { id: fid, members: l.members <> [ fid ] }
     Just r -> do
       rid <- leftmostId r
-      addLink fid rid "flow"
-      evaluateNode r
--- | `<=` flows right-to-left: the right operand feeds the faucet, which pours
--- | into the left operand (mirrors how ArrowL swaps its endpoints).
-evaluateNode (FaucetLExpr i name v left right) = do
-  l <- evaluateNode left
-  fid <- resolveNamed Faucet i name
-  setAnnot fid v
-  addLink fid l "flow"
-  case right of
-    Nothing -> pure fid
-    Just r -> do
-      rid <- leftmostId r
-      addLink rid fid "flow"
-      evaluateNode r
-evaluateNode (ArrowRExpr _ left right) = do
+      directed flowLink dir fid rid
+      res <- evaluateNode r
+      pure { id: res.id, members: l.members <> [ fid ] <> res.members }
+-- | An info arrow links the left term to the *nearest* term of the right
+-- | subtree (its leftmost leaf), never the chain's far end, so `a<-b->c` fans
+-- | out from b (b->a and b->c) -- exactly how a faucet picks its source. The
+-- | chain then resolves to its information SINK: `->` hands back the right
+-- | subtree's resolution, `<-` the left's (`B(a<-b) <- c` hangs the tail off
+-- | the head of the loop's chain).
+evaluateNode (ArrowExpr _ dir left right) = do
   l <- evaluateNode left
   rid <- leftmostId right
-  drawArrow l rid
-  evaluateNode right
--- | `<-` mirrors ArrowR: the link comes from the *nearest* term of the right
--- | subtree (its leftmost leaf), not the chain's far end, so `a<-b->c` fans
--- | out from b (b->a and b->c) -- exactly how FaucetLExpr picks its source.
-evaluateNode (ArrowLExpr _ left right) = do
-  l <- evaluateNode left
-  rid <- leftmostId right
-  drawArrow rid l
-  _ <- evaluateNode right
-  pure l
+  directed drawArrow dir l.id rid
+  r <- evaluateNode right
+  pure { id: sink dir l.id r.id, members: l.members <> r.members }
+  where
+  sink Rightward _ rightId = rightId
+  sink Leftward leftId _ = leftId
 evaluateNode (ParenExpr _ expr) = evaluateNode expr
 -- | A loop annotation is transparent to evaluation: the inner expression
 -- | emits its nodes and links as if unwrapped; afterwards every node it
 -- | mentions is tagged with the loop's generated name ("R0", "B1", ... --
 -- | the kind's letter plus one source-order counter across the program).
 evaluateNode (LoopExpr _ kind inner) = do
-  rid <- evaluateNode inner
-  members <- Array.nub <$> memberIds inner
+  res <- evaluateNode inner
   n <- gets _.loopCount
   let name = loopLetter kind <> show n
   modify_ \s -> s
     { loopCount = n + 1
-    , loopTags = foldl (addLoopTag name) s.loopTags members
+    , loopTags = foldl (addLoopTag name) s.loopTags (Array.nub res.members)
     }
-  pure rid
+  pure res
 
 -- | Append a loop name to a node's tag list (creating the list on first tag).
 addLoopTag :: String -> Map.Map String (Array String) -> String -> Map.Map String (Array String)
 addLoopTag name m id = Map.alter (Just <<< maybe [ name ] (_ <> [ name ])) id m
-
--- | Source-order ids of every node a subtree mentions. Runs *after* the
--- | subtree has been evaluated, so every name is registered and
--- | resolveNamed/freshAnon are idempotent lookups (registry hit; a cloud
--- | re-inserts under its existing parser-id key, a no-op).
-memberIds :: Tree -> Evaluator (Array String)
-memberIds (NodeExpr i s _) = Array.singleton <$> resolveNamed Dot i s
-memberIds (StockExpr i s _) = Array.singleton <$> resolveNamed Stock i s
-memberIds (CloudExpr i) = Array.singleton <$> freshAnon Cloud i cloudLabel
-memberIds (FaucetRExpr i name _ left right) = faucetMembers i name left right
-memberIds (FaucetLExpr i name _ left right) = faucetMembers i name left right
-memberIds (ArrowRExpr _ left right) = append <$> memberIds left <*> memberIds right
-memberIds (ArrowLExpr _ left right) = append <$> memberIds left <*> memberIds right
-memberIds (ParenExpr _ expr) = memberIds expr
-memberIds (LoopExpr _ _ expr) = memberIds expr
-
--- | Shared by both faucet directions: left operand, the faucet itself, then
--- | the optional target -- source order.
-faucetMembers :: Id -> String -> Tree -> Maybe Tree -> Evaluator (Array String)
-faucetMembers i name left right = do
-  ls <- memberIds left
-  fid <- resolveNamed Faucet i name
-  rs <- maybe (pure []) memberIds right
-  pure (ls <> [ fid ] <> rs)
 
 -- | Undirected adjacency over a set of links (used for flow connectivity).
 buildAdjacency :: Array Link -> Map.Map String (Set String)
@@ -404,16 +367,20 @@ buildAdjacency links = foldl step Map.empty links
   step m l = addEdge l.source l.target (addEdge l.target l.source m)
   addEdge a b m = Map.insertWith Set.union a (Set.singleton b) m
 
--- | Every id reachable from `start` in the adjacency (DFS with a visited set).
-reach :: Map.Map String (Set String) -> String -> Set String
-reach adj start = go (start : Nil) Set.empty
+-- | Every id reachable from a frontier by following `next` (DFS with a
+-- | visited set). The file's one graph walk: the two things it is asked --
+-- | flow-band components and formula cycles -- differ only in the successor
+-- | function and the frontier they start from.
+closure :: (String -> Array String) -> Array String -> Set String
+closure next frontier = go (List.fromFoldable frontier) Set.empty
   where
   go Nil seen = seen
   go (x : xs) seen
     | Set.member x seen = go xs seen
-    | otherwise =
-        let nbrs = fromMaybe Set.empty (Map.lookup x adj)
-        in go (List.fromFoldable nbrs <> xs) (Set.insert x seen)
+    | otherwise = go (List.fromFoldable (next x) <> xs) (Set.insert x seen)
+
+neighbours :: Map.Map String (Set String) -> String -> Array String
+neighbours adj id = Array.fromFoldable (fromMaybe Set.empty (Map.lookup id adj))
 
 -- | Connected components of the adjacency, as node-id sets.
 connectedComponents :: Map.Map String (Set String) -> Array (Set String)
@@ -423,7 +390,7 @@ connectedComponents adj = (foldl step { visited: Set.empty, comps: [] } nodeIds)
   step acc n
     | Set.member n acc.visited = acc
     | otherwise =
-        let c = reach adj n
+        let c = closure (neighbours adj) [ n ]
         in { visited: Set.union acc.visited c, comps: Array.snoc acc.comps c }
 
 -- | The integer the parser minted for an id (`stock#5` -> 5). Needed because
@@ -463,14 +430,8 @@ formulaCycleError nodes =
       succs id = case Map.lookup id nodes of
         Just { expr: Just rf } -> Array.filter hasExpr (eagerRefIds rf)
         _ -> []
-      cyclic start =
-        let go frontier seen = case Array.uncons frontier of
-              Nothing -> false
-              Just { head, tail }
-                | head == start -> true
-                | Set.member head seen -> go tail seen
-                | otherwise -> go (tail <> succs head) (Set.insert head seen)
-        in go (succs start) Set.empty
+      -- a node is on a cycle when it is reachable from its own successors
+      cyclic start = Set.member start (closure succs (succs start))
       ids = map fst (Map.toUnfoldable nodes :: Array (Tuple String NodeRec))
       labelOf id = maybe id _.label (Map.lookup id nodes)
   in case Array.head (Array.filter cyclic (Array.filter hasExpr ids)) of

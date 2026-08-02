@@ -77,7 +77,9 @@ Editing `.purs` alone and refreshing the browser will silently run stale code.
 
 A classic three-stage pipeline, orchestrated by `go` in `Main.purs`
 (`tokenize >=> parse >=> evaluate`, each stage short-circuiting on `Either` error into a
-JSON error string):
+JSON error string). Two small modules sit beside it rather than in it:
+**`Expr.purs`** (the value-formula shape, below) and **`Formatter.purs`**
+(the pretty-printer, further down):
 
 1. **`Lexer.purs`** — `tokenize :: String -> Either String (List PosToken)`, built on the
    `purescript-parsing` combinator library. Each token carries the source position where
@@ -132,7 +134,8 @@ JSON error string):
    note multi-word joining makes `output fraction` ONE name — write
    `output * fraction` to multiply, and `pi t` is likewise one NAME —
    write `pi * t`), references to other nodes by name (a `Formula` AST
-   with per-reference minted ids), the reserved **time variable `t`** and
+   — `Expr Ref`, see `Expr.purs` — with per-reference minted ids), the
+   reserved **time variable `t`** and
    **constant `pi`** as complete terms (`a: (t)` is the time itself — a
    ramp; both mint nothing and take no shift tail, so `t(t - 1)` is
    juxtaposed multiplication; nodes named `t`/`pi` are unreachable from
@@ -145,7 +148,7 @@ JSON error string):
    `smooth`/`delay` precedent; calls mint no id, only the references
    inside their arguments do) — and the one **time
    shift** `x(t - T)` (the value x had exactly T ago — a pipeline delay) —
-   `FCall`, minting NO id of its own. A
+   `EShift`, minting NO id of its own. A
    shift opens on the exact token pair `(t` after a name, a paren group,
    or a call
    (`peekShift`, a pure two-token peek — so `x(a + b)` stays juxtaposed
@@ -156,7 +159,7 @@ JSON error string):
    `x(t - 2)(t - 3)` delays the delayed signal), carried as
    `Maybe Annot = Maybe (SchedAnnot Sched | FormulaAnnot Formula)` with
    `Sched = { initial, steps :: Array { at, value } }`
-   on `Faucet*Expr` and `NodeExpr` — a scheduled or closed-formula dot is
+   on `FaucetExpr` and `NodeExpr` — a scheduled or closed-formula dot is
    a *driving variable*
    (figure 19's cold-day `outside temperature`). Steps hold
    piecewise-constant and model GENUINE discrete events (a valve opening,
@@ -178,11 +181,26 @@ JSON error string):
    the `fresh` counter (ParserT's `MonadState` passes through to the base `State Id`) —
    this identity is what later lets repeated mentions of the same name collapse to one
    graph node, and the minting *order* is pinned byte-exactly by `test/golden.mjs`.
+   The order follows ONE rule, stated at `fresh` and obeyed by every
+   production: an id is taken the moment the node's own lexemes are consumed
+   and BEFORE any sub-expression is parsed (leaves mint after their own
+   tokens, `(`/`R(` before their body, an operator after the operator and
+   before the right operand) — so source order is a consequence of the
+   grammar's shape, not of call ordering.
    Failures are positioned errors; the parser never fabricates nodes. The `Tree` ADT
-   is the AST.
+   is the AST — `->`/`<-` share one `ArrowExpr` and `=>`/`<=` one
+   `FaucetExpr`, each carrying a `Dir` (`Rightward`/`Leftward`) as DATA, so
+   every rule that depends on direction is written once downstream instead
+   of twice.
 
 3. **`Evaluator.purs`** — `evaluate :: List Tree -> Graph`. Walks each `Tree` in a `State`
-   monad (`EvalState`), emitting nodes and links as side effects. Key identity rule:
+   monad (`EvalState`), emitting nodes and links as side effects.
+   `evaluateNode` returns `{ id, members }` — the id the subtree RESOLVES to
+   plus, in source order, every node it mentions, so a loop annotation reads
+   its membership straight off its body instead of re-walking it. Every write
+   to the node table goes through `putNode`/`updateNode` (and `blank` for a
+   fresh record), and every directional emission through `directed`. Key
+   identity rule:
    - **Named nodes** (dots, stocks, faucets) go through `resolveNamed`, which uses a
      `registry :: Map name -> id`. The *first* occurrence of a name mints an id; later
      occurrences reuse it. This is why writing a name twice references the same node.
@@ -203,11 +221,17 @@ JSON error string):
      `Id`, never from source text. Links reference these ids, i.e. identity not spelling.
    - **Loop annotations** are transparent to evaluation: `LoopExpr`'s inner
      expression emits its nodes/links as if unwrapped, then every node it mentions
-     (collected by the `memberIds` walk, run *after* evaluation so lookups are
-     idempotent) is tagged in `loopTags` with a generated name — the kind's letter
+     (its `members`, accumulated by the same walk that evaluated it — a formula's
+     references are NOT members, since only the structural leaves contribute) is
+     tagged in `loopTags` with a generated name — the kind's letter
      plus one source-order counter (`"R0"`, `"B1"`, …, like group numbering).
    - `<-` links each hop from the *nearest* term of its right subtree
      (`leftmostId`, same as the faucets), so `a<-b->c` fans out from `b`.
+     `leftmostId` runs BEFORE the right subtree is evaluated and that is
+     load-bearing: it puts the arrow between the two flows of
+     `([s]=>f)->([t]=>g)` and fixes port numbering, both golden-pinned. An
+     arrow chain then resolves to its information SINK (`->` the far end,
+     `<-` the head — so `B(a<-b) <- c` hangs its tail off the chain's head).
    - **Value annotations** land in `Node.value`/`Node.steps` via `setValue`
      (stocks) and `setAnnot` (faucets and dots — schedules through
      `setSched`, formulas through `setFormula`): the *first explicit*
@@ -216,6 +240,11 @@ JSON error string):
      overwrite, and a schedule wins *as a unit* (value + steps together; a
      formula
      counts as the annotation too — value vs formula, whichever came first).
+     That rule is the `annotate` guard, in ONE place — every setter goes
+     through it, `setValue` included, so no name can end up carrying two
+     contradictory readings (`b: (a)` then `[b: 5]` keeps the formula);
+     `setFormula` consults the same `annotated` predicate one step earlier,
+     before resolving its references, so a losing formula mints nothing.
      **Formulas** resolve their references through the registry (minting
      dots for unseen names), must land on stocks or dots (a faucet
      reference is a model error — EXCEPT as a time shift's INPUT, where
@@ -226,7 +255,9 @@ JSON error string):
      (`{kind: "num"|"ref"|"+"|"-"|"*"|"/"|"^"}` with ids, plus
      `{kind: "delay", input, time}` for time shifts, `{kind: "t"}`,
      `{kind: "pi"}`, `{kind: "cos"|"sin", arg}`, and
-     `{kind: "min"|"max", left, right}` — `RFormula`), and
+     `{kind: "min"|"max", left, right}` — `RFormula`, which IS the parser's
+     `Formula` with node ids in its reference slots: one `Expr r` declared in
+     `Expr.purs`, resolved by `traverseRefs` and serialized there), and
      auto-draw the info arrow each reference implies, shift inputs, shift
      times, and function arguments included (deduplicated against
      identical arrows already drawn — so `R(...)` annotations and formulas
@@ -237,7 +268,9 @@ JSON error string):
      shift's value is last step's state, never its input's current value,
      so a feedback loop closed through `orders(t - …)` is legal — but
      recurses into function arguments (a `min` reads both sides right
-     now). Semantically a stock's value is its initial level; a dot's is
+     now). `refIds` and `eagerRefIds` are the SAME fold (`Expr`'s
+     `refsWhere`) under two policies, and refusing to descend into a shift
+     is the whole difference between them. Semantically a stock's value is its initial level; a dot's is
      an auxiliary constant or, with steps or a closed formula (one
      referencing no nodes — pure maths of `t`), a driving variable
      (a goal-seeking faucet's goal, fixed or moving); a faucet's
@@ -250,6 +283,19 @@ JSON error string):
    `Graph = { nodes, links }`. `NodeType`
    (`Dot`/`Stock`/`Faucet`/`Cloud`/`Port`) has a `WriteForeign` instance so the
    whole graph serializes to the JSON the UI expects.
+
+**`Expr.purs`** owns the value-formula shape, shared by the two stages that
+speak it. A formula exists in two forms — the parser's, whose references are
+*mentions* (`Ref id name`), and the evaluator's, whose references are node ids
+— and they are the same tree, so it is declared once as `Expr r`
+(`Formula = Expr Ref`, `RFormula = Expr String`). Everything structural lives
+with it: `children` (the shape), `refsWhere` (fold it — `refIds`/`eagerRefIds`
+are two policies over this one walk), `traverseRefs` (rebuild it, carrying the
+in-a-shift flag down so the evaluator only has to say what a single reference
+MEANS), and the `WriteForeign` instance that writes the `{kind: …}` JSON the
+simulator evaluates. Adding a formula form (the `t`/`pi`/`cos`/`sin`/`min`/`max`
+and shift additions each did this) means one case per concern here, not one per
+concern in each of two copies.
 
 Alongside the pipeline sits **`Formatter.purs`** — `format :: String -> String`,
 the canonical pretty-printer behind the UI's format button. It re-lexes with the
