@@ -1,5 +1,7 @@
 # Meadows
 
+**[Try it in your browser →](https://lorezzed.github.io/meadows/)**
+
 A tiny text language for **stock-and-flow diagrams** — the system-dynamics notation
 of Donella Meadows' *Thinking in Systems* — with an interactive playground that
 draws the model as a live force-directed diagram and simulates its behavior over
