@@ -271,8 +271,10 @@ perception delay -> perceived sales`
         // Both delays are pipeline shifts, minting no nodes — the diagram
         // stays exactly figure 31: perceived sales reads the sales flow
         // as it was 0.5 ago (sales(t - perception delay)), deliveries the
-        // orders 0.5 ago. Inventory holds 200, dips to ~187 near day 31,
-        // then oscillates with growing swings.
+        // orders 0.5 ago. Inventory (1 unit = 10 days) holds 200 to day
+        // 25, dips to ~187 at day 33, then oscillates on a ~20-day period
+        // with growing swings: 261 at day 44, 155 at day 74, 296 at day
+        // 84, 139 at day 95.
         label: 'figure 31 & 32',
         content: `| =>deliveries [inventory of cars on the lot: 200] =>sales |
 B(deliveries <- orders to factory <- discrepancy <- inventory of cars on the lot)
@@ -292,7 +294,7 @@ delivery delay: 0.5`
         // figure 33's panels — sales vs perceived sales (the perception
         // pair), orders vs deliveries (the delivery pair).
         label: 'figure 31 & 33',
-        flows: false,
+        flows: true,
         content: `| =>deliveries [inventory of cars on the lot: 200] =>sales |
 B(deliveries <- orders to factory <- discrepancy <- inventory of cars on the lot)
 orders to factory: (perceived sales + discrepancy / response delay)
@@ -307,10 +309,12 @@ response delay: 0.2
 delivery delay: 0.5`
     },
     {
-        // Figure 34's inventory chart: the SAME base model as 31 & 32
-        // (response delay 0.3), duplicated under the book's own figure
-        // number — flat 200 to day 25, dip to ~187 at day 31, then the
-        // growing ~21-day oscillation.
+        // Figure 34's inventory chart, under the book's own figure
+        // number: the 31 & 32 model with the dealer half a day quicker
+        // (response delay 0.25 = 2.5 days) — the same opening, flat 200
+        // to day 25 and a ~187 dip at day 32, then the same ~20-day
+        // oscillation swinging WIDER than 32's for the quicker hand:
+        // 333 at day 62, 132 at day 74, 350 at day 84.
         label: 'figure 31 & 34',
         content: `| =>deliveries [inventory of cars on the lot: 200] =>sales |
 B(deliveries <- orders to factory <- discrepancy <- inventory of cars on the lot)
@@ -326,9 +330,13 @@ response delay: 0.25
 delivery delay: 0.5`
     },
     {
-        // Figure 35's growing oscillation: the dealer reacting FASTER
-        // (response delay 0.2 = 2 days) makes it worse — peaks driven to
-        // ~400 with troughs cut toward ~127.
+        // Figure 35's growing oscillation: the dealer reacting FASTEST
+        // (response delay 0.1 = 1 day) makes it worst of the family —
+        // from the same ~188 dip at day 31, peaks are driven to 355 at
+        // day 41 and 631 at day 61, troughs cut to 116. The order rate
+        // swings so hard it goes deeply negative, clamping deliveries
+        // shut on ~40% of steps. Figure 31 & 36 is the mirror: a SLOWER
+        // dealer (6 days) rings once and settles.
         label: 'figure 31 & 35',
         content: `| =>deliveries [inventory of cars on the lot: 200] =>sales |
 B(deliveries <- orders to factory <- discrepancy <- inventory of cars on the lot)

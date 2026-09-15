@@ -101,10 +101,15 @@ decision point can see. Chains hop node to node, and `a <- b -> c` fans both
 arrows out of `b`:
 
 ```text
+[stock2] =>outflow |
 stock2 -> outflow
 desired inventory -> discrepancy
 profit <- price <- yield per unit capital -> extraction
 ```
+
+The first two lines are the book's figure 8: a stock whose drain reads its own
+level. Note that the arrow says `stock2`, not `[stock2]` — brackets *declare*
+the stock, and every later mention is just its name.
 
 In the drawn diagram an information arrow never touches a stock's body
 directly: it lands on a small **port** circle pinned to the stock's edge (you
@@ -155,12 +160,17 @@ pairs, each holding until the next — piecewise-constant.
 ```text
 | =>inflow: 0 @5: 5 [water in tub: 50] =>outflow: 5 |
 | =>espresso: 0 @1: 240 @1.5: 0 @6: 240 @6.5: 0 [caffeine in blood: 0] =>metabolism |
+metabolism: (0.14 caffeine in blood)
 ```
 
 The first is the book's figure 7 (the tap opens at t=5); the second is two
-espresso shots as pulses. Schedules model *genuine discrete events* — a valve
-opening, a dose. A smoothly changing quantity should be written as a formula
-of `t` instead.
+espresso shots as pulses, draining against a proportional decay (a formula —
+see below), so the afternoon shot stacks on the morning's residue. Without
+that drain line `metabolism` would be a *bare* faucet — a closed tap — and the
+caffeine would only ever climb.
+
+Schedules model *genuine discrete events* — a valve opening, a dose. A
+smoothly changing quantity should be written as a formula of `t` instead.
 
 ### Formulas
 
@@ -228,8 +238,27 @@ Rules of the form:
   shift's *time* still can't be.
 - Shifts mint no nodes, so a delayed model's diagram keeps the book figure's
   exact node census. And because a shift's value is last step's state — never
-  a recursive read of its input — a feedback loop closed through a shift is
-  legal, which is how the hog-cycle model oscillates forever.
+  a recursive read of its input — a formula may close a loop through one:
+  `a: (a + 1)` is a cycle error, while `a: (a(t - 1) + 1)` is legal.
+
+A delay is also what makes a loop *oscillate*. The hog cycle — farmers who
+breed on the price they saw two units ago:
+
+```text
+| =>breeding [pigs at market: 90] =>sales |
+breeding: (price(t - 2))
+price: (200 - pigs at market)
+sales: (0.5 pigs at market)
+B(breeding <- price <- pigs at market)
+```
+
+Every farmer is acting on information that is already out of date, so supply
+keeps overshooting demand: the herd swings between 90 and 177 and never
+settles (the **boom & bust** button — raise `t =` to 40 to watch several more
+cycles). Drop the shift, writing `breeding: (price)`, and the model still
+compiles — this loop runs through a *stock*, not formula-to-formula, so there
+was never a cycle to reject — but the herd slides straight to 133 and sits
+there. The oscillation is the delay, and nothing else.
 
 There is deliberately no smoothing primitive: perception-style reads *are* the
 pipeline shift, and exponential approach falls out of goal-seeking faucets.
@@ -300,9 +329,15 @@ by headless tests against the real compiled backend.
   that doesn't lex is left untouched.
 - In the **diagram**: drag a node to pin it where you drop it; click a pinned
   node to release it back to the forces. Ports drag along their stock's
-  boundary. Clicking empty space adds a free dot (a manual-editing affordance
-  outside the DSL). A `+` / `1×` / `−` cluster in the corner zooms; oversized
-  models auto-fit.
+  boundary. Clicking a node's label renames it everywhere. Dragging empty
+  space pans; a `+` / `1×` / `−` cluster in the corner zooms (`1×` resets
+  both), and oversized models auto-fit.
+- A **palette** in the diagram's other corner edits the model by drawing:
+  pickers for a dot, stock, faucet or cloud place one at the next click; the
+  arrow and flow pickers run a source→target pick; the `R` / `B` pickers mark
+  a loop by clicking its nodes in order; and select / delete act on what's
+  already there. Every one of them is a *text* edit — the statement is
+  appended to (or removed from) the editor, so the source stays the model.
 
 ## The CLI
 
@@ -332,22 +367,23 @@ src/                  the compiler (PureScript)
   Main.purs             go = tokenize >=> parse >=> evaluate; re-exports format
   CLI.purs              terminal runner (kept out of the browser bundle)
 ui/                   the frontend (TypeScript + d3)
-  app.ts                DOM, editor + highlighting, diagram, force simulation
+  app.ts                DOM, editor + highlighting, diagram, palette, gestures
+  layout.ts             band/slot geometry and the force simulation
   simulate.ts           the forward-Euler engine (pure; runs headless)
   chart.ts              behavior-over-time panel
   highlight.ts          editor tokenizer mirroring the lexer's naming
   example.ts            the example buttons
 test/                 unit suite (test/Main.purs), byte-exact goldens
                       (golden.mjs + goldens.json), headless frontend checks
-                      (simulate/highlight/format .mjs)
+                      (simulate/highlight/format/layout .mjs)
 ```
 
-`make test` runs all four layers. The goldens pin the compiler's JSON output
+`make test` runs every layer. The goldens pin the compiler's JSON output
 byte-for-byte; after an *intended* output change, refresh them with
-`node test/golden.mjs --capture`. Formatter, simulator, and highlighter tests
-run `ui/*.ts` directly under node's type stripping against the real compiled
-backend — another reason `spago build` must precede them (the `make test`
-target does this for you).
+`node test/golden.mjs --capture`. The formatter, simulator, highlighter, and
+layout tests run `ui/*.ts` directly under node's type stripping against the
+real compiled backend — another reason `spago build` must precede them (the
+`make test` target does this for you).
 
 The name honors Donella H. Meadows (1941–2001), whose *Thinking in Systems: A
 Primer* supplies the notation, the figures, and the reason to draw them.
