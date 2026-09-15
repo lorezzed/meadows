@@ -307,14 +307,57 @@ Semantics, per node:
   exactly. A faucet read through a shift reports its *applied* (post-ration)
   rate.
 
-Only stocks plot as chart series. When a model has delays, a **flows** toggle
-appears and overlays each shift's input (solid) and output (dashed) — the
-book's figure-33 view of the dealership's perception and delivery pairs. The
-chart has a hover crosshair with a tooltip reading out every stock (keyboard:
-`←`/`→` to step, Shift for ×10, Esc to dismiss).
+Only stocks plot as chart series. The chart has a hover crosshair with a
+tooltip reading out every line (keyboard: `←`/`→` to step, Shift for ×10, Esc
+to dismiss).
 
 The engine lives in `ui/simulate.ts`, pure and dependency-free, and is pinned
 by headless tests against the real compiled backend.
+
+### The flows checkbox
+
+Stocks plot; flows don't — a rate is not an accumulation, and the book's
+charts are level charts. But a model with a **delay** hides its whole story in
+the flows: the gap between what is happening and what the decision-maker
+*sees* is invisible on the stock line. So when a model contains a time shift,
+a **flows** checkbox appears beside the `t =` field and overlays that gap.
+It's the book's figure 33, the panel behind the dealership's oscillation.
+
+Checked, the chart adds one thin line per node touched by a shift:
+
+- the shift's **owner** — the node whose formula contains it, i.e. the
+  delayed copy — **dashed**;
+- the shift's **input**, when that input is a plain reference, **solid**.
+
+A stock never joins: it already has a level line. A node in both roles plots
+once, dashed. Each line wears its node's own accent — the same hue it has in
+the editor and the diagram — and the dash is shorter than the goal rules' so
+the two dashed families stay apart. A faucet's sample is its *applied*
+(post-ration) rate; a dot's is its computed value. Samples align one-for-one
+with the stock series, and the flow lines join the y-domain, which is why an
+order backlog swinging negative can pull the axis below zero.
+
+Load **figure 31 & 33** and read the four lines against each other (1 unit =
+10 days). Customer demand steps up on day 25:
+
+| line | style | moves |
+|---|---|---|
+| `sales` | solid | day 25 — demand steps |
+| `orders to factory` | solid | day 25.5 — the dealer reacts |
+| `perceived sales` | dashed | day 30 — *5 days* after sales |
+| `deliveries` | dashed | day 30.5 — *5 days* after the order |
+
+Each dashed line trails its solid partner by exactly its delay — a perception
+delay of 0.5 and a delivery delay of 0.5, both 5 days on this axis. Those two
+gaps are what makes the inventory swing: cut both delays to a single step and
+the oscillation vanishes outright — the lot dips to 198, settles on the new
+220, and never moves again, against the 127-to-400 swing it has at 0.5. The
+stock line alone never shows you why.
+
+The box is off by default, so figures 32 and 34–36 plot the bare stock line
+the book prints. An example may declare `flows: true` to open on this view
+(figure 31 & 33 and the fishery figures 43–45 do), and each button resets the
+box to its own setting — unlike `t =`, which survives a load.
 
 ## The playground
 
