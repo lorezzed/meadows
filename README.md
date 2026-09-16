@@ -449,5 +449,9 @@ layout tests run `ui/*.ts` directly under node's type stripping against the
 real compiled backend — another reason `spago build` must precede them (the
 `make test` target does this for you).
 
+## License
+
+[MIT](LICENSE).
+
 The name honors Donella H. Meadows (1941–2001), whose *Thinking in Systems: A
 Primer* supplies the notation, the figures, and the reason to draw them.
