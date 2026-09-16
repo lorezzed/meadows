@@ -13,6 +13,11 @@ You type a model:
 | =>inflow [water in tub: 50] =>outflow: 5 |
 ```
 
+![The playground: the one-line bathtub model in the editor on the left above a
+chart of its level falling from 50 to 0, and on the right the compiled diagram
+— a cloud, the inflow faucet, the "water in tub: 50" box, the outflow faucet,
+and a second cloud, joined by grey flow pipes.](docs/hero.png)
+
 Meadows compiles it into a graph (stocks as boxes, flows as faucets on pipes,
 clouds for whatever lies outside the model boundary, thin curved arcs for
 information links), lays it out with d3 forces, and — when the model carries
@@ -307,6 +312,16 @@ Semantics, per node:
   exactly. A faucet read through a shift reports its *applied* (post-ration)
   rate.
 
+![The thermostat model: the editor holds five statements, the chart shows room
+temperature climbing from 10 and levelling onto a dashed line at 18, with a
+second dashed line at 10 for the outside temperature. The diagram is one band
+— cloud, furnace faucet, room temperature box, heat-loss faucet, cloud — with
+a B floating in each of the two feedback loops beneath it.](docs/thermostat.png)
+
+The book's figure 18, a thermostat fighting a cold day: each dashed rule is a
+goal dot's reading, drawn in that dot's own colour — the same hue the name
+wears in the editor and the diagram.
+
 Only stocks plot as chart series. The chart has a hover crosshair with a
 tooltip reading out every line (keyboard: `←`/`→` to step, Shift for ×10, Esc
 to dismiss).
@@ -346,6 +361,12 @@ Load **figure 31 & 33** and read the four lines against each other (1 unit =
 | `orders to factory` | solid | day 25.5 — the dealer reacts |
 | `perceived sales` | dashed | day 30 — *5 days* after sales |
 | `deliveries` | dashed | day 30.5 — *5 days* after the order |
+
+![The dealership in the flows view: the flows box is ticked beside the t field
+and the chart carries five lines over five time units — flat at 200 until day
+25, then a solid green orders-to-factory line rising and swinging while a
+dashed green deliveries line traces the same shape half a unit behind
+it.](docs/flows.png)
 
 Each dashed line trails its solid partner by exactly its delay — a perception
 delay of 0.5 and a delivery delay of 0.5, both 5 days on this axis. Those two
