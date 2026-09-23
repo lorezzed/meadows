@@ -348,8 +348,9 @@ playback bullet below). Almost everything lives in **`app.ts`**:
 - Builds the DOM (example buttons, a `<textarea>` editor, a `<pre>` error
   panel hidden while the model compiles, and the two `<svg>` panels) entirely
   via d3 `.append`, using flexbox `order` for layout. The example pills sit in
-  two collapsible `<details>` sections (`addExampleSection`) — "figures from
-  the book" (every `figure N` entry) and "examples" (the rest) — each a
+  two collapsible `<details>` sections (`addExampleSection`) — "examples"
+  (the showcase models, open) above "figures from the book" (every
+  `figure N` entry, collapsed by default) — each a
   wrapping `.example-group` row; the nesting is transparent to
   `updateActiveExamples`, which still selects every `button` under
   `.examples`.

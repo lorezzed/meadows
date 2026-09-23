@@ -291,8 +291,8 @@ const css = `
      shared click). */
   svg.svg .link-hit { pointer-events: none; }
   svg.svg.delete-armed .link-hit { pointer-events: stroke; }
-  /* The examples area stacks two collapsible <details> sections (figures
-     from the book, and the extra examples); each holds a wrapping row of
+  /* The examples area stacks two collapsible <details> sections (the extra
+     examples, then the figures from the book); each holds a wrapping row of
      pills in an .example-group. */
   .examples {
     display: flex;
@@ -488,8 +488,9 @@ const pre = side
   .attr('class', 'pre-output')
   .style('order', 3)
   .style('display', 'none')
-// The examples split into two collapsible <details> sections: every "figure
-// N" entry (the book's diagrams) and everything else (the extra examples).
+// The examples split into two collapsible <details> sections: the extra
+// examples first, open, then every "figure N" entry (the book's diagrams),
+// folded until its heading is clicked.
 // Each pill's datum is its content's canonical reprint — the match key for
 // the active-pill highlight (updateActiveExamples selects every button under
 // `.examples`, so the nesting is transparent to it).
@@ -505,8 +506,8 @@ const addExampleSection = (title: string, items: typeof exampleList, open: boole
       .on('click', () => loadExample(x))
   })
 }
-addExampleSection('figures from the book', exampleList.filter(x => x.label.startsWith('figure')), true)
 addExampleSection('examples', exampleList.filter(x => !x.label.startsWith('figure')), true)
+addExampleSection('figures from the book', exampleList.filter(x => x.label.startsWith('figure')), false)
 
 
 // Current viewBox, eased toward the auto-fit target scaled by the

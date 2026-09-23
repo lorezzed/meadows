@@ -422,8 +422,9 @@ mid-run.
 
 ## The playground
 
-- **Example buttons** load the book's figures (and a few showcase models —
-  epidemic, caffeine, boom & bust, skydiver — plus one per formula keyword).
+- **Example buttons** load a few showcase models — epidemic, caffeine, boom &
+  bust, skydiver, plus one per formula keyword — and the book's figures,
+  folded under their own heading (click it to open).
 - The **editor** color-codes every recognized name with its node's accent —
   the same hue that node wears in the diagram and the chart, so a line in the
   chart, a box in the diagram, and a word in the source visually connect.
