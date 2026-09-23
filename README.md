@@ -36,6 +36,7 @@ The toolchain (purs, spago, node 22, esbuild) is pinned by a Nix flake; every
 `make` target wraps `nix develop`, so you only need Nix with flakes enabled.
 
 ```bash
+make init         # install Nix, if you haven't (https://nixos.org/download/)
 make dev          # bundle, watch, and serve the playground (open http://localhost:8000)
 make test         # full test battery: unit suite, goldens, headless frontend checks
 make run-with "a->b"          # CLI: compile a DSL string, print its graph JSON

@@ -36,6 +36,8 @@ clobbering the checked-in one-line entrypoint. For a throwaway bundle, point
 ## Common commands
 
 ```bash
+make init         # install Nix itself (nixos.org's installer) — the one thing
+                  #   not pinned by the flake; everything else needs it first
 make shell        # enter the nix dev shell (purs, spago, node, esbuild)
 make dev          # esbuild dev server: bundles ui/index.js, watches, serves ./ui
                   #   (loads .svg as dataurl); open the served ui/index.html

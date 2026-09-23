@@ -4,8 +4,12 @@
 # One-time setup (run once, or whenever esbuild/d3 deps change in package.json)
 # ---------------------------------------------------------------------------
 
+# Install Nix — the one prerequisite the flake cannot pin, since every other
+# target here runs inside `nix develop`. The official installer from
+# https://nixos.org/download/ (multi-user; it leaves flakes off, which is why
+# every target below passes --experimental-features explicitly).
 init:
-	nix --experimental-features flake init
+	curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install | sh -s -- --daemon
 
 done:
 	nix-shell -p nix-info --run "nix-info -m"
