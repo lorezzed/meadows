@@ -22,13 +22,18 @@
 // like every rate it is sampled piecewise-constant at each step's start,
 // so the faucet chases a moving target.
 //
-// A faucet with NO annotation of its own reads the same web as REINFORCING
-// (the compound-interest loop of figures 12 & 13) — provided the walk also
-// reaches back to the faucet's own stock, i.e. the level→faucet info arrow
-// that closes the R loop is actually drawn. Then the constant multiplies
-// the level: rate = factor × level — exponential growth filling, exponential
-// decay draining. Without the drawn feedback a bare faucet stays a closed
-// tap, exactly as before.
+// A faucet with NO annotation of its own reads the same web by its shape —
+// provided the walk also reaches back to the faucet's own stock, i.e. the
+// level→faucet info arrow closing the loop is actually drawn. When the
+// level and the constant each arrive at the faucet on their own (the
+// compound-interest loop of figures 12 & 13) it is REINFORCING: the
+// constant multiplies the level, rate = factor × level — exponential
+// growth filling, exponential decay draining. When they meet first in a
+// relay dot — a discrepancy between the level and the constant, figure
+// 15's thermostat with a tap left bare — it is goal-seeking as above,
+// closing the gap at DEFAULT_GAIN (1 per time unit) for want of a gain of
+// its own. Without the drawn feedback a bare faucet stays a closed tap,
+// exactly as before.
 //
 // DELAYS (figures 31–35, the oscillating car lot): a formula may read a
 // signal at a shifted time — `x(t - T)` is a pipeline: the value x had
@@ -147,9 +152,18 @@ export function annotFn(n: Node): (t: number) => number {
 // feed back — as does an ambiguous web with two constants):
 //   - a faucet with its own annotation reads the dot as its GOAL and the
 //     annotation as a gain (figures 10 & 11): rate = gain × discrepancy.
-//   - a bare faucet whose web also reaches its own attached stock — the
-//     drawn level→faucet arrow closing figure 12's R loop — reads the dot
-//     as a FACTOR on that level (figures 12 & 13): rate = factor × level.
+//   - a bare faucet whose web also reaches its own attached stock reads it
+//     by the web's SHAPE — by where the level and the number meet:
+//       - arriving side by side — the level's arrow (the drawn
+//         level→faucet arc closing figure 12's R loop) and the number's
+//         each reach the faucet on their own — the dot is a FACTOR on that
+//         level (figures 12 & 13): rate = factor × level.
+//       - meeting first in a relay dot — one arrow into the faucet carries
+//         both, a discrepancy between the level and the number (figure
+//         15's thermostat with a tap left bare) — the dot is a GOAL, closed
+//         at DEFAULT_GAIN: rate = discrepancy. A relay meaning a product
+//         (an "interest due" dot) reads the same way; draw the rate
+//         straight into the tap to compound.
 //     The loop must be drawn: a bare faucet fed only a constant stays a
 //     closed tap.
 type Wiring = {
@@ -158,7 +172,15 @@ type Wiring = {
   sink: string | null;
   goal: Node | null;
   factor: Node | null;
+  // A bare faucet's goal, read by the web's shape: it has no annotation
+  // to serve as the gain, so it closes the discrepancy at DEFAULT_GAIN.
+  defaultGain: boolean;
 };
+
+// The gain a bare goal-seeking faucet closes its discrepancy at: one per
+// time unit — the tap runs at the size of the gap, the unit rate of the
+// model's own clock.
+export const DEFAULT_GAIN = 1;
 
 function faucetWiring(system: System): Wiring[] {
   const stockIds = new Set(system.nodes.filter(n => n.type === "stock").map(n => n.id));
@@ -178,23 +200,37 @@ function faucetWiring(system: System): Wiring[] {
     const t = resolve(endId(l.target));
     arrowsInto.set(t, [...(arrowsInto.get(t) ?? []), resolve(endId(l.source))]);
   }
-  const infoWeb = (fid: string, attached: string): { dot: Node | null; loops: boolean } => {
-    const dots = new Set<Node>();
-    let loops = false;
-    const seen = new Set<string>();
-    const stack = [...(arrowsInto.get(fid) ?? [])];
-    while (stack.length) {
-      const id = stack.pop();
-      if (id == null || seen.has(id)) continue;
-      seen.add(id);
-      if (id === attached) loops = true;
-      const n = nodeById.get(id);
-      if (!n || n.type !== "dot") continue;
-      if (n.value != null || closedExpr(n) != null) dots.add(n);
-      else stack.push(...(arrowsInto.get(id) ?? []));
-    }
+  // The web is walked arm by arm — from each arrow into the faucet — so it
+  // can tell where the level and the number meet: `loops` when some arm
+  // reaches the attached stock, `meets` when one arm reaches both it and
+  // the valued dot (they combine in a relay before the faucet).
+  const infoWeb = (fid: string, attached: string): { dot: Node | null; loops: boolean; meets: boolean } => {
+    const arm = (start: string): { stock: boolean; dots: Set<Node> } => {
+      const dots = new Set<Node>();
+      let stock = false;
+      const seen = new Set<string>();
+      const stack = [start];
+      while (stack.length) {
+        const id = stack.pop();
+        if (id == null || seen.has(id)) continue;
+        seen.add(id);
+        if (id === attached) stock = true;
+        const n = nodeById.get(id);
+        if (!n || n.type !== "dot") continue;
+        if (n.value != null || closedExpr(n) != null) dots.add(n);
+        else stack.push(...(arrowsInto.get(id) ?? []));
+      }
+      return { stock, dots };
+    };
+    const arms = (arrowsInto.get(fid) ?? []).map(arm);
+    const dots = new Set(arms.flatMap(a => [...a.dots]));
     const [only] = dots;
-    return { dot: dots.size === 1 && only ? only : null, loops };
+    const dot = dots.size === 1 && only ? only : null;
+    return {
+      dot,
+      loops: arms.some(a => a.stock),
+      meets: dot != null && arms.some(a => a.stock && a.dots.has(dot)),
+    };
   };
   return system.nodes
     .filter(n => n.type === "faucet")
@@ -205,9 +241,12 @@ function faucetWiring(system: System): Wiring[] {
       const sink = snk ? endId(snk.target) : null;
       const attached = (source === null) !== (sink === null) ? source ?? sink : null;
       const web = attached != null ? infoWeb(f.id, attached) : null;
-      const goal = f.value != null ? (web?.dot ?? null) : null;
-      const factor = f.value == null && web?.loops ? web.dot : null;
-      return { id: f.id, source, sink, goal, factor };
+      // A formula faucet is its own rate law: no structural reading.
+      const bare = f.value == null && f.expr == null;
+      const defaultGain = bare && web?.meets === true;
+      const goal = f.value != null || defaultGain ? (web?.dot ?? null) : null;
+      const factor = bare && web?.loops && !web.meets ? web.dot : null;
+      return { id: f.id, source, sink, goal, factor, defaultGain };
     });
 }
 
@@ -353,7 +392,8 @@ function run(system: System, tEnd: number, withRates = false): { stocks: StockSe
       const w = wireById.get(f.id);
       return {
         id: f.id,
-        rateFn: scheduleFn(f),
+        // A bare goal-seeking faucet has no annotation to read as a gain.
+        rateFn: w?.defaultGain ? () => DEFAULT_GAIN : scheduleFn(f),
         expr: f.expr ?? null,
         source: w?.source ?? null,
         sink: w?.sink ?? null,

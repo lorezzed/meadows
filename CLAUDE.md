@@ -640,14 +640,28 @@ the diagram's figure 5):
   `rate = gain × (level − goal)` draining / `× (goal − level)` filling,
   clamped at 0 and capped at `1/DT` so a hot gain lands on the goal instead
   of oscillating; exponential approach from either side. A *bare* faucet (no
-  annotation of its own) in the same one-valued-dot web instead turns
-  **reinforcing** (figures 12 & 13) when the walk also reaches the faucet's
-  own attached stock — the drawn level→faucet arrow closing the R loop: the
-  dot's reading is a *factor* on the level, `rate = factor × level` —
-  compound
-  interest filling, exponential decay draining (figures 21 & 24/26: the
-  fertility ramps are closed-formula factors); without the drawn feedback a
-  bare faucet stays a closed tap. Ambiguous webs (two
+  annotation of its own) in the same one-valued-dot web, when the walk also
+  reaches the faucet's own attached stock (the drawn level→faucet feedback),
+  reads the web by its SHAPE — walked arm by arm from each arrow into the
+  faucet (`infoWeb`), it asks where the level and the number meet:
+  - arriving side by side — the level's arrow and the number's each reach
+    the faucet on their own, relayed or not — it turns **reinforcing**
+    (figures 12 & 13): the dot's reading is a *factor* on the level,
+    `rate = factor × level` — compound interest filling, exponential decay
+    draining (figures 21 & 24/26: the fertility ramps are closed-formula
+    factors);
+  - meeting first in a relay dot — one arm carries both, a discrepancy
+    between the level and the number (figure 15's thermostat with a tap
+    left bare: give `outside temperature` a value and the bare leak evens
+    the room out between the furnace and the outside) — it goal-seeks like
+    a gained faucet, closing the gap at `DEFAULT_GAIN` (1 per time unit;
+    `defaultGain` on the wiring) for want of a gain of its own, and its
+    goal draws a dashed rule. A relay meaning a product (an "interest due"
+    dot) reads the same way; drawing the rate straight into the tap
+    compounds.
+
+  Without the drawn feedback a bare faucet stays a closed tap, and a
+  formula faucet keeps its own law over any shape. Ambiguous webs (two
   constants) or stocks on both sides fall back to the constant-rate reading.
   `goalRefs` exports the dots serving as goals for the chart's dashed
   reference rules — a schedule goal carries its `steps`, a formula goal its

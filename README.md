@@ -299,10 +299,16 @@ Semantics, per node:
     the faucet's own number is the **gain** — `rate = gain × discrepancy`,
     draining above the goal or filling below it, an exponential approach. The
     goal may be a constant, a schedule, or a closed curve; the chart draws it
-    as a dashed line in the goal dot's color.
-  - **Reinforcing** (figures 12–13): if the faucet has *no* number and the
-    walk also reaches the faucet's own stock through a drawn arrow — the
-    level→faucet arc that closes an R loop — the valued dot becomes a
+    as a dashed line in the goal dot's color. A faucet with *no* number
+    goal-seeks too when its stock's level and the valued dot meet in a relay
+    dot on the way — a discrepancy between them — closing the gap at a gain
+    of 1 per time unit. Give figure 16's `outside temperature` a value and
+    its bare `heat to outside` leak does exactly that: the room evens out
+    between the furnace and the outside.
+  - **Reinforcing** (figures 12–13): if the faucet has *no* number, the walk
+    also reaches the faucet's own stock through a drawn arrow — the
+    level→faucet arc that closes an R loop — and the number arrives beside
+    the level instead of meeting it in a relay, the valued dot becomes a
     **factor** on the level: `rate = factor × level`, compound interest
     filling or exponential decay draining.
   - Ambiguous webs (two valued dots, stocks on both sides) fall back to the

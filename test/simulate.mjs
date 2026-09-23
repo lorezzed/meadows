@@ -4,7 +4,7 @@
 // can run it directly (erasable-syntax type stripping, node >= 22.18).
 // Run with:   node test/simulate.mjs
 import * as M from '../output/Main/index.js';
-import { simulate, flowSeries, hasDelays, hasNumbers, goalRefs, scheduleFn, T_END, DT } from '../ui/simulate.ts';
+import { simulate, flowSeries, hasDelays, hasNumbers, goalRefs, scheduleFn, T_END, DT, DEFAULT_GAIN } from '../ui/simulate.ts';
 
 let failures = 0;
 const fail = (label, msg) => { failures++; console.log(`FAIL ${label}: ${msg}`); };
@@ -238,6 +238,87 @@ outside temperature: 10 -> discrepancy between inside and outside temperatures`;
   const goals = goalRefs(system);
   if (!(goals.length === 2 && goals[0].label === 'thermostat setting' && goals[1].label === 'outside temperature'))
     fail('figure 18', `both constants should register, setting first: ${JSON.stringify(goals)}`);
+}
+
+// A bare tap behind a discrepancy goal-seeks at DEFAULT_GAIN. Give figure
+// 16's outside temperature a value but leave `heat to outside` bare: the
+// level and the constant meet in the discrepancy relay before the tap, so
+// the leak reads the constant as a GOAL, not a factor — the room evens out
+// where the furnace and the leak balance, 1.2·(18 − T) = 1·(T − 10), and
+// both constants register as goals. (Read as a factor, the leak ran at
+// 10 × the room's temperature and froze it near 2°.) A warmer outside
+// can't push heat in through a drain, so at 20 the leak stays shut and the
+// room warms to the setting exactly as in figure 16. The mirror — figure
+// 17 with the setting given and the furnace bare — settles where
+// 1·(18 − T) = 0.13·(T − 10). Mirror the simulator's per-step float ops.
+{
+  const thermostat = (furnace, leak, start, setting, outside) => `|=>heat from furnace${furnace}[room temperature: ${start}]=>heat to outside${leak}|
+B(heat from furnace <- discrepancy between desired and actual room temperatures <- room temperature)
+thermostat setting${setting} -> discrepancy between desired and actual room temperatures
+B(heat to outside <- discrepancy between inside and outside temperatures <- room temperature)
+outside temperature${outside} -> discrepancy between inside and outside temperatures`;
+  const mirror = (start, furnaceGain, setting, leakGain, outside) => {
+    let v = start;
+    for (let n = 0; n < Math.round(T_END / DT); n++) {
+      const qf = (Math.min(furnaceGain, 1 / DT) * Math.max(0, setting - v)) * DT * 1;
+      const ql = (Math.min(leakGain, 1 / DT) * Math.max(0, v - outside)) * DT * 1;
+      v = Math.max(0, v + (qf - ql));
+    }
+    return v;
+  };
+  const roomOf = (system) => simulate(system).find(s => s.label === 'room temperature');
+  const labels = (system) => goalRefs(system).map(g => `${g.label}=${g.value}`).join();
+
+  const leaky = sys(thermostat(': 1.2', '', 10, ': 18', ': 10'));
+  const room = roomOf(leaky);
+  const want = mirror(10, 1.2, 18, DEFAULT_GAIN, 10);
+  if (Math.abs(last(room) - want) > 1e-9)
+    fail('bare leak', `room ends at ${last(room)}, want ${want}`);
+  if (Math.abs(last(room) - (1.2 * 18 + 10) / 2.2) > 1e-6)
+    fail('bare leak', `room should even out at ${(1.2 * 18 + 10) / 2.2}, got ${last(room)}`);
+  if (!room.levels.every((v, i) => i === 0 || (v >= room.levels[i - 1] && v <= 18)))
+    fail('bare leak', 'room must warm monotonically to the two-loop equilibrium');
+  if (labels(leaky) !== 'thermostat setting=18,outside temperature=10')
+    fail('bare leak', `both constants should register as goals: ${labels(leaky)}`);
+
+  const warm = roomOf(sys(thermostat(': 1.2', '', 10, ': 18', ': 20')));
+  if (Math.abs(last(warm) - mirror(10, 1.2, 18, 0, 20)) > 1e-9)
+    fail('bare leak, warm outside', `room should warm to the setting as in figure 16, got ${last(warm)}`);
+
+  const furnace = sys(thermostat('', ': 0.13', 18, ': 18', ': 10'));
+  const cooling = roomOf(furnace);
+  if (Math.abs(last(cooling) - mirror(18, DEFAULT_GAIN, 18, 0.13, 10)) > 1e-9)
+    fail('bare furnace', `room ends at ${last(cooling)}, want ${mirror(18, DEFAULT_GAIN, 18, 0.13, 10)}`);
+  if (Math.abs(last(cooling) - (18 + 1.3) / 1.13) > 1e-4)
+    fail('bare furnace', `room should settle at ${(18 + 1.3) / 1.13}, got ${last(cooling)}`);
+  if (labels(furnace) !== 'thermostat setting=18,outside temperature=10')
+    fail('bare furnace', `both constants should register as goals: ${labels(furnace)}`);
+}
+
+// The shape decides a bare tap's reading: the level and a number meeting
+// in a relay dot is a discrepancy — the tap closes the gap at
+// DEFAULT_GAIN, from below (an inflow) or above (an outflow), and the
+// number draws a dashed rule — while the number arriving beside the level
+// still compounds, relay or not. A formula tap keeps its own law.
+{
+  const steps = Math.round(T_END / DT);
+  const fill = simulate(sys('|=>f[a: 100]\nB(f <- gap <- a)\ntarget: 150 -> gap'))[0];
+  const wantFill = 150 - 50 * Math.pow(1 - DEFAULT_GAIN * DT, steps);
+  if (Math.abs(last(fill) - wantFill) > 1e-9) fail('bare gap', `fill ends at ${last(fill)}, want ${wantFill}`);
+  const drain = simulate(sys('[a: 100]=>f|\nB(f <- gap <- a)\nfloor: 40 -> gap'))[0];
+  const wantDrain = 40 + 60 * Math.pow(1 - DEFAULT_GAIN * DT, steps);
+  if (Math.abs(last(drain) - wantDrain) > 1e-9) fail('bare gap', `drain ends at ${last(drain)}, want ${wantDrain}`);
+  if (goalRefs(sys('|=>f[a: 100]\nB(f <- gap <- a)\ntarget: 150 -> gap')).map(g => g.label).join() !== 'target')
+    fail('bare gap', 'the gap\'s constant is a goal and draws its dashed rule');
+  const beside = simulate(sys('|=>f[a: 100]\nR(f <- a)\nrate: 0.1 -> f'))[0];
+  const wantBeside = 100 * Math.pow(1 + 0.1 * DT, steps);
+  if (Math.abs(last(beside) - wantBeside) > 1e-6) fail('beside', `compounding ends at ${last(beside)}, want ${wantBeside}`);
+  const relayedLevel = simulate(sys('|=>f[a: 100]\nR(f <- perceived <- a)\nrate: 0.1 -> f'))[0];
+  if (Math.abs(last(relayedLevel) - wantBeside) > 1e-6)
+    fail('beside', 'a level relayed on its own still compounds with a number arriving beside it');
+  const formula = simulate(sys('|=>f: (2)[a: 100]\nB(f <- gap <- a)\ntarget: 150 -> gap'))[0];
+  if (Math.abs(last(formula) - (100 + 2 * T_END)) > 1e-9)
+    fail('formula tap', `a formula keeps its own law over the web's shape, got ${last(formula)}`);
 }
 
 // A schedule holds each value until the next step (there is exactly one
