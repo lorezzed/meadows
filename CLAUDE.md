@@ -341,7 +341,8 @@ diagram svg on the right at the full fixed window height, so oversized
 models zoom out inside it — with a `+`/`1×`/`−` zoom cluster overlaying its
 top-right corner (a user factor scaled onto the auto-fit viewBox target in
 `easeView()`, animated by a self-stopping frame timer even while the
-simulation is idle) and the animate toggle its bottom-right (see the
+simulation is idle), led by the names-only toggle (see the `update()`
+bullet below), and the animate toggle its bottom-right (see the
 playback bullet below). Almost everything lives in **`app.ts`**:
 
 - Builds the DOM (example buttons, a `<textarea>` editor, a `<pre>` error
@@ -395,10 +396,18 @@ playback bullet below). Almost everything lives in **`app.ts`**:
   the band pins and forbidding the aux web from hanging below a lone band —
   floaters instead rest at `floatY`, one row below a single band.) It also groups nodes by their `loop`
   names into one floating letter (`<text>`) per annotation — a pure overlay that
-  never enters `simulation.nodes()`. Node text renders via `displayLabel`: the
-  name plus `: value` when the node carries one (`water in tub: 50`) — display
-  only, also used by the slot-width and viewBox-pad estimates; ids, the name
-  registry, the JSON `label`, and the chart's labels all stay the bare name.
+  never enters `simulation.nodes()`. Node text renders via `nodeText`: the
+  bare name while the **names only** toggle leading the zoom cluster is
+  pressed (`namesOnly`, an `aria-pressed` button — pressed by default), else
+  `displayLabel`, the name plus `: value` when the node carries one
+  (`water in tub: 50`). Display only: `displayLabel` also drives the
+  slot-width and viewBox-pad estimates whichever text the toggle shows, and
+  `toggleNamesOnly` only re-sets the label text, so toggling never moves a
+  node or reframes the view (slots re-measured to the bare names would glide
+  the bands in and drag the aux web into collisions between long dot names).
+  `update()` shows the button only while some label has something to hide;
+  its state survives edits and example loads. Ids, the name registry, the
+  JSON `label`, and the chart's labels all stay the bare name.
   `update()` also builds the ONE per-node accent assignment every view
   shares (`accentById` by id, `nameColor` by name): stocks take
   `STOCK_PALETTE` slots in parser-id order, every other named node draws

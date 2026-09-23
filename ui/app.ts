@@ -129,6 +129,15 @@ const css = `
   }
   .zoom button:hover { color: var(--ink); border-color: var(--faint); }
   .zoom button:active { background: var(--paper); }
+  /* The names-only toggle leads the cluster, a view control like the zoom
+     buttons: pressed (its default) — the active look mirrors an armed
+     palette picker's — every node label shows its bare name. */
+  .zoom button.names {
+    margin-right: 4px;
+    padding: 0 10px;
+    font-size: 12px;
+  }
+  .zoom button.names.active { color: var(--ink); border-color: var(--ink); background: var(--paper); }
   /* The animate toggle holds the diagram's bottom-right corner, under the
      zoom cluster: pressed, it plays the run on the diagram (see the
      playback section) and the clock beside it tells the playhead's time.
@@ -525,10 +534,23 @@ const svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, any> = diagram
   .call(canvasPan())
 // Zoom controls: zoom in, reset to the auto-fit, zoom out — 1.25× steps
 // about the view center, clamped; ensureViewEase animates the change even
-// while the simulation is idle.
+// while the simulation is idle. The names-only toggle leads the row (see
+// toggleNamesOnly).
 const zoomButtons = diagram
   .append('div')
   .attr('class', 'zoom')
+// Whether node labels show the bare name alone (see nodeText) — on by
+// default, so a diagram opens on its names and the values stay in the
+// editor. Declared ahead of the first update(), which renders the labels.
+let namesOnly = true;
+const namesButton = zoomButtons.append('button')
+  .attr('class', 'names')
+  .classed('active', namesOnly)
+  .attr('title', 'names only: label each node with its name alone, hiding its value, schedule, or formula')
+  .attr('aria-pressed', String(namesOnly))
+  .style('display', 'none')
+  .text('names only')
+  .on('click', () => toggleNamesOnly());
 const zoomStep = 1.25;
 const setZoom = (z: number) => {
   userZoom = Math.min(8, Math.max(0.2, z));
@@ -1074,6 +1096,13 @@ const displayLabel = (d: Node): string => {
   const steps = (d.steps ?? []).map(s => ` @${s.at}: ${s.value}`).join("");
   return `${d.label}: ${d.value}${steps}`;
 };
+// What a node's label shows: its full displayLabel, or the bare name while
+// the names-only toggle is on. Only the text changes — the slot-width and
+// viewBox-pad estimates keep measuring the full displayLabel, so toggling
+// never moves a node or reframes the view. (Slots re-measured to the bare
+// names would glide the bands inward, drag the aux web after them — where
+// long dot names can then collide — and never quite settle back.)
+const nodeText = (d: Node): string => (namesOnly ? d.label : displayLabel(d));
 
 // Distance from a node's center to where links should stop. Stock uses its
 // half-width (pipes enter horizontally); info arcs into a stock's top/bottom
@@ -1252,7 +1281,7 @@ function update(system: System) {
       appendLabel(g, -12);
       return g;
     })
-    .call(sel => sel.select<SVGTextElement>("text").text(displayLabel))
+    .call(sel => sel.select<SVGTextElement>("text").text(nodeText))
     .call(drag(), undefined);
   nodeStock = nodeStock
     .data(nodes.filter(x => x.type === 'stock'), d => d.id)
@@ -1300,7 +1329,7 @@ function update(system: System) {
         .style("font-variant-numeric", "tabular-nums");
       return g;
     })
-    .call(sel => sel.select<SVGTextElement>("text").text(displayLabel))
+    .call(sel => sel.select<SVGTextElement>("text").text(nodeText))
     .call(drag(), undefined);
   nodeFaucet = nodeFaucet
     .data(nodes.filter(x => x.type === 'faucet'), d => d.id)
@@ -1316,7 +1345,7 @@ function update(system: System) {
       appendLabel(g, -28 - faucetLift);
       return g;
     })
-    .call(sel => sel.select<SVGTextElement>("text").text(displayLabel))
+    .call(sel => sel.select<SVGTextElement>("text").text(nodeText))
     .call(drag(), undefined);
   nodeCloud = nodeCloud
     .data(nodes.filter(x => x.type === 'cloud'), d => d.id)
@@ -1412,8 +1441,12 @@ function update(system: System) {
   // Assign every node's band/slot layout target (gx/gy/inFlow) and mark branch
   // flows (elbow). The exact band/slot/branch math lives in ./layout, shared
   // verbatim with the headless layout regression test. The label-width estimate
-  // uses displayLabel, so a node's value/formula widens its slot like its label.
+  // uses displayLabel, so a node's value/formula widens its slot like its label
+  // (whether or not the names-only toggle is hiding it — see nodeText).
   computeLayout(nodes, links, d => displayLabel(d).length * 3);
+  // The names-only toggle shows while some label has something to hide.
+  if (nodes.some(n => displayLabel(n) !== n.label)) namesButton.style('display', null);
+  else namesButton.style('display', 'none');
 
   // Flow links render as thick gray straight pipes (Meadows notation); the
   // segment entering a stock/cloud carries the big triangular arrowhead — none
@@ -1886,6 +1919,18 @@ function ensureViewEase() {
       zoomEaseTimer = null;
     }
   });
+}
+
+// The names-only toggle, pressed by default: every node label shows its
+// bare name — no `: value`, schedule, or formula (the editor still holds
+// them all); released, the full spelling returns. A pure relabel: no
+// compile, no re-run, and the layout stays put (see nodeText). The state
+// survives edits and example loads, like the animate toggle's; update()
+// hides the button while no label has anything to hide.
+function toggleNamesOnly(): void {
+  namesOnly = !namesOnly;
+  namesButton.classed('active', namesOnly).attr('aria-pressed', String(namesOnly));
+  for (const sel of [nodeDot, nodeStock, nodeFaucet]) sel.select<SVGTextElement>("text").text(nodeText);
 }
 
 // Dragging empty canvas pans the view: the whole diagram follows the cursor.
