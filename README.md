@@ -15,8 +15,8 @@ You type a model:
 
 ![The playground: the one-line bathtub model in the editor on the left above a
 chart of its level falling from 50 to 0, and on the right the compiled diagram
-— a cloud, the inflow faucet, the "water in tub: 50" box, the outflow faucet,
-and a second cloud, joined by grey flow pipes.](docs/hero.png)
+— a cloud, the inflow faucet, the "water in tub" box, the outflow faucet, and
+a second cloud, joined by grey flow pipes.](docs/hero.png)
 
 Meadows compiles it into a graph (stocks as boxes, flows as faucets on pipes,
 clouds for whatever lies outside the model boundary, thin curved arcs for
