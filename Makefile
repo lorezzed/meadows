@@ -66,7 +66,10 @@ dist: build
 # type stripping) plus the formatter contract (test/format.mjs: reference
 # style, graph preservation, idempotence) plus the layout contract
 # (test/layout.mjs: band flatness, stock slots, cloud edges, and post-settle
-# clearance, driving ui/layout.ts's real computeLayout + force simulation).
+# clearance, driving ui/layout.ts's real computeLayout + force simulation)
+# plus the playback contract (test/playback.mjs: the animate toggle's trace,
+# shared scales, loop activity, pulse routes, and water-line breaks in
+# ui/playback.ts).
 # After an INTENDED output change: node test/golden.mjs --capture
 test: build
 	nix --experimental-features 'nix-command flakes' develop --command spago test
@@ -75,6 +78,7 @@ test: build
 	node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/highlight.mjs
 	node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/format.mjs
 	node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/layout.mjs
+	node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/playback.mjs
 
 # Run the esbuild dev server against ui/index.html. Uses `--watch=forever` (not
 # plain `--watch`) so the watcher survives a closed stdin — backgrounded or

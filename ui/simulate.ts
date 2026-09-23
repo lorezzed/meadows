@@ -316,7 +316,23 @@ export function flowSeries(system: System, tEnd: number = T_END): FlowSeries[] {
   return run(system, tEnd).flows;
 }
 
-function run(system: System, tEnd: number): { stocks: StockSeries[]; flows: FlowSeries[] } {
+// The diagram playback's view of the same run (ui/playback.ts): every
+// stock's levels — exactly simulate()'s — plus every faucet's APPLIED
+// (post-ration) rate, from one engine pass. Rates sample like the flow
+// view, at each step's start plus one closing sample at the horizon, so
+// they align one-for-one with the levels: a stock's step from sample i to
+// i+1 is its inflows' minus its outflows' rates[i]·DT. dt and tEnd ride
+// along so the playback can place any sample in time without a runtime
+// import of this module (it stays type-only-import pure).
+export type RateSeries = { id: string; label: string; rates: number[] };
+export type Trace = { dt: number; tEnd: number; stocks: StockSeries[]; rates: RateSeries[] };
+
+export function trace(system: System, tEnd: number = T_END): Trace {
+  const { stocks, rates } = run(system, tEnd, true);
+  return { dt: DT, tEnd, stocks, rates };
+}
+
+function run(system: System, tEnd: number, withRates = false): { stocks: StockSeries[]; flows: FlowSeries[]; rates: RateSeries[] } {
   const stocks = system.nodes
     .filter(n => n.type === "stock")
     .sort((a, b) => parserId(a.id) - parserId(b.id));
@@ -476,6 +492,20 @@ function run(system: System, tEnd: number): { stocks: StockSeries[]; flows: Flow
   const sampleFlows = (t: number, memo: Map<string, number>): void => {
     for (const fs of flows) fs.values.push(valueOf(fs.id, t, memo));
   };
+  // The playback's rate series (see trace): one per faucet in parser-id
+  // order, recorded only on trace()'s request — simulate() and
+  // flowSeries() runs skip them. A sample is the posted applied rate: the
+  // same number a faucet reference inside a shift reads, and the flow
+  // view's faucet sample.
+  const rateSeries: RateSeries[] = withRates
+    ? system.nodes
+      .filter(n => n.type === "faucet")
+      .sort((a, b) => parserId(a.id) - parserId(b.id))
+      .map(f => ({ id: f.id, label: f.label, rates: [] }))
+    : [];
+  const sampleRates = (): void => {
+    for (const rs of rateSeries) rs.rates.push(curFlowRate?.get(rs.id) ?? 0);
+  };
 
   const series: StockSeries[] = stocks.map(s => ({ id: s.id, label: s.label, levels: [level.get(s.id) ?? 0] }));
   const steps = Math.round(tEnd / DT);
@@ -506,6 +536,7 @@ function run(system: System, tEnd: number): { stocks: StockSeries[]; flows: Flow
     // flow view's faucet samples.
     curFlowRate = new Map(faucets.map((f, j) => [f.id, (rates[j] ?? 0) * (f.source ? ration(f.source) : 1)] as [string, number]));
     sampleFlows(i * DT, memo);
+    sampleRates();
     // Advance the call states on start-of-step values: gather every input
     // first (a chained call must see its upstream's pre-update state), then
     // commit — each delay ring overwrites the sample it just served and
@@ -528,9 +559,9 @@ function run(system: System, tEnd: number): { stocks: StockSeries[]; flows: Flow
     series.forEach(sr => sr.levels.push(level.get(sr.id) ?? 0));
   }
   // One closing flow sample at t = tEnd — a rate/ration pass against the
-  // final levels, nothing committed — so the flow lines span the full axis
-  // like the stock series (steps + 1 samples each).
-  if (flows.length > 0) {
+  // final levels, nothing committed — so the flow lines (and the playback's
+  // rates) span the full axis like the stock series (steps + 1 samples each).
+  if (flows.length > 0 || rateSeries.length > 0) {
     const memo = new Map<string, number>();
     const rates = faucets.map(f => rateFor(f, steps * DT, memo));
     const demand = new Map<string, number>();
@@ -544,7 +575,8 @@ function run(system: System, tEnd: number): { stocks: StockSeries[]; flows: Flow
     };
     curFlowRate = new Map(faucets.map((f, j) => [f.id, (rates[j] ?? 0) * (f.source ? ration(f.source) : 1)] as [string, number]));
     sampleFlows(steps * DT, memo);
+    sampleRates();
     curFlowRate = null;
   }
-  return { stocks: series, flows };
+  return { stocks: series, flows, rates: rateSeries };
 }

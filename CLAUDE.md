@@ -47,10 +47,11 @@ make run-with in="a=>j"  # in= form REQUIRED when the input contains '='
                   #   (make parses a bare "a=>j" goal as a variable override)
 make test         # spago test (PureScript unit suite) + golden battery
                   #   (test/golden.mjs: byte-exact graph JSON + positioned errors)
-                  #   + headless frontend checks (test/simulate.mjs and
-                  #   test/highlight.mjs run ui/simulate.ts / ui/highlight.ts
-                  #   directly via node's TS type stripping) + the formatter
-                  #   contract (test/format.mjs).
+                  #   + headless frontend checks (test/simulate.mjs,
+                  #   test/highlight.mjs, test/layout.mjs, and
+                  #   test/playback.mjs run ui/simulate.ts / ui/highlight.ts /
+                  #   ui/layout.ts / ui/playback.ts directly via node's TS
+                  #   type stripping) + the formatter contract (test/format.mjs).
                   #   Refresh goldens after an INTENDED change: node test/golden.mjs --capture
 
 # Inside `nix develop` (or `make shell`) you also have the raw tools:
@@ -64,9 +65,11 @@ Tests live in three layers, all run by `make test`: `test/Main.purs` unit-tests 
 compiler internals (token streams & positions, exact `Tree` shapes including minted
 ids, evaluator identity/link/group/value rules), `test/golden.mjs` pins the
 end-to-end JSON seam byte-exactly, and `test/simulate.mjs` / `test/highlight.mjs` /
-`test/format.mjs` check the frontend simulator, the editor's highlight tokenizer,
-and the formatter (reference style, graph preservation, idempotence) against the
-real compiled backend.
+`test/format.mjs` / `test/layout.mjs` / `test/playback.mjs` check the frontend
+simulator, the editor's highlight tokenizer, the formatter (reference style,
+graph preservation, idempotence), the diagram layout, and the animate toggle's
+playback (trace, shared scales, loop activity, pulse routes, water-line
+breaks) against the real compiled backend.
 
 ### Build coupling (important)
 
@@ -338,7 +341,8 @@ diagram svg on the right at the full fixed window height, so oversized
 models zoom out inside it — with a `+`/`1×`/`−` zoom cluster overlaying its
 top-right corner (a user factor scaled onto the auto-fit viewBox target in
 `easeView()`, animated by a self-stopping frame timer even while the
-simulation is idle). Almost everything lives in **`app.ts`**:
+simulation is idle) and the animate toggle its bottom-right (see the
+playback bullet below). Almost everything lives in **`app.ts`**:
 
 - Builds the DOM (example buttons, a `<textarea>` editor, a `<pre>` error
   panel hidden while the model compiles, and the two `<svg>` panels) entirely
@@ -553,6 +557,46 @@ simulation is idle). Almost everything lives in **`app.ts`**:
   surgically (clicking `[b] =>f`'s pipe drops only that line, not `| =>f
   [a]`). Both tools clear the selection appropriately — delete on success,
   an example load alongside `disarmTool`.
+- An **animate** toggle (`.playback`, a button in the svg's bottom-right
+  corner under the zoom cluster — `aria-pressed`, a play/pause icon, and a
+  `t =` clock beside it while a run plays, which `sizeClock` fixes at the
+  horizon's widest reading so the right-anchored bar never shifts as the
+  digits grow) plays the run ON the diagram.
+  `refreshPlayback()` gates it after every `update()` and horizon change:
+  shown when there is a run to play (`lastRun`, the trace `refreshChart()`
+  just took — present exactly when the chart plots) or a loop to pulse
+  (`plans`), hidden otherwise with its state kept, like the flows
+  toggle's; unlike the flows toggle it survives example loads, which
+  restart the run from t=0. While on, a d3 timer (`playFrame`) sweeps the
+  playhead through [0, tEnd] in `PLAY_SECONDS` (12) of wall time whatever
+  the horizon, rests `HOLD_SECONDS` on the final state, and loops — each
+  frame drawn from state alone, so an `update()` mid-run just lands on the
+  next frame, and writing only animation marks (positions stay
+  `ticked()`'s, so drags, pans, renames, and every palette tool keep
+  working mid-run). Each stock carries a **tank**, built in the stock join:
+  a `rect.tank` tint of its accent inset inside the 2px outline, a
+  `path.tank-line` water line (`waterLine` breaks it around the name's and
+  the readout's text boxes, so it never strikes through either — a name
+  wider than the tank hides it while the level passes behind, the tint's
+  edge still marking it), and a pointer-inert `text.tank-level` readout
+  appended after the label (so `select("text")` still finds the name, and
+  a press on the readout grabs the stock instead of renaming), set midway
+  between the name and a bottom-edge port.
+  Each flow pipe carries **bubbles**: a twin path (`flowAnim`, `d`
+  mirrored in `ticked()` like `linkHit`) dashed into round dots whose
+  offset runs at `BUBBLE_SPEED` × its faucet's pace (`pipeFaucet` maps each
+  pipe to its one tap), fading out below a fifth of the peak rate. Each
+  loop **pulses**: a phase accumulator per loop name (`pulseState`) beats
+  at `PULSE_HZ` × the loop's activity (`PULSE_IDLE_HZ` when there is
+  nothing numeric to read), each beat swelling the loop letter toward the
+  pulse violet (`#7c3aed`, the loop tools' `loop-glow` hue — "loop", never
+  a node accent) and sending a white-ringed bead (in `pulseLayer`, above
+  the links, below the letters) hop by hop along the loop's causal route:
+  `pathOf` maps each hop's link to its drawn path, `getPointAtLength` gives
+  the eased position, and the bead fades into the node at each end of a
+  hop. The chart's playhead follows every frame. The playback's bindings
+  live in a state block ahead of the first `update()` call — module init
+  runs it, and a `let`/`const` declared further down is still in its TDZ.
 
 Two sibling modules add the **behavior-over-time chart** (the book's figure 6 to
 the diagram's figure 5):
@@ -627,7 +671,13 @@ the diagram's figure 5):
   `flowSeries` re-runs the engine and returns the figure-33 view
   (each shift's input, solid, and owner, dashed, sampled per step plus one
   closing sample — aligned with the stock series); `hasDelays` is the
-  cheap static gate the chart's flows toggle keys on.
+  cheap static gate the chart's flows toggle keys on. `trace` is the SAME
+  run with every faucet's applied (post-ration) rate recorded beside the
+  levels — sampled like the flow view, so each level step is its inflows'
+  minus outflows' `rates[i]·DT` — plus the `dt`/`tEnd` it ran at:
+  `refreshChart()` plots its stocks (identical to `simulate()`'s, pinned
+  by `test/playback.mjs`) and keeps it as `lastRun` for the animate
+  toggle, so animating never runs the model twice.
 - **`ui/chart.ts`** — the panel at the bottom of the left-hand column (its
   `order` 9 sorts after the buttons/editor's 2 and the error panel's 3). One 2px line per stock, its end label in the
   line's own accent, recessive axes, rendered once per `update()` (never per tick).
@@ -649,6 +699,10 @@ the diagram's figure 5):
   reading out every stock's level (keyboard parity: the svg is focusable,
   ←/→ steps a sample, Shift ×10, Escape dismisses); it reads the last
   render's scales/rows from closure state, so the render-once rule holds.
+  So does the **playhead** — a rule with a marker on every row, drawn under
+  the hover layer — which the animate toggle parks each frame via
+  `playhead(t)` (linear between samples, the reading the tanks show;
+  `null` or `empty()` hides it).
   A **flows toggle** (a checkbox beside the `t =` field, shown only when
   `hasDelays`) overlays the figure-33 view: `flowSeries`' thin 1.25px
   lines — each delay call's input solid, its output dashed ("5 3", shorter
@@ -669,9 +723,42 @@ the diagram's figure 5):
   field footers the panel (`.horizon`, flex order 10, built in `app.ts`): it
   sets the simulated horizon — default `T_END` (10), clamped to 1–1000, live
   per keystroke, snapped to the effective value on blur — and re-runs the
-  chart alone through `refreshChart()`/`lastChart` (the diagram never updates
-  on a horizon change; loading an example keeps the chosen horizon). `render`
-  and `empty` take the horizon as a trailing parameter defaulting to `T_END`.
+  chart through `refreshChart()`/`lastChart` (the diagram's layout never
+  updates on a horizon change — only a playing animation re-reads the new
+  run; loading an example keeps the chosen horizon). `render` and `empty`
+  take the horizon as a trailing parameter defaulting to `T_END`.
+
+**`ui/playback.ts`** — the animate toggle's model, pure and dependency-free
+like simulate.ts (type-only imports; `test/playback.mjs` runs it
+headlessly). `playback(trace)` re-reads a run at any moment t — linear
+between DT samples, exact on a sample (float dust snapped), clamped outside
+the run — as `level`, `fill` (level over the run's peak level across EVERY
+stock), and `pace` (applied rate over the run's peak |rate| across every
+faucet, −1..1). One scale per quantity for the whole model, the chart's
+single y-axis in miniature, so the diagram shows the comparisons the chart
+does: figure 11's two coffees converge on one fill, figure 13's accounts
+open on the same tank and the 10% one's interest runs 5× the 2% one's (a
+per-stock or per-band scale would open the 2% tank FULLER and pulse its
+loop faster); a small-unit stock reads low in its tank just as its line
+sits low in the chart, and the readout keeps the number.
+`loopPlans(nodes, links)` gives each loop annotation its pulse route: the
+member-to-member links (ports resolved to their stock, as for the letter's
+parking) oriented CAUSALLY — info arrows as drawn, pipes faucet → stock, so
+an outflow is crossed against the material (`reversed`) — and walked
+breadth-first from a member stock (else any member with a way out) into
+depth-numbered hops. Hops at one depth run at once: a proper cycle carries
+one pulse around and home (figure 10's coffee → discrepancy → cooling →
+coffee), a partial annotation fans out (figure 37's
+`B(profit <- capital -> extraction)`), and links the walk never reaches set
+out from their own tails at depth 0. The plans accept d3-bound link
+endpoints (the app plans on its recycled copies, so each hop's link is the
+very datum of a drawn path). `pulseAt(plan, age)` places a pulse
+(`HOP_SECONDS` a hop), and `loopActivity` reads a loop's busiest member
+faucet's |pace| — 0 while its taps are shut (the loop falls silent), null
+for a faucet-less loop. `waterSpans` is the tank's water line as the
+spans left once every text box it crosses (the name, the readout — app.ts
+measures them with getBBox) is cut out, padded, so it never strikes
+through either.
 
 `update()` clears `group`/`loop`/`value`/`steps` on recycled nodes before
 merging new data (the JSON omits absent `Maybe` keys, so stale values would

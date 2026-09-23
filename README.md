@@ -381,6 +381,39 @@ the book prints. An example may declare `flows: true` to open on this view
 (figure 31 & 33 and the fishery figures 43–45 do), and each button resets the
 box to its own setting — unlike `t =`, which survives a load.
 
+### The animate toggle
+
+The chart draws a run as lines; the **animate** button in the diagram's
+bottom-right corner plays the same run on the diagram itself. The whole
+horizon sweeps by in twelve seconds, whatever `t =` says, rests on the final
+state, and loops. A playhead crosses the chart in step, a clock beside the
+button tells the time, and every mark reads the chart's own numbers:
+
+- each **stock** fills like a tank, tinted in its accent, with its level read
+  out under its name;
+- each **flow pipe** carries bubbles that run at its faucet's rate — a shut
+  tap's pipe goes still;
+- each **feedback loop** beats: its letter swells, and a violet pulse sets out
+  from the loop's stock and travels its links in causal order — along the
+  information arrows, then down the flow back into the stock (against the
+  material, for an outflow: the drain acts on the tank it empties).
+
+A loop beats in proportion to its busiest faucet's flow and falls silent while
+its taps are shut, so the pulses tell each loop's story: figure 13's
+reinforcing interest loops quicken as the balances compound, figure 11's
+balancing coffee loops slow as each cup closes on room temperature, and in
+figure 16 the loop through the unmodeled leak never beats at all. All the
+tanks share one scale — the run's highest level — and all the pipes and pulses
+another, its fastest flow: the chart's single y-axis in miniature, so the
+comparisons stay honest. Figure 13's five accounts open on the same tank, and
+the ten-percent loop opens beating five times as fast as the two-percent one.
+A model with loops but no numbers still animates: its loops beat steadily, the
+pulses tracing the structure.
+
+The toggle keeps playing through edits and example loads (a load restarts the
+run from the beginning), and dragging, panning, and the palette all work
+mid-run.
+
 ## The playground
 
 - **Example buttons** load the book's figures (and a few showcase models —
@@ -396,7 +429,9 @@ box to its own setting — unlike `t =`, which survives a load.
   node to release it back to the forces. Ports drag along their stock's
   boundary. Clicking a node's label renames it everywhere. Dragging empty
   space pans; a `+` / `1×` / `−` cluster in the corner zooms (`1×` resets
-  both), and oversized models auto-fit.
+  both), and oversized models auto-fit. The **animate** button below it
+  plays the run on the diagram (see [the animate
+  toggle](#the-animate-toggle)).
 - A **palette** in the diagram's other corner edits the model by drawing:
   pickers for a dot, stock, faucet or cloud place one at the next click; the
   arrow and flow pickers run a source→target pick; the `R` / `B` pickers mark
@@ -432,23 +467,26 @@ src/                  the compiler (PureScript)
   Main.purs             go = tokenize >=> parse >=> evaluate; re-exports format
   CLI.purs              terminal runner (kept out of the browser bundle)
 ui/                   the frontend (TypeScript + d3)
-  app.ts                DOM, editor + highlighting, diagram, palette, gestures
+  app.ts                DOM, editor + highlighting, diagram, palette, gestures,
+                        and the animate toggle's playback
   layout.ts             band/slot geometry and the force simulation
   simulate.ts           the forward-Euler engine (pure; runs headless)
+  playback.ts           the animation's model: fills, paces, loop pulse routes
+                        (pure; runs headless)
   chart.ts              behavior-over-time panel
   highlight.ts          editor tokenizer mirroring the lexer's naming
   example.ts            the example buttons
 test/                 unit suite (test/Main.purs), byte-exact goldens
                       (golden.mjs + goldens.json), headless frontend checks
-                      (simulate/highlight/format/layout .mjs)
+                      (simulate/highlight/format/layout/playback .mjs)
 ```
 
 `make test` runs every layer. The goldens pin the compiler's JSON output
 byte-for-byte; after an *intended* output change, refresh them with
-`node test/golden.mjs --capture`. The formatter, simulator, highlighter, and
-layout tests run `ui/*.ts` directly under node's type stripping against the
-real compiled backend — another reason `spago build` must precede them (the
-`make test` target does this for you).
+`node test/golden.mjs --capture`. The formatter, simulator, highlighter,
+layout, and playback tests run `ui/*.ts` directly under node's type stripping
+against the real compiled backend — another reason `spago build` must precede
+them (the `make test` target does this for you).
 
 ## License
 

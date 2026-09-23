@@ -8,7 +8,9 @@
 // reachable by keyboard: focus the panel, arrows step, Escape dismisses)
 // snaps a crosshair to the nearest sample and reads out every stock's level
 // there in one tooltip — it only reads the already-rendered series, so the
-// render-once contract holds.
+// render-once contract holds. So does the playhead, a rule with a marker
+// on every line that the diagram's animate toggle parks at its playing
+// moment each frame.
 import * as d3 from "d3";
 import { DT, T_END, type FlowSeries, type GoalRef, type StockSeries } from "./simulate";
 
@@ -74,6 +76,8 @@ export type Chart = {
   render(series: StockSeries[], colorOf: (id: string) => string, goals?: GoalRef[], tEnd?: number, flows?: FlowSeries[]): void;
   /** Clear to the value-less placeholder: axes only, nothing plotted. */
   empty(tEnd?: number): void;
+  /** Park the playback's playhead at time t (null hides it). */
+  playhead(t: number | null): void;
 };
 
 export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTMLElement, any>): Chart {
@@ -105,6 +109,22 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
       .style("font", `10px ${font}`)
       .style("font-variant-numeric", "tabular-nums");
   };
+
+  // ---- Playhead: the diagram playback's moment in the run ----
+  // A rule at the playing time with a marker riding every line — the level
+  // each tank on the diagram shows at that moment. The animate toggle sets
+  // it once per frame; it only reads the last render's scales and rows
+  // (like the hover layer below, which draws over it), so the render-once
+  // contract holds.
+  const gPlay = svg.append("g")
+    .attr("pointer-events", "none")
+    .style("display", "none");
+  const playRule = gPlay.append("line")
+    .attr("stroke", secondaryInk)
+    .attr("stroke-width", 1)
+    .attr("y1", margin.top)
+    .attr("y2", chartHeight - margin.bottom);
+  const gPlayMarks = gPlay.append("g");
 
   // ---- Hover layer: crosshair + one tooltip reading out every series ----
   // Drawn above the lines, never a pointer target itself (the whole svg is
@@ -258,6 +278,38 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
         hideHover();
       }
     });
+
+  // The playhead at time t: clamped to the plotted run, each marker at its
+  // row's value there — linear between DT samples, the reading the
+  // diagram's tanks interpolate too. Hidden when t is null or nothing is
+  // plotted.
+  function playhead(t: number | null): void {
+    if (t == null || !cur || cur.rows.length === 0) {
+      gPlay.style("display", "none");
+      return;
+    }
+    const { rows, colorOf, x, y } = cur;
+    const [t0 = 0, t1 = 0] = x.domain();
+    const tt = Math.max(t0, Math.min(t1, t));
+    const px = x(tt);
+    const s = tt / DT;
+    const valueAt = (v: number[]): number => {
+      const i = Math.max(0, Math.min(v.length - 1, Math.floor(s)));
+      const a = v[i] ?? 0, b = v[Math.min(v.length - 1, i + 1)] ?? a;
+      return a + (b - a) * Math.min(1, Math.max(0, s - i));
+    };
+    gPlay.style("display", null);
+    playRule.attr("x1", px).attr("x2", px);
+    gPlayMarks.selectAll<SVGCircleElement, Row>("circle")
+      .data(rows, d => d.id)
+      .join("circle")
+      .attr("r", 3)
+      .attr("stroke", "#fff")
+      .attr("stroke-width", 1.5)
+      .attr("fill", d => colorOf(d.id))
+      .attr("cx", px)
+      .attr("cy", d => y(valueAt(d.levels)));
+  }
 
   // tEnd is the horizon the series were simulated over — the x-domain and
   // every goal path/label extends exactly that far. `flows` is the optional
@@ -420,9 +472,10 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
     gLabels.selectAll("text").remove();
     cur = null;
     hideHover();
+    playhead(null);
   }
 
   empty(); // the frame is on screen from first paint, before any input
 
-  return { render, empty };
+  return { render, empty, playhead };
 }

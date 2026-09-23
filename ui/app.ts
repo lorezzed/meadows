@@ -5,7 +5,8 @@ import type { Expr, Node, Link, System } from "./type";
 import faucetSvg from './shape/faucet.svg'
 import cloudSvg from './shape/cloud.svg'
 import { exampleList } from "./example";
-import { T_END, flowSeries, goalRefs, hasDelays, hasNumbers, simulate } from "./simulate";
+import { T_END, flowSeries, goalRefs, hasDelays, hasNumbers, trace, type Trace } from "./simulate";
+import { HOP_SECONDS, loopActivity, loopPlans, playback, pulseAt, waterSpans, type LoopPlan, type Playback } from "./playback";
 import { createChart, STOCK_PALETTE } from "./chart";
 import { nameSpans } from "./highlight";
 import {
@@ -128,6 +129,45 @@ const css = `
   }
   .zoom button:hover { color: var(--ink); border-color: var(--faint); }
   .zoom button:active { background: var(--paper); }
+  /* The animate toggle holds the diagram's bottom-right corner, under the
+     zoom cluster: pressed, it plays the run on the diagram (see the
+     playback section) and the clock beside it tells the playhead's time.
+     The active look mirrors an armed palette picker's. */
+  .playback {
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .playback button {
+    height: 26px;
+    padding: 0 10px 0 9px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--sans);
+    font-size: 12px;
+    color: var(--secondary);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .playback button:hover { color: var(--ink); border-color: var(--faint); }
+  .playback button.active { color: var(--ink); border-color: var(--ink); background: var(--paper); }
+  .playback .clock {
+    box-sizing: border-box;
+    padding: 4px 8px;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+    color: var(--secondary);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+  }
   /* The build palette overlays the diagram's top-left corner (the zoom
      cluster's mirror): one picker per node kind and per link kind. An armed
      picker turns canvas clicks into placements — each lands as an appended
@@ -507,6 +547,59 @@ zoomButtons.append('button')
   .text('−')
   .on('click', () => setZoom(userZoom / zoomStep));
 
+// The animate toggle, in the diagram's bottom-right corner: it plays the
+// run on the diagram — stocks fill and drain, pipes flow, feedback loops
+// pulse — with the playhead's clock beside it (see the playback section
+// after canvasPan). refreshPlayback hides it while the model has nothing
+// to animate.
+const playbackBar = diagram
+  .append('div')
+  .attr('class', 'playback')
+  .style('display', 'none');
+const clock = playbackBar
+  .append('span')
+  .attr('class', 'clock')
+  .style('display', 'none');
+const playButton = playbackBar
+  .append('button')
+  .attr('title', 'animate: play the run on the diagram — stocks fill and drain, flows run, feedback loops pulse')
+  .attr('aria-pressed', 'false')
+  .on('click', () => toggleAnimation());
+// The icon names what a press does: play while off, pause while playing.
+const PLAY_ICON = 'M2,1 L9,5 L2,9 Z';
+const PAUSE_ICON = 'M2,1 H4.2 V9 H2 Z M5.8,1 H8 V9 H5.8 Z';
+const playIcon = playButton
+  .append('svg')
+  .attr('width', 10).attr('height', 10)
+  .attr('viewBox', '0 0 10 10')
+  .attr('aria-hidden', 'true')
+  .append('path')
+  .attr('fill', 'currentColor')
+  .attr('d', PLAY_ICON);
+playButton.append('span').text('animate');
+// Playback state, declared ahead of the first update(), which reads it.
+// `pb` is the run being played (null while the model has nothing numeric
+// to play — its loops can still pulse); `playT` is the playhead's model
+// time and `playHold` the wall seconds it has rested on the final state.
+// update() rebuilds each loop's pulse route (`plans`) and the per-link
+// lookups — every drawn path by its datum (pulses ride the rendered
+// geometry) and every pipe's faucet (its bubbles run at that faucet's
+// pace). `pulseState` holds, per loop name, the beat clock: an emission
+// phase, the last beat's time (the letter's throb), and the birth times of
+// the pulses still in flight.
+let animating = false;
+let pb: Playback | null = null;
+let playT = 0;
+let playHold = 0;
+let plans: LoopPlan[] = [];
+let pathOf = new Map<Link, SVGPathElement>();
+let pipeFaucet = new Map<Link, string>();
+const bubbleOffset = new WeakMap<Link, number>();
+type PulseState = { phase: number; beat: number; born: number[] };
+const pulseState = new Map<string, PulseState>();
+let playTimer: d3.Timer | null = null;
+let lastFrame = 0;
+
 // The build palette overlaying the svg's top-left corner: one picker per
 // node kind (dot, stock, faucet — placed as a minimal cloud-to-cloud flow,
 // since a faucet can't stand alone — and cloud) and per link kind (info
@@ -659,7 +752,8 @@ window.addEventListener('keydown', (event: KeyboardEvent) => {
 // field footers it at order 10.
 const chart = createChart(side)
 // The simulation horizon: how much time the chart runs and shows. The t=
-// field edits it live; only the chart re-renders (the diagram is time-free).
+// field edits it live; only the chart re-renders (the diagram's layout is
+// time-free) — and a playing animation re-reads the new run.
 // lastChart holds what a horizon change must re-run: the last successfully
 // compiled system with its stock accent assignment, and whether it plots.
 let tEnd = T_END;
@@ -669,12 +763,19 @@ let tEnd = T_END;
 // 35) stay exactly the book's.
 let showFlows = false;
 let lastChart: { system: System; colorOf: (id: string) => string; plottable: boolean } | null = null;
+// The run itself, when the model plots: one engine pass serves the chart
+// and the animate toggle alike — trace()'s levels ARE simulate()'s
+// (test/playback.mjs pins it), and its faucet rates are what the playback
+// plays — so animating never runs the model twice.
+let lastRun: Trace | null = null;
 function refreshChart(): void {
   if (lastChart?.plottable) {
     const { system, colorOf } = lastChart;
-    chart.render(simulate(system, tEnd), colorOf, goalRefs(system), tEnd,
+    lastRun = trace(system, tEnd);
+    chart.render(lastRun.stocks, colorOf, goalRefs(system), tEnd,
       showFlows ? flowSeries(system, tEnd) : []);
   } else {
+    lastRun = null;
     chart.empty(tEnd);
   }
   // The toggle appears only when the model has a delay to unfold.
@@ -712,6 +813,7 @@ horizonLabel.append('input')
     if (!Number.isFinite(v)) return;
     tEnd = Math.min(1000, Math.max(1, v));
     refreshChart();
+    refreshPlayback();
   })
   .on('change', function () {
     // Enter/blur: snap the field to the horizon actually in effect (applies
@@ -900,6 +1002,18 @@ glowFilter("loop-glow", "#7c3aed");  // loop tools: violet
 let flowLink = svg.append("g")
   .attr("fill", "none")
   .selectAll<SVGPathElement, Link>("path");
+// The playback's bubbles ride each pipe: a twin path (its `d` mirrored in
+// ticked(), like the delete-hit twins below) dashed into round white dots,
+// whose offset the frame loop runs at the pipe's faucet pace — invisible
+// until a run plays, and never a pointer target.
+let flowAnim = svg.append("g")
+  .attr("fill", "none")
+  .attr("pointer-events", "none")
+  .selectAll<SVGPathElement, Link>("path");
+// One bubble every BUBBLE_PERIOD px of pipe, running BUBBLE_SPEED px/s at
+// the run's peak rate (a slower faucet's in proportion).
+const BUBBLE_PERIOD = 12;
+const BUBBLE_SPEED = 60;
 // A transparent wide-stroke twin of every link (flow and info), for the
 // delete tool to click: thin info arcs are near-impossible to hit on their
 // 1.5px stroke. It sits just above the flow pipes but BELOW the node layers,
@@ -981,6 +1095,11 @@ function edgeOf(d: Node): number {
 // the true node point: that IS the pipe line.
 const aimY = (n: Node): number => (n.y ?? 0) - (n.type === "faucet" ? faucetLift : 0);
 
+// The playback tank's inner box: a stock's fill runs inside the 2px outline
+// (its inner half-stroke is 1px), from the bottom edge up to the level.
+const tankInset = 1;
+const tankDepth = stockHeight - 2 * tankInset;
+
 // Each node is a <g> that holds its shape *and* its text label, so the two
 // move together (positioned via a transform in ticked()).
 let nodeDot = svg.append<SVGGElement>("g")
@@ -1002,6 +1121,21 @@ let nodePort = svg.append<SVGGElement>("g")
 let infoLink = svg.append("g")
   .attr("fill", "none")
   .selectAll<SVGPathElement, Link>("path");
+
+// The playback's loop pulses travel above every link and node they cross
+// (below the loop letters): each a violet bead — the loop tools' violet,
+// the UI's color for "loop", never a node's accent — ringed in white so it
+// reads on a black arc or a gray pipe alike, over a soft halo of the same
+// violet. Drawn afresh each frame (see drawPulses).
+const PULSE_INK = "#7c3aed";
+const pulseLayer = svg.append("g").attr("pointer-events", "none");
+const pulseHalos = pulseLayer.append("g")
+  .attr("fill", PULSE_INK)
+  .attr("fill-opacity", 0.2);
+const pulseBeads = pulseLayer.append("g")
+  .attr("fill", PULSE_INK)
+  .attr("stroke", "#fff")
+  .attr("stroke-width", 1.5);
 
 // Loop letters render topmost: each R(...)/B(...) annotation floats its
 // letter inside its loop (a pure overlay — loop labels are not simulation
@@ -1080,6 +1214,16 @@ function update(system: System) {
     .data(links.filter(l => l.type !== "flow"))
     .join("path")
     .attr("fill", "none");
+  // Zero-length dashes with round caps draw as dots. A new twin starts
+  // invisible; a recycled one keeps its opacity, so a mid-run edit never
+  // blinks the bubbles out for a frame.
+  flowAnim = flowAnim
+    .data(links.filter(l => l.type === "flow"))
+    .join(enter => enter.append("path").attr("stroke-opacity", 0))
+    .attr("stroke", "#fff")
+    .attr("stroke-width", 3.5)
+    .attr("stroke-linecap", "round")
+    .attr("stroke-dasharray", `0 ${BUBBLE_PERIOD}`);
   // The delete-hit twins cover every link with a wide transparent stroke — a
   // fat click target, since a 1.5px info arc is near-impossible to hit. The
   // click itself is handled by the svg's own click handler (which fires
@@ -1122,8 +1266,38 @@ function update(system: System) {
         .attr("stroke", "#000")
         .attr("stroke-width", 2)
         .attr("fill", "#fff");
+      // The playback tank (drawn by drawTanks while a run plays; empty and
+      // lineless otherwise): a tint of the stock's accent filling the rect
+      // to its level, under a crisp water line, all beneath the label. The
+      // line is a path so it can break around the texts (see waterLine).
+      g.append("rect")
+        .attr("class", "tank")
+        .attr("x", -stockWidth / 2 + tankInset)
+        .attr("width", stockWidth - 2 * tankInset)
+        .attr("y", stockHeight / 2 - tankInset)
+        .attr("height", 0)
+        .attr("fill-opacity", 0.18);
+      g.append("path")
+        .attr("class", "tank-line")
+        .attr("fill", "none")
+        .attr("stroke-width", 1.5)
+        .attr("opacity", 0);
       // Label inside the rectangle, slightly larger than the others.
       appendLabel(g, 0, 12);
+      // The level readout, under the name while a run plays — midway
+      // between the name's descenders and a bottom-edge port's circle
+      // (10px inset), clear of both. Appended after the label so every
+      // `select("text")` still finds the name first, and pointer-inert so
+      // a press on it grabs the stock instead of opening the rename box.
+      g.append("text")
+        .attr("class", "tank-level")
+        .attr("text-anchor", "middle")
+        .attr("y", 15)
+        .attr("dy", "0.32em")
+        .attr("font-size", 10)
+        .attr("font-weight", 600)
+        .attr("pointer-events", "none")
+        .style("font-variant-numeric", "tabular-nums");
       return g;
     })
     .call(sel => sel.select<SVGTextElement>("text").text(displayLabel))
@@ -1215,6 +1389,25 @@ function update(system: System) {
     .attr("fill", "#444")
     .attr("pointer-events", "none")
     .text(d => d.letter);
+
+  // The playback's routes and lookups (see the state block by the animate
+  // toggle): each loop's pulse route, planned on these very link objects so
+  // every hop finds its drawn path, and each pipe's faucet — a pipe always
+  // touches exactly one tap. A loop name that vanished drops its beat clock.
+  plans = loopPlans(nodes, links);
+  pathOf = new Map();
+  flowLink.each(function (d) { pathOf.set(d, this); });
+  infoLink.each(function (d) { pathOf.set(d, this); });
+  pipeFaucet = new Map();
+  for (const l of links) {
+    if (l.type !== "flow") continue;
+    const s = nodeById.get(endId(l.source)), t = nodeById.get(endId(l.target));
+    const tap = s?.type === "faucet" ? s : t?.type === "faucet" ? t : undefined;
+    if (tap) pipeFaucet.set(l, tap.id);
+  }
+  for (const name of [...pulseState.keys()]) {
+    if (!plans.some(p => p.name === name)) pulseState.delete(name);
+  }
 
   // Assign every node's band/slot layout target (gx/gy/inFlow) and mark branch
   // flows (elbow). The exact band/slot/branch math lives in ./layout, shared
@@ -1351,6 +1544,11 @@ function update(system: System) {
   nodeDot.select<SVGCircleElement>("circle").attr("stroke", d => colorOf(d.id));
   nodeDot.select<SVGTextElement>("text").attr("fill", d => colorOf(d.id));
   nodeFaucet.select<SVGTextElement>("text").attr("fill", d => colorOf(d.id));
+  // The playback tank wears its stock's accent too — tint, water line, and
+  // level readout in the hue of the rect's stroke and the chart's line.
+  nodeStock.select<SVGRectElement>("rect.tank").attr("fill", d => colorOf(d.id));
+  nodeStock.select<SVGPathElement>("path.tank-line").attr("stroke", d => colorOf(d.id));
+  nodeStock.select<SVGTextElement>("text.tank-level").attr("fill", d => colorOf(d.id));
   // Behavior-over-time panel (figure 6 to the diagram's figure 5): when the
   // model carries numbers and has a stock to plot, simulate it and draw the
   // chart through the same colorOf. Without numbers the panel clears to its
@@ -1359,6 +1557,7 @@ function update(system: System) {
   // diagram update.
   lastChart = { system, colorOf, plottable: numeric && stockIds.length > 0 };
   refreshChart();
+  refreshPlayback();
 
   // Carry the select tool's highlight and any in-progress loop chain across
   // this rebuild: drop ids that no longer exist (a delete, or a name edited
@@ -1622,6 +1821,7 @@ function ticked() {
   flowLink.attr("d", pathFor);
   infoLink.attr("d", pathFor);
   linkHit.attr("d", pathFor);
+  flowAnim.attr("d", pathFor);
 
   easeView();
 }
@@ -1712,6 +1912,233 @@ function canvasPan() {
       ensureViewEase();
     })
     .on("end", () => { svg.classed("panning", false); });
+}
+
+// ---- Playback: the animate toggle ----
+// While on, a d3 timer plays the model's run on the diagram frame by frame.
+// The playhead's clock sweeps [0, tEnd] in PLAY_SECONDS of wall time
+// whatever the horizon (the model's time unit is arbitrary — decades,
+// days), rests HOLD_SECONDS on the final state, and loops. Each frame draws
+// from state alone — every stock's tank at the playhead's level, every
+// pipe's bubbles at its faucet's pace, every loop's pulses in flight, the
+// chart's playhead at the same moment — so an update() mid-run (typing, a
+// load, a horizon change) simply lands on the next frame. It writes only
+// those animation marks: positions stay ticked()'s and the layout the
+// forces', so dragging, panning, renaming, and every palette tool keep
+// working while it plays.
+//
+// Each feedback loop beats at a rate set by its activity — its busiest
+// member faucet's pace (see ui/playback.ts): PULSE_HZ at the run's peak
+// flow, silent while its taps are shut — so a reinforcing loop's beat
+// quickens as it compounds and a balancing loop's slows as it closes on its
+// goal. A loop with nothing numeric to read (a value-less model, or no
+// faucet among its members) beats steadily at PULSE_IDLE_HZ. Every beat
+// swells the loop's letter and sends a pulse around its causal route, one
+// eased HOP_SECONDS hop per link.
+const PLAY_SECONDS = 12;
+const HOLD_SECONDS = 1.2;
+const PULSE_HZ = 1.5;
+const PULSE_IDLE_HZ = 0.6;
+const THROB_MS = 260;
+const throbInk = d3.interpolateRgb("#444", PULSE_INK);
+// Levels read out like the chart tooltip's: comma'd, ≤2 decimals.
+const fmtLevel = d3.format(",.2~f");
+
+function toggleAnimation(): void {
+  animating = !animating;
+  playButton.classed('active', animating).attr('aria-pressed', String(animating));
+  playIcon.attr('d', animating ? PAUSE_ICON : PLAY_ICON);
+  if (animating) {
+    // Every press plays the run from its start, every loop primed to beat.
+    playT = 0;
+    playHold = 0;
+    pulseState.clear();
+  }
+  refreshPlayback();
+}
+
+// Rebuild what the playback reads — after every update() (the model) and
+// every horizon change (the run's length), each time right after
+// refreshChart() has traced the run it plays — and gate the toggle: it
+// shows whenever there is something to animate, a run to play (lastRun
+// exists exactly when the chart plots: numbers and a stock) or a loop to
+// pulse, and hides otherwise, keeping its state (like the flows toggle)
+// for the next model that has.
+function refreshPlayback(): void {
+  const animatable = lastRun != null || plans.length > 0;
+  if (animatable) playbackBar.style('display', null);
+  else playbackBar.style('display', 'none');
+  if (!animating || !animatable) {
+    pb = null;
+    stopPlayback();
+    return;
+  }
+  pb = lastRun ? playback(lastRun) : null;
+  if (pb) {
+    playT = Math.min(playT, pb.tEnd);
+    sizeClock(pb.tEnd);
+  }
+  startPlayback();
+}
+
+// The clock keeps one width all run — sized to the widest reading the
+// horizon gives (t = 10.00), its text centered — so the right-anchored bar
+// never shifts as the digits grow (9.99 → 10.00).
+function sizeClock(tEnd: number): void {
+  const el = clock.node();
+  if (!el) return;
+  const shown = el.textContent ?? '';
+  clock.style('display', null).style('min-width', null).text(`t = ${tEnd.toFixed(2)}`);
+  clock.style('min-width', `${el.getBoundingClientRect().width}px`).text(shown);
+}
+
+function startPlayback(): void {
+  if (playTimer) return;
+  lastFrame = d3.now();
+  playTimer = d3.timer(playFrame);
+}
+
+// Stop the timer and wipe every animation mark, back to the still diagram.
+function stopPlayback(): void {
+  if (!playTimer) return;
+  playTimer.stop();
+  playTimer = null;
+  nodeStock.select('rect.tank').attr('height', 0);
+  nodeStock.select('path.tank-line').attr('opacity', 0);
+  nodeStock.select('text.tank-level').text('');
+  flowAnim.attr('stroke-opacity', 0);
+  pulseHalos.selectAll('circle').remove();
+  pulseBeads.selectAll('circle').remove();
+  loopLabel.attr('font-size', 28).attr('fill', '#444');
+  chart.playhead(null);
+  clock.style('display', 'none').text('');
+}
+
+function playFrame(): void {
+  const now = d3.now();
+  // Wall seconds since the last frame, clamped: a backgrounded tab's
+  // paused frames must not fast-forward the run or flood the loops.
+  const dt = Math.min(0.1, (now - lastFrame) / 1000);
+  lastFrame = now;
+  if (pb) {
+    if (playT < pb.tEnd) {
+      playT = Math.min(pb.tEnd, playT + dt * pb.tEnd / PLAY_SECONDS);
+    } else {
+      playHold += dt;
+      if (playHold >= HOLD_SECONDS) {
+        playT = 0;
+        playHold = 0;
+      }
+    }
+  }
+  drawTanks();
+  drawBubbles(dt);
+  drawPulses(now, dt);
+  chart.playhead(pb ? playT : null);
+  if (pb) clock.style('display', null).text(`t = ${playT.toFixed(2)}`);
+  else clock.style('display', 'none').text('');
+}
+
+// Each stock's tank at the playhead: the fill (its level over the run's
+// peak level), the water line on it, and the level read out under the
+// name. With no run to play the tanks stay empty.
+function drawTanks(): void {
+  nodeStock.each(function (d) {
+    const f = pb ? pb.fill(d.id, playT) : 0;
+    const top = stockHeight / 2 - tankInset - f * tankDepth;
+    const g = d3.select(this);
+    g.select('rect.tank').attr('y', top).attr('height', f * tankDepth);
+    const level = g.select<SVGTextElement>('text.tank-level')
+      .text(pb ? fmtLevel(pb.level(d.id, playT)) : '');
+    g.select('path.tank-line')
+      .attr('d', pb ? waterLine(top, [g.select<SVGTextElement>('text.node-label').node(), level.node()]) : '')
+      .attr('opacity', pb ? 1 : 0);
+  });
+}
+
+// The water line at height y, broken wherever it would strike through the
+// stock's name or its readout (see waterSpans): each text's box measured
+// in the stock's own coordinates, the line drawn as the spans left over.
+function waterLine(y: number, texts: (SVGTextElement | null)[]): string {
+  const boxes = texts.filter((el): el is SVGTextElement => !!el?.textContent).map(el => el.getBBox());
+  return waterSpans(y, -stockWidth / 2 + tankInset, stockWidth / 2 - tankInset, boxes)
+    .map(([a, z]) => `M${a},${y}H${z}`)
+    .join('');
+}
+
+// Each pipe's bubbles run with the material at its faucet's pace (against
+// it for a tap a negative factor runs backward), fading out as the flow
+// dies — full strength from a fifth of the peak rate up, gone at a shut
+// tap, so a closed pipe reads exactly as the still diagram draws it.
+function drawBubbles(dt: number): void {
+  flowAnim.each(function (l) {
+    const tap = pipeFaucet.get(l);
+    const pace = pb && tap != null ? pb.pace(tap, playT) : 0;
+    const offset = ((bubbleOffset.get(l) ?? 0) - BUBBLE_SPEED * pace * dt) % BUBBLE_PERIOD;
+    bubbleOffset.set(l, offset);
+    d3.select(this)
+      .attr('stroke-dashoffset', offset)
+      .attr('stroke-opacity', Math.min(1, 5 * Math.abs(pace)));
+  });
+}
+
+// Advance every loop's beat clock by its activity, sending a pulse on each
+// beat, then draw every pulse in flight: an eased bead on each hop its age
+// puts it on, faded into the node at either end — so the step from a
+// pipe's end to the stock's port reads as one pulse passing through — and
+// swell each loop's letter on its beat.
+function drawPulses(now: number, dt: number): void {
+  const beads: { x: number; y: number; o: number }[] = [];
+  for (const plan of plans) {
+    let st = pulseState.get(plan.name);
+    if (!st) {
+      // A loop's clock starts primed: it beats on its first live frame, so
+      // pressing play (or annotating a loop mid-run) answers at once.
+      st = { phase: 1, beat: -Infinity, born: [] };
+      pulseState.set(plan.name, st);
+    }
+    const act = pb ? loopActivity(pb, plan, playT) : null;
+    const hz = act == null ? PULSE_IDLE_HZ : PULSE_HZ * act;
+    st.phase = Math.min(1, st.phase + hz * dt);
+    if (hz > 0 && st.phase >= 1) {
+      st.phase = 0;
+      st.beat = now;
+      st.born.push(now);
+    }
+    const life = plan.depths * HOP_SECONDS * 1000;
+    st.born = st.born.filter(b => now - b < life);
+    for (const b of st.born) {
+      for (const { hop, frac } of pulseAt(plan, (now - b) / 1000)) {
+        const path = pathOf.get(hop.link);
+        const len = path?.getTotalLength() ?? 0;
+        if (!path || len === 0) continue;
+        const e = d3.easeCubicInOut(frac);
+        const p = path.getPointAtLength((hop.reversed ? 1 - e : e) * len);
+        beads.push({ x: p.x, y: p.y, o: Math.min(1, frac / 0.15, (1 - frac) / 0.15) });
+      }
+    }
+  }
+  pulseHalos.selectAll<SVGCircleElement, (typeof beads)[number]>('circle')
+    .data(beads)
+    .join('circle')
+    .attr('r', 8)
+    .attr('cx', b => b.x)
+    .attr('cy', b => b.y)
+    .attr('opacity', b => b.o);
+  pulseBeads.selectAll<SVGCircleElement, (typeof beads)[number]>('circle')
+    .data(beads)
+    .join('circle')
+    .attr('r', 3.5)
+    .attr('cx', b => b.x)
+    .attr('cy', b => b.y)
+    .attr('opacity', b => b.o);
+  loopLabel.each(function (d) {
+    const st = pulseState.get(d.name);
+    const k = st ? Math.exp(-(now - st.beat) / THROB_MS) : 0;
+    d3.select(this)
+      .attr('font-size', 28 * (1 + 0.3 * k))
+      .attr('fill', throbInk(k));
+  });
 }
 
 // Arm (or toggle off) a palette picker. Arming resets any half-done link
@@ -2189,6 +2616,11 @@ function loadExample(ex: { content: string; flows?: boolean }) {
   // by contrast, is the user's and survives loads.
   showFlows = ex.flows ?? false;
   flowsInput.property('checked', showFlows);
+  // A playing animation carries over to the new figure (the toggle, like
+  // the horizon, is the user's) but starts its run from the beginning.
+  playT = 0;
+  playHold = 0;
+  pulseState.clear();
   textInput.property('value', ex.content);
   textInput.node()?.dispatchEvent(new Event('input'));
 }

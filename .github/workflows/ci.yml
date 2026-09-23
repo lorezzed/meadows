@@ -39,7 +39,7 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@main
 
       # spago build -> spago test (unit checks) -> golden battery ->
-      # simulate / highlight / format / layout headless suites.
+      # simulate / highlight / format / layout / playback headless suites.
       - name: make test
         run: nix --experimental-features 'nix-command flakes' develop --command make test
 
