@@ -47,17 +47,18 @@ same('a lone # decodes to the defaults', await decode('#'), state({}));
 // Only what differs from the defaults reaches the wire, in one fixed order.
 same('a source alone', canonical(state({ source: 'a -> b' })), '{"src":"a -> b"}');
 same('every field', canonical(state({
-  source: 'a', horizon: 25, flows: true, namesOnly: false, animate: true, zoom: 1.25,
+  source: 'a', horizon: 25, namesOnly: false, animate: true, zoom: 1.25,
   pan: [3, -4], pins: { 'stock#2': [1, 2] }, ports: { 'port#0': 1.5 },
   examplesOpen: false, figuresOpen: true,
-})), '{"src":"a","t":25,"flows":true,"names":false,"play":true,"zoom":1.25,"pan":[3,-4],'
+})), '{"src":"a","t":25,"names":false,"play":true,"zoom":1.25,"pan":[3,-4],'
   + '"pins":{"stock#2":[1,2]},"ports":{"port#0":1.5},"examples":false,"figures":true}');
+same('the flows checkbox is not page state', 'flows' in DEFAULTS, false);
 
 // Every example round-trips — source byte for byte, every view field back —
 // as a URL-safe token under the size budget (compression stays on: the
 // largest example measured 763 characters when the format shipped).
 const view = {
-  horizon: 25, flows: true, namesOnly: false, animate: true, zoom: 1.5625, pan: [12.5, -40],
+  horizon: 25, namesOnly: false, animate: true, zoom: 1.5625, pan: [12.5, -40],
   pins: { 'stock#2': [100.5, -20], 'dot#7': [0, 0], 'cloud#0': [-80, 300] },
   ports: { 'port#0': 1.57, 'port#3': -3.14 },
   examplesOpen: false, figuresOpen: true,
@@ -109,7 +110,7 @@ same('the zoom clamp', [clampZoom(0.01), clampZoom(100), clampZoom(1.5)], [0.2, 
 // A malformed field falls back to its default (clamped where it's a
 // number out of range) without costing the rest.
 same('each field is checked on its own', await decode(await tokenOf(JSON.stringify({
-  src: 5, t: 5000, flows: 'yes', names: false, play: 1, zoom: 100, pan: [1, 'x'],
+  src: 5, t: 5000, names: false, play: 1, zoom: 100, pan: [1, 'x'],
   pins: { 'dot#1': [1, 2], evil: [0, 0], 'stock#2': [1], 'port#0': [3, 4], 'cloud#3': [1e9, -1e9] },
   ports: { 'port#0': 10, 'dot#1': 1, 'port#1': 'x' },
   examples: false, figures: 'no',
@@ -120,6 +121,10 @@ same('each field is checked on its own', await decode(await tokenOf(JSON.stringi
   examplesOpen: false,
 }));
 same('a non-finite number falls back', await decode(await tokenOf('{"src":"a","t":1e999}')), state({ source: 'a' }));
+// A key the decoder doesn't read is ignored — the first links carried the
+// flows checkbox, since dropped from the page state — and the rest opens.
+same('the retired flows key is ignored', await decode(await tokenOf('{"src":"a","flows":true,"names":false}')),
+  state({ source: 'a', namesOnly: false }));
 
 // Unreadable tokens decode to null — never a throw.
 for (const [label, hash] of [
@@ -162,10 +167,12 @@ for (const [label, hash] of [
 // A link captured when the format shipped: figure 10 & 11 with its hot
 // coffee and room temperature dragged into place and hot coffee's port slid
 // to the stock's top. It must open field for field in every later version —
-// before changing the wire, bump VERSION and keep reading this one.
+// before changing the wire, bump VERSION and keep reading this one. (It was
+// captured with the flows checkbox ticked; that key is ignored since the
+// checkbox left the page state, and the link opens the same otherwise.)
 const GOLDEN = '#1bY5NboMwEEavYk02qTQgA3WaWA2LXgNYWMYkqOBBtlHUJty9coWaqMpu_t687wreaZBQnSkwTV1njGQZ5w07lppo6O1JMp7mO3ar7cd2HbH3hLW9185Myuqv2N75l9o6opEFM07GqTC7-HLPkvKRqe2NHcuzUeGuqHpt2r8UvInG9SIqLsqNsfxnfoCeqKP2CQgIAWTBEbqBLh5kcLNBsGo0HmSnBm8QvolGkFkqdrlAmJQFWSWFSAVmeYMw9daDvEJLYXMAWRWCY8F5g-AD6c8NB1nlrxyzPU9FsyBM5MIvEYu4TrJUvC0IXX-anVlTLD8';
 same('the shipped link still opens', await decode(GOLDEN), state({
-  source: example('figure 10 & 11'), horizon: 30, flows: true, namesOnly: false,
+  source: example('figure 10 & 11'), horizon: 30, namesOnly: false,
   zoom: 1.5625, pan: [-35.5, 12],
   pins: { 'stock#0': [240, 180.5], 'dot#9': [350, 300] }, ports: { 'port#0': -1.57 },
   figuresOpen: true,

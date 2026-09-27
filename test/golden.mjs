@@ -439,8 +439,8 @@ regeneration <- regeneration rate <- resource -> regeneration`;
 // nodes and restores the book's harvest -> profit arrow), and the
 // depensation regeneration hump 112 (x(1 - x))^2 peaking above the settle
 // point: harvest crests ~271/yr then settles ~233/yr, capital ~1450 ->
-// ~1397, the resource 1000 -> ~484 -> 500. ONE button, opening in the
-// flows view — all three panels at once.
+// ~1397, the resource 1000 -> ~484 -> 500. ONE button — the flows
+// checkbox shows all three panels at once.
 const EX_FISH43 = `| =>investment [capital: 5] =>depreciation |
 | =>regeneration [resource: 1000] =>harvest |
 R(investment <- profit <- capital)
@@ -464,7 +464,7 @@ regeneration rate: (112 (resource / 1000 * (1 - resource / 1000))^2)`;
 // cliffs. The bind slides to R ~380 and the season-late profit read turns
 // 43's single ring into a sustained cycle: harvest cycling under a
 // ~277/yr crest, capital topping ~1115, resource bottoming ~308, period
-// ~21 years. ONE button, opening in the flows view.
+// ~21 years. ONE button — the flows checkbox shows every panel.
 const EX_FISH44 = EX_FISH43.replace(
   'yield per unit capital: ((resource / 1000)^2)',
   'yield per unit capital: ((1.27 (resource / 1000)^2.8) / ((resource / 1000)^2.8 + 0.27))');
@@ -474,8 +474,8 @@ const EX_FISH44 = EX_FISH43.replace(
 // half strength until the fish fall below ~a fifth of carrying
 // capacity). Harvest crests ~322/yr then cliffs to zero, capital tents
 // at ~634 and rots at pure depreciation, the resource is stripped to ~2%
-// and never comes back: the book's overshoot-and-collapse. ONE button,
-// opening in the flows view.
+// and never comes back: the book's overshoot-and-collapse. ONE button —
+// the flows checkbox shows every panel.
 const EX_FISH45 = EX_FISH44.replace(
   'yield per unit capital: ((1.27 (resource / 1000)^2.8) / ((resource / 1000)^2.8 + 0.27))',
   'yield per unit capital: ((1.01 (resource / 1000)^2.8) / ((resource / 1000)^2.8 + 0.01))');
@@ -645,8 +645,8 @@ const goldenInputs = [
   EX_OIL40,       // figures 37 & 40 — the growth-goal comparison, four copies
   EX_OIL41,       // figures 37 & 41 — scarcity pricing: same oil, twice the capital
   EX_FISH42,      // figure 42 — the renewable fishery structure (harvest -> profit restored)
-  EX_FISH43,      // figures 42 & 43 — the fishery's overshoot-and-settle, one flows-preset button
-  EX_FISH44,      // figures 42 & 44 — the technology yield curve's limit cycle, one flows-preset button
+  EX_FISH43,      // figures 42 & 43 — the fishery's overshoot-and-settle, one button
+  EX_FISH44,      // figures 42 & 44 — the technology yield curve's limit cycle, one button
   EX_FISH45,      // figure 42 & 45 — the half-yield point at 0.01: overshoot and collapse
   EX_CHAIN47,     // figure 47 — the materials-economy chain, structure only
   EX_POP48,       // figure 48 — the bare population stock, structure only

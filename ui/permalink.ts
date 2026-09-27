@@ -21,10 +21,9 @@
 export type PageState = {
   // The editor text, verbatim — a draft that doesn't compile included.
   source: string;
-  // The chart's simulated horizon (the t = field).
+  // The chart's simulated horizon (the t = field). (The chart's flows
+  // checkbox is deliberately NOT page state: nothing but a click sets it.)
   horizon: number;
-  // The chart's flows overlay.
-  flows: boolean;
   // The diagram's names-only labels.
   namesOnly: boolean;
   // The animate toggle (a restored run plays from t = 0).
@@ -50,7 +49,6 @@ export type PageState = {
 export const DEFAULTS: Readonly<PageState> = Object.freeze<PageState>({
   source: '',
   horizon: 10,
-  flows: false,
   namesOnly: true,
   animate: false,
   zoom: 1,
@@ -115,7 +113,6 @@ export function canonical(s: PageState): string {
   if (s.source !== DEFAULTS.source) w.src = s.source;
   const t = clampHorizon(s.horizon);
   if (t !== DEFAULTS.horizon) w.t = t;
-  if (s.flows !== DEFAULTS.flows) w.flows = s.flows;
   if (s.namesOnly !== DEFAULTS.namesOnly) w.names = s.namesOnly;
   if (s.animate !== DEFAULTS.animate) w.play = s.animate;
   const zoom = zoomStep(s.zoom);
@@ -170,12 +167,13 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 // A wire object back to a full state: each field read on its own, falling
 // back to its default when absent or malformed, and snapped to the same grid
 // and ranges `canonical` writes — so a decoded state's canonical JSON is the
-// one it was read from, whenever this module wrote the link.
+// one it was read from, whenever this module wrote the link. A key it
+// doesn't read is ignored: the first links carried the chart's flows
+// checkbox (`flows`), since dropped from the page state, and still open.
 function fromWire(w: Record<string, unknown>): PageState {
   const s = fresh();
   if (typeof w.src === 'string') s.source = w.src;
   if (isNum(w.t)) s.horizon = clampHorizon(w.t);
-  if (typeof w.flows === 'boolean') s.flows = w.flows;
   if (typeof w.names === 'boolean') s.namesOnly = w.names;
   if (typeof w.play === 'boolean') s.animate = w.play;
   if (isNum(w.zoom)) s.zoom = zoomStep(w.zoom);

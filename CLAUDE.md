@@ -593,7 +593,7 @@ playback bullet below). Almost everything lives in **`app.ts`**:
   shown when there is a run to play (`lastRun`, the trace `refreshChart()`
   just took — present exactly when the chart plots) or a loop to pulse
   (`plans`), hidden otherwise with its state kept, like the names-only
-  toggle's; unlike the flows toggle it survives example loads, which
+  toggle's; like every view toggle it survives example loads, which
   restart the run from t=0. While on, a d3 timer (`playFrame`) sweeps the
   playhead through [0, tEnd] in `PLAY_SECONDS` (12) of wall time whatever
   the horizon, rests `HOLD_SECONDS` on the final state, and loops — each
@@ -626,38 +626,40 @@ playback bullet below). Almost everything lives in **`app.ts`**:
   runs it, and a `let`/`const` declared further down is still in its TDZ.
 - The **permalink** (the section at the end of app.ts): the URL hash always
   holds the page's whole state, coded by `ui/permalink.ts` (below) — the
-  source verbatim (non-compiling drafts included), the horizon, flows,
-  names only, animate, zoom and pan, which example sections are open, and
-  the hand placements: `fx`/`fy` pins by node id and `portAngle` by port id
+  source verbatim (non-compiling drafts included), the horizon, names
+  only, animate, zoom and pan, which example sections are open, and the
+  hand placements: `fx`/`fy` pins by node id and `portAngle` by port id
   (ports never count as pins — `ticked()` pins every port each frame).
   Unpinned positions (the forces re-derive them), anything derived from
   the source, and gesture state (tool, selection, playhead) are
-  deliberately not saved. Every state change calls `scheduleSave()` — the
-  input handler's `finally`, each view control, the ends of node/port
-  drags and pans, section toggles — which debounces 300 ms; `saveNow()`
+  deliberately not saved — nor is the chart's flows checkbox, which only a
+  click sets (a link opens with it off). Every state change calls
+  `scheduleSave()` — the input handler's `finally`, each view control, the
+  ends of node/port drags and pans, section toggles — which debounces
+  300 ms; `saveNow()`
   snapshots the state WHEN IT RUNS (a palette placement pins its node just
   after its text dispatches), skips a write whose `canonical` JSON is
   unchanged, and `replaceState`s: no history entry per keystroke, and our
   own writes never fire `hashchange`. Encoding is async, so writes queue in
   order on one promise chain, and `navGen` drops a write queued before a
   navigation. `loadModel(state)` is the one "replace the whole model" path
-  (fresh layout; tool, rename, and selection reset; view applied, horizon
-  and flows before the compile; `setSource`; the animate toggle last, once
+  (fresh layout; tool, rename, and selection reset; view applied, the
+  horizon before the compile; `setSource`; the animate toggle last, once
   `update()` has traced its run): an example load runs it after
-  `flushSave()` with the current view (flows reset to the entry's flag) and
-  its save PUSHES an entry, so Back undoes a load; link restores run it
-  too. On startup (with a hash, the container stays `visibility: hidden`
-  until the decode settles — no top-level await, since the esbuild bundle
-  is an IIFE) and on every `hashchange` (a pasted link, Back/Forward),
+  `flushSave()` with the current view untouched (an example is its source
+  alone) and its save PUSHES an entry, so Back undoes a load; link
+  restores run it too. On startup (with a hash, the container stays
+  `visibility: hidden` until the decode settles — no top-level await,
+  since the esbuild bundle is an IIFE) and on every `hashchange` (a pasted
+  link, Back/Forward),
   `decode` → `restore` → `loadModel`; the link's pins wait in
   `pendingView` until `applyPendingView()` lands them after the next
   successful `update()` (carried in snapshots meanwhile, so a link to a
   draft that doesn't compile loses nothing). An unreadable link shows a
   notice in the error `<pre>` and stays in the address bar until the next
   change. Hiding the page or blurring the window flushes a pending save.
-  The fresh page's values (`namesOnly`, `showFlows`, zoom and pan, the
-  sections) initialize from `DEFAULTS`, so a bare URL means exactly the
-  fresh page.
+  The fresh page's values (`namesOnly`, zoom and pan, the sections)
+  initialize from `DEFAULTS`, so a bare URL means exactly the fresh page.
 
 Two sibling modules add the **behavior-over-time chart** (the book's figure 6 to
 the diagram's figure 5):
@@ -788,11 +790,14 @@ the diagram's figure 5):
   output dashed ("5 3", shorter than the goals' dash) — in the nodes' own
   accents, joining the y-domain (an order backlog may dip below zero), the
   label dodge, and the hover rows. Off by default so figures 32/34/35/36
-  plot the bare stock line; an example entry may carry `flows: true`
-  (`loadExample` resets the toggle
-  to each button's declared flag, so every button lands on its figure's
-  view — "figure 31 & 33" is "figure 31 & 32"'s model preset to the flow
-  view; the `t =` horizon, by contrast, survives loads).
+  plot the bare stock line. Only a click sets it (`showFlows` starts
+  `false`): an example entry is exactly `{ label, content }` — the source
+  the interpreter compiles and nothing beside it — so no button presets
+  the view, and the toggle, like the `t =` horizon, survives loads
+  ("figure 31 & 33" is "figure 31 & 32"'s model; figure 33's panels are
+  its flows, one tick away); nor is it page state (the permalink carries
+  no `flows`), so every page load, reload and shared link included,
+  starts it off.
   `STOCK_PALETTE` is the base palette for the per-node accent assignment
   described on the `update()` bullet (fixed-order, assigned by slot, never
   cycled, clamped by `textAccent` before any view uses it). The
@@ -845,9 +850,9 @@ through either.
 DecompressionStream, TextEncoder, and btoa/atob are node globals).
 `PageState` is the whole saved state and `DEFAULTS` the fresh page (its
 `horizon` pinned to simulate.ts's `T_END` by the test). `canonical(state)`
-is the wire JSON — short keys (`src`, `t`, `flows`, `names`, `play`,
-`zoom`, `pan`, `pins`, `ports`, `examples`, `figures`) in a fixed order,
-only the fields that differ from `DEFAULTS`, numbers snapped to a grid
+is the wire JSON — short keys (`src`, `t`, `names`, `play`, `zoom`, `pan`,
+`pins`, `ports`, `examples`, `figures`) in a fixed order, only the
+fields that differ from `DEFAULTS`, numbers snapped to a grid
 (positions to 0.1, bearings wrapped into atan2's range at 0.01 rad, zoom to
 4 places), ids sorted — so equal states spell equal JSON, and the default
 state spells ''. `encode` gives `VERSION` (`1`) + base64url(deflate-raw(the
@@ -856,10 +861,11 @@ token is ~760 characters. `decode` never throws: an empty hash is the
 defaults; a wrong version, bad base64url, corrupt or truncated deflate, a
 token or inflated JSON over 256 KiB, invalid UTF-8, or a non-object is
 null; otherwise each field is read on its own (a malformed one falls back
-to its default) and clamped by `clampHorizon` (1–1000) / `clampZoom`
-(0.2–8), which the t = field and the zoom buttons share. The test's golden
-token must decode forever: before changing the wire, bump `VERSION` and
-keep reading the old one.
+to its default, a key it doesn't read is ignored — the first links'
+retired `flows` among them) and clamped by `clampHorizon` (1–1000) /
+`clampZoom` (0.2–8), which the t = field and the zoom buttons share. The
+test's golden token must decode forever: before changing the wire, bump
+`VERSION` and keep reading the old one.
 
 `update()` clears `group`/`loop`/`value`/`steps` on recycled nodes before
 merging new data (the JSON omits absent `Maybe` keys, so stale values would

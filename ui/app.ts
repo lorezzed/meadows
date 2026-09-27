@@ -834,8 +834,10 @@ let tEnd = T_END;
 // output (figure 33's view: orders against deliveries); in any other,
 // each faucet's rate (the caffeine example's espresso shots). Off by
 // default so the plain stock charts (figures 32, 34, 35) stay exactly the
-// book's.
-let showFlows = DEFAULTS.flows;
+// book's. Only a click sets it: nothing in the source can, so neither an
+// example (see loadExample) nor a link (it isn't page state — see the
+// permalink section) presets it, and every page load starts it off.
+let showFlows = false;
 let lastChart: { system: System; colorOf: (id: string) => string; plottable: boolean } | null = null;
 // The run itself, when the model plots: one engine pass serves the chart
 // and the animate toggle alike — trace()'s levels ARE simulate()'s
@@ -870,7 +872,6 @@ const flowsInput = flowsLabel.append('input')
   .on('change', function () {
     showFlows = (this as HTMLInputElement).checked;
     refreshChart();
-    scheduleSave();
   });
 flowsLabel.append('span').text('flows')
 const horizonLabel = horizonRow
@@ -2729,17 +2730,16 @@ function deleteLink(l: Link): void {
   disarmTool();
 }
 
-// An example button. Each lands on the view its figure shows: the flows
-// toggle resets to the entry's declared flag ("figure 31 & 33" presets it
-// on, everything else off — figure 32's chart is the bare inventory line).
-// The rest of the view — horizon, zoom and pan, names only, animate, the
-// open sections — is the user's and survives loads. A load is a navigation:
-// the model it replaces keeps its own history entry (a pending save lands
-// there first) and the load pushes a new one, so Back brings the replaced
-// model back.
-function loadExample(ex: { content: string; flows?: boolean }) {
+// An example button. An example is exactly its source text — the model the
+// interpreter compiles from it — so a load replaces the text and nothing
+// else: the whole view (horizon, flows, zoom and pan, names only, animate,
+// the open sections) is the user's and survives loads. A load is a
+// navigation: the model it replaces keeps its own history entry (a pending
+// save lands there first) and the load pushes a new one, so Back brings the
+// replaced model back.
+function loadExample(ex: { content: string }) {
   flushSave();
-  loadModel({ ...snapshot(), source: ex.content, flows: ex.flows ?? false, pins: {}, ports: {} });
+  loadModel({ ...snapshot(), source: ex.content, pins: {}, ports: {} });
   scheduleSave({ push: true });
 }
 
@@ -2750,8 +2750,8 @@ function loadExample(ex: { content: string; flows?: boolean }) {
 // every node starts fresh at its layout slot, while typing edits still
 // recycle. An armed palette tool (and any half-picked link source, about to
 // go stale) disarms with the model it belonged to, and the selection (ids
-// about to be replaced) clears. Then the view applies — horizon and flows
-// before the compile, so update() charts the right run once — the text goes
+// about to be replaced) clears. Then the view applies — the horizon before
+// the compile, so update() charts the right run once — the text goes
 // in through setSource, and the state's hand placements wait in pendingView
 // for the new nodes. A playing animation carries over but starts its run
 // from the beginning; the toggle itself flips last, once update() has
@@ -2763,8 +2763,6 @@ function loadModel(p: PageState): void {
   simulation.nodes([]);
   tEnd = p.horizon;
   horizonInput.property('value', tEnd);
-  showFlows = p.flows;
-  flowsInput.property('checked', showFlows);
   if (namesOnly !== p.namesOnly) toggleNamesOnly();
   userZoom = p.zoom;
   [panX, panY] = p.pan;
@@ -3008,12 +3006,13 @@ function drag() {
 
 // ---- Permalink: the whole page state in the URL hash ----
 // The address bar is always a link to exactly what's on screen: the model's
-// source text, verbatim, plus the view — horizon, flows, names only,
-// animate, zoom and pan, the open example sections — and the hand
-// placements (pinned nodes, slid ports), encoded by ui/permalink.ts. What
-// the forces or the source decide (unpinned positions, accents, the compile
-// error) is left for them to decide again, and what lasts only a gesture
-// (an armed tool, the selection, the playhead) isn't saved at all.
+// source text, verbatim, plus the view — horizon, names only, animate, zoom
+// and pan, the open example sections — and the hand placements (pinned
+// nodes, slid ports), encoded by ui/permalink.ts. What the forces or the
+// source decide (unpinned positions, accents, the compile error) is left
+// for them to decide again, and what lasts only a gesture (an armed tool,
+// the selection, the playhead) isn't saved at all. Nor is the chart's
+// flows checkbox: nothing but a click sets it, so a link opens with it off.
 //
 // Saving: every state change calls scheduleSave() — each text change from
 // the input handler (typing, and every programmatic edit through
@@ -3102,7 +3101,6 @@ function snapshot(): PageState {
   return {
     source: textInput.property('value') as string,
     horizon: tEnd,
-    flows: showFlows,
     namesOnly,
     animate: animating,
     zoom: userZoom,

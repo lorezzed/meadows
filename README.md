@@ -366,8 +366,8 @@ the two dashed families stay apart. A faucet's sample is its *applied*
 with the stock series, and the flow lines join the y-domain, which is why an
 order backlog swinging negative can pull the axis below zero.
 
-Load **figure 31 & 33** and read the four lines against each other (1 unit =
-10 days). Customer demand steps up on day 25:
+Load **figure 31 & 33**, tick **flows**, and read the four lines against each
+other (1 unit = 10 days). Customer demand steps up on day 25:
 
 | line | style | moves |
 |---|---|---|
@@ -390,9 +390,12 @@ the oscillation vanishes outright — the lot dips to 198, settles on the new
 stock line alone never shows you why.
 
 The box is off by default, so figures 32 and 34–36 plot the bare stock line
-the book prints. An example may declare `flows: true` to open on this view
-(figure 31 & 33 and the fishery figures 43–45 do), and each button resets the
-box to its own setting — unlike `t =`, which survives a load.
+the book prints; figure 33's view, and the harvest-rate panels of the
+fishery figures 43–45, are one tick away. The box is yours alone, and nothing
+but a click sets it: an example is exactly its source text, with nothing
+beside it to preset the view, so loading one never touches the box (just as
+it never touches `t =`); and the box isn't part of the page's link, so every
+page load, reload or shared link, starts with it unticked.
 
 ### The animate toggle
 
@@ -461,9 +464,10 @@ mid-run.
   already there. Every one of them is a *text* edit — the statement is
   appended to (or removed from) the editor, so the source stays the model.
 - The **address bar** is a link to what's on screen. It holds the model's
-  text exactly as typed, the view (the chart's horizon and flows checkbox,
-  names only, animate, zoom and pan, which example sections are open), and
-  every node you pinned or port you slid. It keeps up as you work without
+  text exactly as typed, the view (the chart's horizon, names only, animate,
+  zoom and pan, which example sections are open), and every node you pinned
+  or port you slid. The flows checkbox stays out of it: only a click sets
+  it. It keeps up as you work without
   piling up history, so a reload, a bookmark, or a link you send reopens
   the same page. Nodes you haven't pinned lay themselves out afresh, as
   they do for an example. An example load does add a history entry, so

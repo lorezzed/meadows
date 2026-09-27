@@ -290,11 +290,11 @@ response delay: 0.3
 delivery delay: 0.5`
     },
     {
-        // The same run as figure 31 & 32, opened in the chart's flows view:
-        // figure 33's panels — sales vs perceived sales (the perception
-        // pair), orders vs deliveries (the delivery pair).
+        // The same run as figure 31 & 32: figure 33's panels are its flows
+        // — tick the chart's flows checkbox for sales vs perceived sales
+        // (the perception pair) and orders vs deliveries (the delivery
+        // pair).
         label: 'figure 31 & 33',
-        flows: true,
         content: `| =>deliveries [inventory of cars on the lot: 200] =>sales |
 B(deliveries <- orders to factory <- discrepancy <- inventory of cars on the lot)
 orders to factory: (perceived sales + discrepancy / response delay)
@@ -584,8 +584,8 @@ regeneration <- regeneration rate <- resource -> regeneration`
         // x = resource/1000: crowded fish and scarce fish both breed
         // poorly), so total regeneration peaks at R = 600, ABOVE the
         // settle point, and its shallow slope at equilibrium barely damps
-        // the loop. The button opens preset to the flows view its profit
-        // delay unlocks, showing every panel at once. The solid harvest
+        // the loop. Ticking the chart's flows checkbox (the delay view its
+        // profit read unlocks) shows every panel at once. The solid harvest
         // rate is panel A: riding the goal-blind ramp over the hump to
         // ~4070 (~271/yr — per-unit rates are 15x the book's per-year
         // axis) at year ~111, dipping, settling at ~3500 (~233/yr).
@@ -597,7 +597,6 @@ regeneration <- regeneration rate <- resource -> regeneration`
         // causes the dip. Figure 44 swaps in the technology yield curve
         // and never settles — this one does.
         label: 'figure 42 & 43',
-        flows: true,
         content: `| =>investment [capital: 5] =>depreciation |
 | =>regeneration [resource: 1000] =>harvest |
 R(investment <- profit <- capital)
@@ -626,8 +625,8 @@ regeneration rate: (112 (resource / 1000 * (1 - resource / 1000))^2)`
         // to R ~380 — and there the season-late profit read overpowers
         // what little damping is left: instead of ringing once and
         // settling, the fishery orbits its never-reached equilibrium
-        // forever, period ~21 years. The button opens preset to the
-        // flows view. The solid harvest rate is panel A: cresting ~4150
+        // forever, period ~21 years. With the chart's flows checkbox
+        // ticked, the solid harvest rate is panel A: cresting ~4150
         // (~277/yr — per-unit rates are 15x the book's per-year axis)
         // near year 100, then cycling with rebound peaks clearly BELOW
         // the crest. Capital's line is panel B: topping out ~1115 —
@@ -637,7 +636,6 @@ regeneration rate: (112 (resource / 1000 * (1 - resource / 1000))^2)`
         // cycle — the delay driving the dance. Nothing collapses and
         // nothing settles: the book's sustained oscillation.
         label: 'figure 42 & 44',
-        flows: true,
         content: `| =>investment [capital: 5] =>depreciation |
 | =>regeneration [resource: 1000] =>harvest |
 R(investment <- profit <- capital)
@@ -666,8 +664,8 @@ regeneration rate: (112 (resource / 1000 * (1 - resource / 1000))^2)`
         // starts nothing turns it: the resource is stripped to ~2% and
         // STAYS there (the t = 20 horizon shows no comeback — scarce
         // fish can't find mates), profit dies with the catch, and
-        // capital rots at its bare 20-year lifetime. The button opens
-        // preset to the flows view. The solid harvest rate is panel A:
+        // capital rots at its bare 20-year lifetime. With the chart's flows
+        // checkbox ticked, the solid harvest rate is panel A:
         // cresting ~4840 (~322/yr — per-unit rates are 15x the book's
         // per-year axis) at year ~95, then cliffing to ZERO by year
         // ~108, flat forever. Capital's line is panel B: the 5%/yr ramp
@@ -678,7 +676,6 @@ regeneration rate: (112 (resource / 1000 * (1 - resource / 1000))^2)`
         // dies with the catch. Figure 43 settles, 44 oscillates — 45 is
         // the one-way trip.
         label: 'figure 42 & 45',
-        flows: true,
         content: `| =>investment [capital: 5] =>depreciation |
 | =>regeneration [resource: 1000] =>harvest |
 R(investment <- profit <- capital)
