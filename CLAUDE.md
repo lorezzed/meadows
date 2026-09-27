@@ -575,7 +575,7 @@ playback bullet below). Almost everything lives in **`app.ts`**:
   `refreshPlayback()` gates it after every `update()` and horizon change:
   shown when there is a run to play (`lastRun`, the trace `refreshChart()`
   just took — present exactly when the chart plots) or a loop to pulse
-  (`plans`), hidden otherwise with its state kept, like the flows
+  (`plans`), hidden otherwise with its state kept, like the names-only
   toggle's; unlike the flows toggle it survives example loads, which
   restart the run from t=0. While on, a d3 timer (`playFrame`) sweeps the
   playhead through [0, tEnd] in `PLAY_SECONDS` (12) of wall time whatever
@@ -692,10 +692,13 @@ the diagram's figure 5):
   `perceived sales: (sales(t - perception delay))`, the fishery's
   `harvest(t - 0.1)`), keeping every diagram at the book figure's exact
   node census.
-  `flowSeries` re-runs the engine and returns the figure-33 view
-  (each shift's input, solid, and owner, dashed, sampled per step plus one
-  closing sample — aligned with the stock series); `hasDelays` is the
-  cheap static gate the chart's flows toggle keys on. `trace` is the SAME
+  `flowSeries` re-runs the engine and returns the flow view: in a model
+  with shifts, figure 33's (each shift's input, solid, and owner,
+  dashed); in any other, every faucet's applied rate, solid (the caffeine
+  example's 240-an-hour espresso shots) — sampled per step plus one
+  closing sample, aligned with the stock series. `hasDelays` is the cheap
+  static test that tells the two views apart (the flows toggle's tooltip
+  keys on it). `trace` is the SAME
   run with every faucet's applied (post-ration) rate recorded beside the
   levels — sampled like the flow view, so each level step is its inflows'
   minus outflows' `rates[i]·DT` — plus the `dt`/`tEnd` it ran at:
@@ -727,13 +730,15 @@ the diagram's figure 5):
   the hover layer — which the animate toggle parks each frame via
   `playhead(t)` (linear between samples, the reading the tanks show;
   `null` or `empty()` hides it).
-  A **flows toggle** (a checkbox beside the `t =` field, shown only when
-  `hasDelays`) overlays the figure-33 view: `flowSeries`' thin 1.25px
-  lines — each delay call's input solid, its output dashed ("5 3", shorter
-  than the goals' dash) — in the nodes' own accents, joining the y-domain
-  (an order backlog may dip below zero), the label dodge, and the hover
-  rows. Off by default so figures 32/34/35/36 plot the bare stock line; an
-  example entry may carry `flows: true` (`loadExample` resets the toggle
+  A **flows toggle** (a checkbox beside the `t =` field, always shown,
+  its tooltip naming the view the model gets) overlays
+  `flowSeries`' thin 1.25px lines — every faucet's rate, solid, or in a
+  model with delays the figure-33 view: each delay call's input solid, its
+  output dashed ("5 3", shorter than the goals' dash) — in the nodes' own
+  accents, joining the y-domain (an order backlog may dip below zero), the
+  label dodge, and the hover rows. Off by default so figures 32/34/35/36
+  plot the bare stock line; an example entry may carry `flows: true`
+  (`loadExample` resets the toggle
   to each button's declared flag, so every button lands on its figure's
   view — "figure 31 & 33" is "figure 31 & 32"'s model preset to the flow
   view; the `t =` horizon, by contrast, survives loads).

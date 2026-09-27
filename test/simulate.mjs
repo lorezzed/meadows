@@ -4,7 +4,7 @@
 // can run it directly (erasable-syntax type stripping, node >= 22.18).
 // Run with:   node test/simulate.mjs
 import * as M from '../output/Main/index.js';
-import { simulate, flowSeries, hasDelays, hasNumbers, goalRefs, scheduleFn, T_END, DT, DEFAULT_GAIN } from '../ui/simulate.ts';
+import { simulate, flowSeries, trace, hasDelays, hasNumbers, goalRefs, scheduleFn, T_END, DT, DEFAULT_GAIN } from '../ui/simulate.ts';
 
 let failures = 0;
 const fail = (label, msg) => { failures++; console.log(`FAIL ${label}: ${msg}`); };
@@ -587,8 +587,8 @@ target: (max(20, 40 - 4 * t)) -> gap`;
   if (!(rGoals.length === 1 && rGoals[0].label === 'k' && rGoals[0].value === 10))
     fail('relay protection', `a ref-bearing formula dot must stay a walk-through relay, got ${JSON.stringify(rGoals)}`);
 
-  // A delay nested under a function argument is still a delay: the flows
-  // toggle sees it (and its ring primes/advances through collectCalls).
+  // A delay nested under a function argument is still a delay: the flow
+  // view unfolds it (and its ring primes/advances through collectCalls).
   if (!hasDelays(sys('x: 5\na: (cos(x(t - 1)))')))
     fail('delay under cos', 'hasDelays must see through function arguments');
 
@@ -969,6 +969,37 @@ metabolism: (0.14 caffeine in blood)`))[0];
   if (!(at(5.9) < peak1 * 0.65)) fail('caffeine', 'decay sags visibly between shots');
 }
 {
+  // A model without delays still has a flow view — its faucets' applied
+  // rates, solid, in id order: caffeine's espresso runs at 240 an hour (a
+  // rate) for the half hour that adds 120 to the level it fills, while
+  // metabolism drains 14% of that level an hour. The samples ARE the
+  // playback's applied rates — one engine, one number.
+  const system = sys(`| =>espresso: 0 @1: 240 @1.5: 0 @6: 240 @6.5: 0 [caffeine in blood: 0] =>metabolism |
+metabolism: (0.14 caffeine in blood)`);
+  if (hasDelays(system)) fail('caffeine flows', 'no delay here — the flow view is the faucet rates');
+  const flows = flowSeries(system);
+  const shape = flows.map(f => `${f.label}${f.dashed ? '~' : ''}`).join();
+  if (shape !== 'espresso,metabolism') fail('caffeine flows', `every faucet, solid, in id order — got ${shape}`);
+  const run = trace(system);
+  const level = run.stocks[0].levels;
+  const [esp, met] = flows.map(f => f.values);
+  if (!flows.every((f, k) => f.id === run.rates[k].id && f.values.length === level.length
+      && f.values.every((v, i) => v === run.rates[k].rates[i])))
+    fail('caffeine flows', 'the flow samples must be the trace\'s applied rates, aligned with the levels');
+  const dosing = (i) => (i >= 20 && i < 30) || (i >= 120 && i < 130); // [1, 1.5) and [6, 6.5)
+  if (!esp.every((v, i) => v === (dosing(i) ? 240 : 0)))
+    fail('caffeine flows', 'espresso runs at exactly 240 through each half-hour shot, 0 otherwise');
+  const dose = esp.slice(20, 30).reduce((a, v) => a + v * DT, 0);
+  if (Math.abs(dose - 120) > 1e-9) fail('caffeine flows', `one shot delivers 240 × 0.5 = 120, got ${dose}`);
+  if (!(Math.max(...level.slice(0, 100)) < 120))
+    fail('caffeine flows', 'the level stays under the 120 dose (metabolism drains meanwhile), far under the 240 rate');
+  if (!met.every((v, i) => Math.abs(v - 0.14 * level[i]) < 1e-9))
+    fail('caffeine flows', 'metabolism runs at 14% of the level at every sample');
+  // No faucet and no delay: nothing to plot.
+  if (flowSeries(sys('[a: 5]')).length !== 0)
+    fail('caffeine flows', 'a faucet-less, delay-free model has an empty flow view');
+}
+{
   // boom & bust: breeding on price(t - 2) closes a loop through the
   // pipeline shift, so the level orbits its 400/3 equilibrium instead of
   // settling — repeated crossings are the oscillation.
@@ -976,7 +1007,7 @@ metabolism: (0.14 caffeine in blood)`))[0];
 breeding: (price(t - 2))
 price: (200 - pigs at market)
 sales: (0.5 pigs at market)`);
-  if (!hasDelays(system)) fail('boom & bust', 'the shift must register (the flows toggle appears)');
+  if (!hasDelays(system)) fail('boom & bust', 'the shift must register (the flow view unfolds it)');
   const p = simulate(system)[0];
   const eq = 400 / 3;
   let crossings = 0;
@@ -1165,7 +1196,7 @@ yield per unit capital: (resource / 1000)`;
     fail('figure 38', `capital decays well below its peak by year 100, got ${endK}`);
   if (goalRefs(system).length !== 0)
     fail('figure 38', 'formula faucets register no goal rules — no dashed lines');
-  if (hasDelays(system)) fail('figure 38', 'no time shifts here — no flows toggle');
+  if (hasDelays(system)) fail('figure 38', 'no time shifts here — its flow view is the faucet rates');
 
   // figures 37 & 39: three endowments side by side (resource 1000 / 2000 /
   // 4000, each copy's yield reading its own R0, every constant per-copy so
@@ -1366,7 +1397,7 @@ yield per unit capital: (resource / 1000)`;
   if (!(R41.levels[Math.round(7 / DT)] < 25))
     fail('figure 41', 'the resource is spent by year ~70');
   if (goalRefs(system41).length !== 0 || hasDelays(system41))
-    fail('figure 41', 'no goal rules, no flows toggle');
+    fail('figure 41', 'no goal rules, no time shifts');
 }
 
 // figures 42 & 43 (panels A, B, C): the sustainable fishery
@@ -1459,7 +1490,7 @@ regeneration rate: (112 (resource / 1000 * (1 - resource / 1000))^2)`;
   // 110, dips BELOW the settle to ~224/yr, then holds ~233/yr; profit
   // (dashed, the shift's owner) closes on depreciation at equilibrium.
   if (!hasDelays(system) || goalRefs(system).length !== 0)
-    fail('figure 43', 'the profit lag unlocks the flows toggle; no goal rules');
+    fail('figure 43', 'the profit lag is a delay for the flow view to unfold; no goal rules');
   const flows = flowSeries(system);
   if (flows.map(f => `${f.label}${f.dashed ? '~' : ''}`).join() !== 'harvest,profit~')
     fail('figure 43', `the flow view is harvest (solid) + profit (dashed), got ${flows.map(f => f.label)}`);

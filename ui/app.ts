@@ -228,8 +228,8 @@ const css = `
     outline-offset: 2px;
   }
   /* The chart's footer row, tucked under the panel's right corner: the
-     flows toggle (shown only when the model has delay calls) and the
-     t= horizon field, right where the time axis they affect ends. */
+     flows toggle and the t= horizon field, right where the time axis they
+     affect ends. */
   .horizon {
     display: flex;
     justify-content: flex-end;
@@ -780,10 +780,12 @@ const chart = createChart(side)
 // lastChart holds what a horizon change must re-run: the last successfully
 // compiled system with its stock accent assignment, and whether it plots.
 let tEnd = T_END;
-// The flows toggle (figure 33's view): when on, the chart overlays each
-// delay call's input and output as thin lines — orders against
-// deliveries. Off by default so the plain stock charts (figures 32, 34,
-// 35) stay exactly the book's.
+// The flows toggle: when on, the chart overlays the model's flows as thin
+// lines — in a model with delays, each delay call's input against its
+// output (figure 33's view: orders against deliveries); in any other,
+// each faucet's rate (the caffeine example's espresso shots). Off by
+// default so the plain stock charts (figures 32, 34, 35) stay exactly the
+// book's.
 let showFlows = false;
 let lastChart: { system: System; colorOf: (id: string) => string; plottable: boolean } | null = null;
 // The run itself, when the model plots: one engine pass serves the chart
@@ -801,18 +803,18 @@ function refreshChart(): void {
     lastRun = null;
     chart.empty(tEnd);
   }
-  // The toggle appears only when the model has a delay to unfold.
-  if (lastChart?.plottable && hasDelays(lastChart.system)) flowsLabel.style('display', null);
-  else flowsLabel.style('display', 'none');
+  // The toggle is always there; its tooltip names the view it overlays.
+  flowsLabel.attr('title', lastChart && hasDelays(lastChart.system) ? FLOWS_DELAY_TITLE : FLOWS_RATE_TITLE);
 }
 const horizonRow = side
   .append('div')
   .attr('class', 'horizon')
   .style('order', 10)
+const FLOWS_DELAY_TITLE = "plot each delay's input (solid) and output (dashed) — the figure 33 view";
+const FLOWS_RATE_TITLE = "plot each faucet's rate — the flows behind the stock lines";
 const flowsLabel = horizonRow
   .append('label')
-  .attr('title', "plot each delay's input (solid) and output (dashed) — the figure 33 view")
-  .style('display', 'none')
+  .attr('title', FLOWS_RATE_TITLE)
 const flowsInput = flowsLabel.append('input')
   .attr('type', 'checkbox')
   .on('change', function () {
@@ -2008,8 +2010,8 @@ function toggleAnimation(): void {
 // refreshChart() has traced the run it plays — and gate the toggle: it
 // shows whenever there is something to animate, a run to play (lastRun
 // exists exactly when the chart plots: numbers and a stock) or a loop to
-// pulse, and hides otherwise, keeping its state (like the flows toggle)
-// for the next model that has.
+// pulse, and hides otherwise, keeping its state (like the names-only
+// toggle) for the next model that has.
 function refreshPlayback(): void {
   const animatable = lastRun != null || plans.length > 0;
   if (animatable) playbackBar.style('display', null);

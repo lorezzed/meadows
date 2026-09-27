@@ -53,12 +53,14 @@ export const DT = 0.05;  // Euler step
 // levels[i] is the stock's level at t = i * DT (horizon/DT + 1 samples).
 export type StockSeries = { id: string; label: string; levels: number[] };
 
-// The chart's optional flow view (figure 33): each time shift plots its
-// input against its output — a series per distinct node, values sampled
-// at every step's start plus one closing sample at the horizon (aligned
-// with the stock series). `dashed` marks a shift's OWNER (the delayed
-// copy); a bare-reference input plots solid. A faucet's sample is its
-// applied (post-ration) rate, a dot's its computed value.
+// The chart's optional flow view: a series per distinct node, values
+// sampled at every step's start plus one closing sample at the horizon
+// (aligned with the stock series). In a model with time shifts it is
+// figure 33's: each shift plots its input against its output — `dashed`
+// marks a shift's OWNER (the delayed copy), a bare-reference input plots
+// solid. A model without shifts plots every faucet's rate instead, solid
+// — the rates behind the level lines. A faucet's sample is its applied
+// (post-ration) rate, a dot's its computed value.
 export type FlowSeries = { id: string; label: string; dashed: boolean; values: number[] };
 
 // d3 rewrites link endpoints from id strings to node objects once a system
@@ -336,8 +338,9 @@ const collectCalls = (e: Expr, key: string, out: CallSite[]): void => {
   }
 };
 
-// Whether the model contains any time shift — the chart shows its flows
-// toggle only when there is a delay to unfold (figure 33's view).
+// Whether the model contains any time shift — a delay for the flow view
+// to unfold (figure 33's view) rather than its faucets' rates; the chart's
+// flows toggle names the view it overlays by it.
 export function hasDelays(system: System): boolean {
   const calls: CallSite[] = [];
   for (const n of system.nodes) if (n.expr != null) collectCalls(n.expr, n.id + ":", calls);
@@ -348,9 +351,10 @@ export function simulate(system: System, tEnd: number = T_END): StockSeries[] {
   return run(system, tEnd).stocks;
 }
 
-// The flow view of the same run (figure 33): re-runs the engine and returns
-// each call's input/output series. Kept separate so simulate()'s shape (and
-// every existing caller) is untouched.
+// The flow view of the same run (see FlowSeries): re-runs the engine and
+// returns each call's input/output series — or, in a model without calls,
+// each faucet's rate. Kept separate so simulate()'s shape (and every
+// existing caller) is untouched.
 export function flowSeries(system: System, tEnd: number = T_END): FlowSeries[] {
   return run(system, tEnd).flows;
 }
@@ -515,7 +519,10 @@ function run(system: System, tEnd: number, withRates = false): { stocks: StockSe
   // The flow view's series: per call, its owner (dashed) and — when the
   // input is a bare reference to a dot or faucet — that source node (solid;
   // stocks already have level lines). A node in both roles keeps the dashed
-  // owner reading.
+  // owner reading. A model without calls has no gap to unfold, so its view
+  // is every faucet, solid: the caffeine example's espresso spiking to 240
+  // an hour while the level it fills gains at most the 120 that half hour
+  // delivers.
   const flowNodes = new Map<string, { node: Node; dashed: boolean }>();
   for (const c of calls) {
     const owner = nodeById.get(c.key.slice(0, c.key.indexOf(":")));
@@ -526,6 +533,8 @@ function run(system: System, tEnd: number, withRates = false): { stocks: StockSe
         flowNodes.set(src.id, { node: src, dashed: false });
     }
   }
+  if (calls.length === 0)
+    for (const n of system.nodes) if (n.type === "faucet") flowNodes.set(n.id, { node: n, dashed: false });
   const flows: FlowSeries[] = [...flowNodes.values()]
     .sort((a, b) => parserId(a.node.id) - parserId(b.node.id))
     .map(f => ({ id: f.node.id, label: f.node.label, dashed: f.dashed, values: [] }));

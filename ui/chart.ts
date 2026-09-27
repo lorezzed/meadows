@@ -91,8 +91,9 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
     .attr('viewBox', `0 0 ${chartWidth} ${chartHeight}`);
 
   // Goal rules render under the series lines (a reference, never a subject).
-  // Flow lines (the figure-33 view: each delay's input and output) sit
-  // between — thinner than the stock lines they annotate, above the rules.
+  // Flow lines (the flow view: faucet rates, or each delay's input and
+  // output) sit between — thinner than the stock lines they annotate, above
+  // the rules.
   const gGoals = svg.append("g");
   const gFlows = svg.append("g");
   const gLines = svg.append("g");
@@ -313,9 +314,10 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
 
   // tEnd is the horizon the series were simulated over — the x-domain and
   // every goal path/label extends exactly that far. `flows` is the optional
-  // figure-33 view: each delay's input (solid thin) and output (dashed
-  // thin) in the nodes' own accents, joining the domain, labels, and hover
-  // readout like any series.
+  // flow view (see FlowSeries): thin lines in the nodes' own accents — each
+  // faucet's rate, or in a model with delays each delay's input (solid) and
+  // output (dashed), figure 33's view — joining the domain, labels, and
+  // hover readout like any series.
   function render(series: StockSeries[], colorOf: (id: string) => string, goals: GoalRef[] = [], tEnd: number = T_END, flows: FlowSeries[] = []): void {
     const x = d3.scaleLinear([0, tEnd], [margin.left, chartWidth - margin.right]);
     // A closed-formula goal samples its curve once per DT across the run —
@@ -357,9 +359,10 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
       .attr("stroke-width", 2)
       .attr("d", d => line(d.levels));
 
-    // Flow-view lines: thin, the call's OUTPUT dashed against its solid
-    // input (figure 33's convention), each in its node's accent. The dash
-    // is shorter than the goals' so the two dashed families stay distinct.
+    // Flow-view lines: thin, each in its node's accent — a faucet's rate
+    // solid, and in figure 33's convention a delay's OUTPUT dashed against
+    // its solid input. The dash is shorter than the goals' so the two
+    // dashed families stay distinct.
     gFlows.selectAll<SVGPathElement, FlowSeries>("path")
       .data(flows, d => d.id)
       .join("path")

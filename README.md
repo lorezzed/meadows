@@ -339,13 +339,20 @@ by headless tests against the real compiled backend.
 ### The flows checkbox
 
 Stocks plot; flows don't — a rate is not an accumulation, and the book's
-charts are level charts. But a model with a **delay** hides its whole story in
-the flows: the gap between what is happening and what the decision-maker
-*sees* is invisible on the stock line. So when a model contains a time shift,
-a **flows** checkbox appears beside the `t =` field and overlays that gap.
-It's the book's figure 33, the panel behind the dealership's oscillation.
+charts are level charts. But the rates are what move the levels, so a
+**flows** checkbox beside the `t =` field overlays them: checked, the chart
+adds a thin solid line per faucet, tracing its *applied* rate. The caffeine
+example is the case for it: each espresso shot runs at 240 an hour for half an
+hour — a spike to 240 on the chart — while the level it fills climbs only by
+the 120 that half hour delivers, less what metabolism burns meanwhile.
 
-Checked, the chart adds one thin line per node touched by a shift:
+A model with a **delay** hides its whole story in the flows: the gap between
+what is happening and what the decision-maker *sees* is invisible on the stock
+line. So when a model contains a time shift, the checkbox overlays that gap
+instead. It's the book's figure 33, the panel behind the dealership's
+oscillation.
+
+Checked, a delay model's chart adds one thin line per node touched by a shift:
 
 - the shift's **owner** — the node whose formula contains it, i.e. the
   delayed copy — **dashed**;
