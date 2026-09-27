@@ -232,6 +232,42 @@ const EX_CAR3132 = car32('0.3');
 const EX_CAR35 = car32('0.2');
 const EX_CAR36 = car32('0.6');
 
+// The starter buttons (not book figures): the simplest systems, one
+// behavior each — constant inflow, net of two flows, growth, decay,
+// equilibrium, goal-seeking, S-curve, a two-stock chain (see ui/example.ts).
+const EX_PIGGY = `| =>pocket money: 5 [piggy bank: 10]`;
+
+const EX_INBOX = `| =>new email: 6 [inbox: 50] =>replies: 10 |`;
+
+const EX_RABBITS = `| =>births [rabbits: 2]
+births: (0.5 * rabbits)
+R(births <- rabbits)`;
+
+const EX_MEDICINE = `[medicine in blood: 100] =>clearance |
+clearance: (0.4 * medicine in blood)
+B(clearance <- medicine in blood)`;
+
+const EX_BUCKET = `| =>tap: 6 [bucket: 0] =>leak |
+leak: (0.5 * bucket)
+B(leak <- bucket)`;
+
+const EX_LEARNING = `| =>learning [skill: 0]
+mastery: 100
+learning: (0.3 * (mastery - skill))
+B(learning <- skill)`;
+
+const EX_FISHPOND = `| =>spawning [fish: 10]
+crowding: (fish / 500)
+spawning: (0.9 * fish * (1 - crowding))
+R(spawning <- fish)
+B(spawning <- crowding <- fish)`;
+
+const EX_SNOWMELT = `[snow: 100] =>melting [lake: 0] =>river |
+melting: (0.5 * snow)
+river: (0.3 * lake)
+B(melting <- snow)
+B(river <- lake)`;
+
 // The showcase buttons (not book figures) — each flexes a capability: a
 // nonlinear rate law, @ pulse schedules, a loop closed through a pipeline
 // shift, and ^ in a real physical law (see ui/example.ts).
@@ -615,6 +651,14 @@ const goldenInputs = [
   EX_CHAIN47,     // figure 47 — the materials-economy chain, structure only
   EX_POP48,       // figure 48 — the bare population stock, structure only
   EX_TRIO49,      // figure 49 — three everyday stocks, one with a branch outflow
+  EX_PIGGY,       // starter: a constant inflow, nothing out
+  EX_INBOX,       // starter: two constant flows, the stock moves by their net
+  EX_RABBITS,     // starter: births ∝ rabbits — the reinforcing loop
+  EX_MEDICINE,    // starter: clearance ∝ dose — exponential decay
+  EX_BUCKET,      // starter: a tap against a level-driven leak — equilibrium
+  EX_LEARNING,    // starter: a gap-driven inflow toward a goal dot
+  EX_FISHPOND,    // starter: logistic growth, R and B around one faucet
+  EX_SNOWMELT,    // starter: two stocks in a chain
   EX_EPIDEMIC,    // showcase: nonlinear rate law over two stocks
   EX_CAFFEINE,    // showcase: @ pulse schedule + proportional decay
   EX_HOGS,        // showcase: loop closed through price(t - 2)

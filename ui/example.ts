@@ -724,6 +724,87 @@ regeneration rate: (112 (resource / 1000 * (1 - resource / 1000))^2)`
 [registered unemployed] =>registration lapses |`
     },
 
+    // Starter models (not from the book): the simplest systems, one behavior
+    // each, in rising order — a stock filling at a constant rate, the net
+    // of two flows, compounding growth, exponential decay, an equilibrium,
+    // goal-seeking, an S-curve, and two stocks in a chain. Their formulas
+    // spell every product with `*`, so each reads as it runs (and the
+    // format button leaves it as written).
+    {
+        // One tap, never closed: 5 a week into a jar that already holds 10.
+        // A stock is its starting level plus the running total of its
+        // flows — a straight line from 10 to 60.
+        label: 'piggy bank',
+        content: `| =>pocket money: 5 [piggy bank: 10]`
+    },
+    {
+        // Two constant flows: 6 new emails an hour against 10 replies. The
+        // inbox moves by their difference alone, down 4 an hour, 50 to 10.
+        label: 'inbox',
+        content: `| =>new email: 6 [inbox: 50] =>replies: 10 |`
+    },
+    {
+        // Births in proportion to the rabbits already there — a reinforcing
+        // loop that doubles the warren every ln 2 / 0.5 ≈ 1.4 time units:
+        // 2 rabbits become ~280 by t=10.
+        label: 'rabbits',
+        content: `| =>births [rabbits: 2]
+births: (0.5 * rabbits)
+R(births <- rabbits)`
+    },
+    {
+        // Clearance in proportion to what's left — a balancing loop that
+        // halves the dose every ln 2 / 0.4 ≈ 1.7 time units: 100 falls
+        // under 2 by t=10, and is never quite gone.
+        label: 'medicine',
+        content: `[medicine in blood: 100] =>clearance |
+clearance: (0.4 * medicine in blood)
+B(clearance <- medicine in blood)`
+    },
+    {
+        // A steady tap against a leak that grows with the water: the level
+        // climbs until the leak (half the level) matches the tap's 6 — an
+        // equilibrium at 12 it approaches but never passes.
+        label: 'leaky bucket',
+        content: `| =>tap: 6 [bucket: 0] =>leak |
+leak: (0.5 * bucket)
+B(leak <- bucket)`
+    },
+    {
+        // Learning closes 30% of the gap to mastery per unit: quick at
+        // first, then diminishing returns as the gap shrinks — 53 by t=2.5,
+        // 95 by t=10, never quite 100.
+        label: 'learning',
+        content: `| =>learning [skill: 0]
+mastery: 100
+learning: (0.3 * (mastery - skill))
+B(learning <- skill)`
+    },
+    {
+        // Spawning compounds with the fish (R) while crowding throttles it
+        // (B): a slow start, the fastest growth at half capacity (250,
+        // around t≈4.3), then a leveling-off just under the pond's 500 —
+        // the S-curve of growth meeting its limit.
+        label: 'fish pond',
+        content: `| =>spawning [fish: 10]
+crowding: (fish / 500)
+spawning: (0.9 * fish * (1 - crowding))
+R(spawning <- fish)
+B(spawning <- crowding <- fish)`
+    },
+    {
+        // Two stocks in a chain: snow melts into the lake as the river
+        // drains it. The lake rises while melting outpaces the river and
+        // falls once it doesn't — a pulse passing through, cresting near
+        // 47 at t≈2.5.
+        label: 'snowmelt',
+        content: `[snow: 100] =>melting [lake: 0] =>river |
+melting: (0.5 * snow)
+river: (0.3 * lake)
+B(melting <- snow)
+B(river <- lake)`
+    },
+
     // Showcase models (not from the book): each button flexes a language
     // capability — a nonlinear rate law, @ pulse schedules, a feedback loop
     // closed through a time shift, and ^ in a real physical law.

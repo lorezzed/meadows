@@ -938,6 +938,118 @@ delivery delay: 0.5`;
     fail('figure 33', 'the dealership has delays for the chart toggle to unfold');
 }
 
+// The starter buttons (ui/example.ts, not book figures): the simplest
+// systems, one behavior each. Every one-stock law here is affine — each
+// Euler step maps the level L to a·L + b — so the whole series is pinned
+// against the closed form L₀·aⁿ + b(1 − aⁿ)/(1 − a), sample for sample,
+// along with the landmark its button's comment promises.
+const affine = (label, series, L0, a, b) => {
+  const want = (n) => L0 * a ** n + b * (1 - a ** n) / (1 - a);
+  if (!series.levels.every((v, n) => Math.abs(v - want(n)) <= 1e-9 * Math.max(1, Math.abs(want(n)))))
+    fail(label, `${series.label} must follow its Euler recurrence L -> ${a}·L + ${b}`);
+};
+const firstTime = (series, pred) => series.levels.findIndex(pred) * DT;
+{
+  // piggy bank: one constant inflow integrates to a straight line, 10 to
+  // 60 (a = 1, where the closed form degenerates to the line itself).
+  const bank = simulate(sys('| =>pocket money: 5 [piggy bank: 10]'))[0];
+  if (!bank.levels.every((v, n) => Math.abs(v - (10 + 5 * n * DT)) < 1e-9))
+    fail('piggy bank', 'the stock is its starting 10 plus the running total of its constant inflow');
+  if (Math.abs(last(bank) - 60) > 1e-9) fail('piggy bank', `should end at 60, got ${last(bank)}`);
+}
+{
+  // inbox: two constant flows — the stock moves by their difference
+  // alone, 6 − 10 = −4 an hour, 50 to 10.
+  const inbox = simulate(sys('| =>new email: 6 [inbox: 50] =>replies: 10 |'))[0];
+  if (!inbox.levels.every((v, n) => Math.abs(v - (50 - 4 * n * DT)) < 1e-9))
+    fail('inbox', 'the inbox falls at 6 − 10 = −4 an hour');
+  if (Math.abs(last(inbox) - 10) > 1e-9) fail('inbox', `should end at 10, got ${last(inbox)}`);
+}
+{
+  // rabbits: births ∝ rabbits multiply the warren by 1 + 0.5·DT a step —
+  // doubling every ln 2 / 0.5 ≈ 1.4, 2 rabbits to ~279.
+  const r = simulate(sys(`| =>births [rabbits: 2]
+births: (0.5 * rabbits)
+R(births <- rabbits)`))[0];
+  affine('rabbits', r, 2, 1 + 0.5 * DT, 0);
+  const doubled = firstTime(r, v => v >= 4);
+  if (!(doubled > 1.35 && doubled < 1.5)) fail('rabbits', `should double near t≈1.4, got ${doubled}`);
+  if (!(last(r) > 279 && last(r) < 280)) fail('rabbits', `should reach ~279, got ${last(r)}`);
+}
+{
+  // medicine: clearance ∝ dose shrinks it by 1 − 0.4·DT a step — halving
+  // every ln 2 / 0.4 ≈ 1.7, under 2 by t=10 and never quite gone.
+  const m = simulate(sys(`[medicine in blood: 100] =>clearance |
+clearance: (0.4 * medicine in blood)
+B(clearance <- medicine in blood)`))[0];
+  affine('medicine', m, 100, 1 - 0.4 * DT, 0);
+  const halved = firstTime(m, v => v <= 50);
+  if (!(halved > 1.65 && halved < 1.8)) fail('medicine', `should halve near t≈1.7, got ${halved}`);
+  if (!(last(m) > 0 && last(m) < 2)) fail('medicine', `should end under 2 but above 0, got ${last(m)}`);
+}
+{
+  // leaky bucket: the tap's 6 against a leak of half the level — rising
+  // toward, never past, the equilibrium 6 / 0.5 = 12.
+  const b = simulate(sys(`| =>tap: 6 [bucket: 0] =>leak |
+leak: (0.5 * bucket)
+B(leak <- bucket)`))[0];
+  affine('leaky bucket', b, 0, 1 - 0.5 * DT, 6 * DT);
+  if (!b.levels.every((v, n) => v < 12 && (n === 0 || v > b.levels[n - 1])))
+    fail('leaky bucket', 'the level rises strictly toward 12 and never reaches it');
+  if (!(last(b) > 11.9)) fail('leaky bucket', `should settle close to 12, got ${last(b)}`);
+}
+{
+  // learning: 30% of the gap to mastery closes per unit — 53 by t=2.5,
+  // 95 by t=10, and every unit gains less than the one before.
+  const s = simulate(sys(`| =>learning [skill: 0]
+mastery: 100
+learning: (0.3 * (mastery - skill))
+B(learning <- skill)`))[0];
+  affine('learning', s, 0, 1 - 0.3 * DT, 0.3 * 100 * DT);
+  const at = (t) => s.levels[Math.round(t / DT)];
+  if (!(at(2.5) > 52.5 && at(2.5) < 53.5)) fail('learning', `≈53 by t=2.5, got ${at(2.5)}`);
+  if (!(last(s) > 95 && last(s) < 95.5)) fail('learning', `≈95 by t=10, got ${last(s)}`);
+  const gains = Array.from({ length: 10 }, (_, k) => at(k + 1) - at(k));
+  if (!gains.every((g, k) => k === 0 || g < gains[k - 1]))
+    fail('learning', 'diminishing returns: each unit gains less than the one before');
+}
+{
+  // fish pond: spawning compounds (R) until crowding throttles it (B) —
+  // an S-curve whose steepest step comes at half capacity (250, t≈4.3),
+  // leveling off just under the pond's 500.
+  const f = simulate(sys(`| =>spawning [fish: 10]
+crowding: (fish / 500)
+spawning: (0.9 * fish * (1 - crowding))
+R(spawning <- fish)
+B(spawning <- crowding <- fish)`))[0];
+  if (!f.levels.every((v, n) => v < 500 && (n === 0 || v > f.levels[n - 1])))
+    fail('fish pond', 'the fish rise strictly and stay under the capacity of 500');
+  let steep = 1;
+  for (let n = 1; n < f.levels.length; n++)
+    if (f.levels[n] - f.levels[n - 1] > f.levels[steep] - f.levels[steep - 1]) steep = n;
+  const steepT = steep * DT, steepLevel = f.levels[steep];
+  if (!(steepT > 3.9 && steepT < 4.7 && steepLevel > 220 && steepLevel < 280))
+    fail('fish pond', `the steepest growth should come at half capacity near t≈4.3, got ${steepLevel} at ${steepT}`);
+  if (!(last(f) > 495)) fail('fish pond', `should level off just under 500, got ${last(f)}`);
+}
+{
+  // snowmelt: the snow simply decays (×(1 − 0.5·DT) a step); the lake it
+  // feeds rises while melting outpaces the river and falls after — one
+  // crest, near 47 at t≈2.5.
+  const series = simulate(sys(`[snow: 100] =>melting [lake: 0] =>river |
+melting: (0.5 * snow)
+river: (0.3 * lake)
+B(melting <- snow)
+B(river <- lake)`));
+  const snow = series.find(x => x.label === 'snow'), lake = series.find(x => x.label === 'lake');
+  affine('snowmelt', snow, 100, 1 - 0.5 * DT, 0);
+  const crest = lake.levels.indexOf(Math.max(...lake.levels));
+  if (!(crest * DT > 2.3 && crest * DT < 2.8 && lake.levels[crest] > 46 && lake.levels[crest] < 48))
+    fail('snowmelt', `the lake should crest near 47 at t≈2.5, got ${lake.levels[crest]} at ${crest * DT}`);
+  if (!lake.levels.every((v, n) => n === 0 || (n <= crest ? v > lake.levels[n - 1] : v < lake.levels[n - 1])))
+    fail('snowmelt', 'the lake rises to its one crest, then only falls');
+}
+
 // The showcase buttons (ui/example.ts, not book figures): pin each one's
 // headline behavior — the shape the button exists to show — without a full
 // float mirror.
