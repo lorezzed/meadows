@@ -336,8 +336,9 @@ toggles). The page is two full-width columns pinned to the window (the app
 itself never scrolls): the example buttons, editor, compile-error `<pre>`
 (shown only while the model fails to compile) and chart stacked in a `side`
 div on the left, which scrolls internally when its stack overflows (a
-narrow-window media query reverts to one ordinary scrolling column); the
-diagram svg on the right at the full fixed window height, so oversized
+narrow-window media query reverts to one ordinary scrolling column, each
+half at its natural height); the diagram svg on the right, under its
+heading, filling the rest of the fixed window height, so oversized
 models zoom out inside it — with a `+`/`1×`/`−` zoom cluster overlaying its
 top-right corner (a user factor scaled onto the auto-fit viewBox target in
 `easeView()`, animated by a self-stopping frame timer even while the
@@ -347,9 +348,15 @@ playback bullet below). Almost everything lives in **`app.ts`**:
 
 - Builds the DOM (example buttons, a `<textarea>` editor, a `<pre>` error
   panel hidden while the model compiles, and the two `<svg>` panels) entirely
-  via d3 `.append`, using flexbox `order` for layout. The example pills sit in
-  two collapsible `<details>` sections (`addExampleSection`) — "examples"
-  (the showcase models, open) above "figures from the book" (every
+  via d3 `.append`, using flexbox `order` for layout. Every panel that isn't
+  a collapsible section wears a `.section-heading` in the sections' heading
+  style: "source" over the editor (a `<label for>` the textarea, so a click
+  on it focuses the editor), "behaviour over time" over the chart, and
+  "diagram" over the diagram panel — the right column is a `.diagram-column`
+  holding that heading and the positioned `.diagram` the overlays anchor to.
+  The example pills sit in two collapsible `<details>` sections
+  (`addExampleSection`) — "examples" (the showcase models, open) above
+  "figures from the book" (every
   `figure N` entry, collapsed by default) — each a
   wrapping `.example-group` row; the nesting is transparent to
   `updateActiveExamples`, which still selects every `button` under

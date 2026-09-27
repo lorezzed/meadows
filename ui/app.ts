@@ -95,15 +95,24 @@ const css = `
     border: 1px solid var(--line);
     border-radius: 8px;
   }
-  /* The diagram panel is pinned to the window: it stretches to the fixed
-     container height and never grows with content — a model that outgrows
-     the canvas zooms OUT inside it (the eased viewBox letterboxes via
-     preserveAspectRatio) rather than growing the page. The wrapper is
-     positioned so the zoom cluster can overlay the panel's corner. */
-  .diagram {
-    position: relative;
+  /* The diagram panel is pinned to the window: under its heading it
+     stretches to the rest of the fixed container height and never grows
+     with content — a model that outgrows the canvas zooms OUT inside it
+     (the eased viewBox letterboxes via preserveAspectRatio) rather than
+     growing the page. The panel is positioned so the zoom cluster can
+     overlay its corner. */
+  .diagram-column {
     flex: 1 1 480px;
     min-width: 320px;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .diagram {
+    position: relative;
+    flex: 1;
+    min-height: 0;
     display: flex;
   }
   svg.svg { flex: 1; min-width: 0; }
@@ -356,6 +365,20 @@ const css = `
     position: relative;
     display: flex;
   }
+  /* The heading over each panel that isn't a collapsible section (source,
+     behaviour over time, diagram), in the example sections' heading style,
+     sitting closer to the panel it names than the column's gap (6px, not
+     10px). */
+  .section-heading {
+    margin: 0 0 -4px;
+    padding-left: 11px;
+    font-size: 11px;
+    font-weight: 650;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--secondary);
+    user-select: none;
+  }
   .text-input, .highlight {
     margin: 0;
     padding: 10px 12px;
@@ -435,6 +458,10 @@ const css = `
   @media (max-width: 760px) {
     body { height: auto; min-height: 100vh; overflow: visible; }
     .container { flex-direction: column; }
+    /* Stacked, each half takes its natural height: the flex bases size
+       widths in the two-column row, and as heights they would cap the side
+       stack (spilling the chart over the diagram) and the diagram column. */
+    .side, .diagram-column { flex: none; }
     .diagram { min-height: 70vh; }
     .side { overflow-y: visible; }
   }
@@ -522,12 +549,20 @@ let userZoom = 1;
 // keeps it composable with the zoom and the layout's own settling.
 let panX = 0, panY = 0;
 
-// The diagram panel: a positioned wrapper (see .diagram) so the zoom
-// cluster can overlay the svg's top-right corner.
-const diagram = container
+// The right-hand column: the diagram's heading over the diagram panel, a
+// positioned wrapper (see .diagram) so the zoom cluster can overlay the
+// svg's top-right corner.
+const diagramColumn = container
+  .append('div')
+  .attr('class', 'diagram-column')
+  .style('order', 2)
+diagramColumn
+  .append('h2')
+  .attr('class', 'section-heading')
+  .text('diagram')
+const diagram = diagramColumn
   .append('div')
   .attr('class', 'diagram')
-  .style('order', 2)
 const svg: d3.Selection<SVGSVGElement, unknown, HTMLElement, any> = diagram
   .append('svg')
   .attr('class', 'svg')
@@ -772,7 +807,13 @@ window.addEventListener('keydown', (event: KeyboardEvent) => {
 });
 // The behavior-over-time panel, at the bottom of the left-hand column: its
 // order 9 sorts after the examples' and editor's order 2; the t= horizon
-// field footers it at order 10.
+// field footers it at order 10. Its heading is appended first, so the
+// shared order sorts it directly above.
+side
+  .append('h2')
+  .attr('class', 'section-heading')
+  .style('order', 9)
+  .text('behaviour over time')
 const chart = createChart(side)
 // The simulation horizon: how much time the chart runs and shows. The t=
 // field edits it live; only the chart re-renders (the diagram's layout is
@@ -859,6 +900,15 @@ const textAccent = (c: string): string => {
   if (lab.l > 55) lab.l = 55;
   return lab.formatHex();
 };
+// The editor's heading: a <label> for the textarea (clicking it focuses the
+// editor), appended just before the editor stack so the shared flex order
+// sorts it directly above.
+side
+  .append('label')
+  .attr('class', 'section-heading')
+  .attr('for', 'source')
+  .style('order', 2)
+  .text('source')
 // The editor stack: the .highlight color backdrop first, the transparent-text
 // textarea after it (so the textarea paints on top — see the stylesheet).
 const editorWrap = side
@@ -871,6 +921,7 @@ const highlight = editorWrap
   .attr('aria-hidden', 'true')
 const textInput = editorWrap
   .append('textarea')
+  .attr('id', 'source')
   .attr('class', 'text-input')
   .attr('placeholder', '|=>inflow[stock]=>outflow|')
   .attr('spellcheck', 'false')
