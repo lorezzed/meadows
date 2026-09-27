@@ -9,6 +9,7 @@ import { T_END, flowSeries, goalRefs, hasDelays, hasNumbers, trace, type Trace }
 import { HOP_SECONDS, loopActivity, loopPlans, playback, pulseAt, waterSpans, type LoopPlan, type Playback } from "./playback";
 import { createChart, STOCK_PALETTE } from "./chart";
 import { nameSpans } from "./highlight";
+import { canonical, clampHorizon, clampZoom, decode, DEFAULTS, encode, type PageState } from "./permalink";
 import {
   svgWidth, svgHeight, rowGap, dotRadius, stockWidth, stockHeight, faucetWidth,
   faucetHeight, faucetLift, cloudWidth, cloudHeight, portRadius,
@@ -517,12 +518,15 @@ const pre = side
   .style('display', 'none')
 // The examples split into two collapsible <details> sections: the extra
 // examples first, open, then every "figure N" entry (the book's diagrams),
-// folded until its heading is clicked.
+// folded until its heading is clicked. Which are open is page state: a
+// toggle saves it into the URL (see the permalink section) and a link
+// restores it.
 // Each pill's datum is its content's canonical reprint — the match key for
 // the active-pill highlight (updateActiveExamples selects every button under
 // `.examples`, so the nesting is transparent to it).
 const addExampleSection = (title: string, items: typeof exampleList, open: boolean) => {
   const details = examples.append('details')
+    .on('toggle', () => scheduleSave())
   if (open) details.attr('open', '')
   details.append('summary').text(title)
   const group = details.append('div').attr('class', 'example-group')
@@ -532,9 +536,12 @@ const addExampleSection = (title: string, items: typeof exampleList, open: boole
       .text(x.label)
       .on('click', () => loadExample(x))
   })
+  return details
 }
-addExampleSection('examples', exampleList.filter(x => !x.label.startsWith('figure')), true)
-addExampleSection('figures from the book', exampleList.filter(x => x.label.startsWith('figure')), false)
+const exampleSections = {
+  examples: addExampleSection('examples', exampleList.filter(x => !x.label.startsWith('figure')), DEFAULTS.examplesOpen),
+  figures: addExampleSection('figures from the book', exampleList.filter(x => x.label.startsWith('figure')), DEFAULTS.figuresOpen),
+}
 
 
 // Current viewBox, eased toward the auto-fit target scaled by the
@@ -542,12 +549,12 @@ addExampleSection('figures from the book', exampleList.filter(x => x.label.start
 let viewX = 0, viewY = 0, viewW = svgWidth, viewH = svgHeight;
 // Button-driven zoom factor on top of the auto-fit: 1 = the fit itself,
 // >1 closer, <1 further out.
-let userZoom = 1;
+let userZoom = DEFAULTS.zoom;
 // Drag-driven pan offset (viewBox user units) added to the auto-fit target
 // center by easeView(); set by dragging empty canvas, cleared by the "1×"
 // reset. Riding on the auto-fit target (rather than an absolute viewBox)
 // keeps it composable with the zoom and the layout's own settling.
-let panX = 0, panY = 0;
+let panX = DEFAULTS.pan[0], panY = DEFAULTS.pan[1];
 
 // The right-hand column: the diagram's heading over the diagram panel, a
 // positioned wrapper (see .diagram) so the zoom cluster can overlay the
@@ -578,7 +585,7 @@ const zoomButtons = diagram
 // Whether node labels show the bare name alone (see nodeText) — on by
 // default, so a diagram opens on its names and the values stay in the
 // editor. Declared ahead of the first update(), which renders the labels.
-let namesOnly = true;
+let namesOnly = DEFAULTS.namesOnly;
 const namesButton = zoomButtons.append('button')
   .attr('class', 'names')
   .classed('active', namesOnly)
@@ -589,8 +596,9 @@ const namesButton = zoomButtons.append('button')
   .on('click', () => toggleNamesOnly());
 const zoomStep = 1.25;
 const setZoom = (z: number) => {
-  userZoom = Math.min(8, Math.max(0.2, z));
+  userZoom = clampZoom(z);
   ensureViewEase();
+  scheduleSave();
 };
 zoomButtons.append('button')
   .attr('title', 'zoom in').attr('aria-label', 'zoom in')
@@ -827,7 +835,7 @@ let tEnd = T_END;
 // each faucet's rate (the caffeine example's espresso shots). Off by
 // default so the plain stock charts (figures 32, 34, 35) stay exactly the
 // book's.
-let showFlows = false;
+let showFlows = DEFAULTS.flows;
 let lastChart: { system: System; colorOf: (id: string) => string; plottable: boolean } | null = null;
 // The run itself, when the model plots: one engine pass serves the chart
 // and the animate toggle alike — trace()'s levels ARE simulate()'s
@@ -858,16 +866,18 @@ const flowsLabel = horizonRow
   .attr('title', FLOWS_RATE_TITLE)
 const flowsInput = flowsLabel.append('input')
   .attr('type', 'checkbox')
+  .property('checked', showFlows)
   .on('change', function () {
     showFlows = (this as HTMLInputElement).checked;
     refreshChart();
+    scheduleSave();
   });
 flowsLabel.append('span').text('flows')
 const horizonLabel = horizonRow
   .append('label')
   .attr('title', 'simulated time horizon')
 horizonLabel.append('span').text('t =')
-horizonLabel.append('input')
+const horizonInput = horizonLabel.append('input')
   .attr('type', 'number')
   .attr('min', 1)
   .attr('max', 1000)
@@ -877,9 +887,10 @@ horizonLabel.append('input')
     // Live while typing; a mid-edit blank (NaN) keeps the current horizon.
     const v = this.valueAsNumber;
     if (!Number.isFinite(v)) return;
-    tEnd = Math.min(1000, Math.max(1, v));
+    tEnd = clampHorizon(v);
     refreshChart();
     refreshPlayback();
+    scheduleSave();
   })
   .on('change', function () {
     // Enter/blur: snap the field to the horizon actually in effect (applies
@@ -949,6 +960,9 @@ const textInput = editorWrap
       const parse = result as System;
       console.log('parse::', parse)
       update(parse)
+      // A restored link's hand placements land on its nodes once the model
+      // compiles (see applyPendingView).
+      applyPendingView()
     } catch (error: unknown) {
       if (error instanceof Error) {
         console.error("Error occurred while processing input:", error.message, error);
@@ -963,16 +977,33 @@ const textInput = editorWrap
       // just-typed name colors on its own keystroke.
       renderHighlight(input);
       updateActiveExamples(input);
+      // Every path saves into the URL, too: each change to the text arrives
+      // here (typing natively, every programmatic edit through setSource),
+      // so the link can't drift from the source — a draft that doesn't
+      // compile included. See the permalink section.
+      scheduleSave();
     }
   })
   .on('scroll', syncHighlightScroll)
 
+// Every programmatic change to the model text goes through here: set the
+// textarea, then dispatch its own input event, so compile, diagram, chart,
+// highlight, and the URL all follow the one path typing takes. (Setting
+// `value` alone fires nothing — a writer that skipped the dispatch would
+// leave every one of them stale.)
+function setSource(text: string): void {
+  const ta = textInput.node();
+  if (!ta) return;
+  ta.value = text;
+  ta.dispatchEvent(new Event('input'));
+}
+
 // The format button, tucked under the editor: reprints the model in the
 // canonical spacing (src/Formatter.purs — token-preserving, so the graph,
-// layout, and accents are untouched). Applied through the same value-set +
-// input-dispatch path as loadExample, so compile, diagram recycle, and the
-// highlight backdrop all refresh; input that doesn't lex comes back
-// unchanged from format(), and the button simply no-ops.
+// layout, and accents are untouched). Applied through setSource, so
+// compile, diagram recycle, and the highlight backdrop all refresh; input
+// that doesn't lex comes back unchanged from format(), and the button
+// simply no-ops.
 const tools = side
   .append('div')
   .attr('class', 'tools')
@@ -984,8 +1015,7 @@ tools.append('button')
     if (!ta) return;
     const formatted: string = interpreter.format(ta.value);
     if (formatted === ta.value) return;
-    textInput.property('value', formatted);
-    ta.dispatchEvent(new Event('input'));
+    setSource(formatted);
   });
 
 // Rebuild the editor's color backdrop: the same text the textarea holds,
@@ -1985,6 +2015,7 @@ function toggleNamesOnly(): void {
   namesOnly = !namesOnly;
   namesButton.classed('active', namesOnly).attr('aria-pressed', String(namesOnly));
   for (const sel of [nodeDot, nodeStock, nodeFaucet]) sel.select<SVGTextElement>("text").text(nodeText);
+  scheduleSave();
 }
 
 // Dragging empty canvas pans the view: the whole diagram follows the cursor.
@@ -2010,7 +2041,10 @@ function canvasPan() {
       panY -= event.dy / ctm.d;
       ensureViewEase();
     })
-    .on("end", () => { svg.classed("panning", false); });
+    .on("end", () => {
+      svg.classed("panning", false);
+      scheduleSave();
+    });
 }
 
 // ---- Playback: the animate toggle ----
@@ -2054,6 +2088,7 @@ function toggleAnimation(): void {
     pulseState.clear();
   }
   refreshPlayback();
+  scheduleSave();
 }
 
 // Rebuild what the playback reads — after every update() (the model) and
@@ -2301,15 +2336,14 @@ function mintName(prefix: string): string {
   }
 }
 
-// A placement is a text edit: append the statement and dispatch the editor's
-// own input event, so compile, diagram recycle, accents, highlight, and the
-// chart all refresh through the one path typing uses.
+// A placement is a text edit: append the statement through setSource, so
+// compile, diagram recycle, accents, highlight, and the chart all refresh
+// through the one path typing uses.
 function appendStatement(stmt: string): void {
   const ta = textInput.node();
   if (!ta) return;
   const sep = ta.value === '' || ta.value.endsWith('\n') ? '' : '\n';
-  textInput.property('value', ta.value + sep + stmt + '\n');
-  ta.dispatchEvent(new Event('input'));
+  setSource(ta.value + sep + stmt + '\n');
 }
 
 // Pin a just-placed node at its drop point — the same fx/fy pin a hand drag
@@ -2576,14 +2610,14 @@ function deleteAt(d: Node): void {
 }
 
 // Remove a set of nodes from the model by deleting every source LINE that
-// names any of them, then dispatching the editor's own input event (so
-// compile, diagram, accents, highlight, and chart all refresh through the
-// typing path — the text stays the one source of truth). Line-based rather
-// than token-surgical: it can never leave a half-statement that fails to
-// parse. A named node's lines are found by compiling each line alone and
-// matching its label (multi-word-safe, substring-proof — the lexer does the
-// tokenizing); an anonymous cloud maps to the source `|` at its ordinal
-// (cloud ids run in `|`-token order). Ports carry no text and are skipped.
+// names any of them, through setSource (so compile, diagram, accents,
+// highlight, and chart all refresh through the typing path — the text stays
+// the one source of truth). Line-based rather than token-surgical: it can
+// never leave a half-statement that fails to parse. A named node's lines are
+// found by compiling each line alone and matching its label (multi-word-safe,
+// substring-proof — the lexer does the tokenizing); an anonymous cloud maps
+// to the source `|` at its ordinal (cloud ids run in `|`-token order). Ports
+// carry no text and are skipped.
 function deleteNodes(ids: string[]): void {
   const ta = textInput.node();
   if (!ta) return;
@@ -2639,8 +2673,7 @@ function deleteNodes(ids: string[]): void {
     return;
   }
   selected.clear();
-  textInput.property('value', lines.filter((_, i) => !remove.has(i)).join('\n'));
-  ta.dispatchEvent(new Event('input'));
+  setSource(lines.filter((_, i) => !remove.has(i)).join('\n'));
 }
 
 // A link click while the delete tool is armed (routed from the link-hit
@@ -2692,36 +2725,58 @@ function deleteLink(l: Link): void {
     return;
   }
   selected.clear();
-  textInput.property("value", lines.filter((_, i) => !remove.has(i)).join("\n"));
-  ta.dispatchEvent(new Event("input"));
+  setSource(lines.filter((_, i) => !remove.has(i)).join("\n"));
   disarmTool();
 }
 
+// An example button. Each lands on the view its figure shows: the flows
+// toggle resets to the entry's declared flag ("figure 31 & 33" presets it
+// on, everything else off — figure 32's chart is the bare inventory line).
+// The rest of the view — horizon, zoom and pan, names only, animate, the
+// open sections — is the user's and survives loads. A load is a navigation:
+// the model it replaces keeps its own history entry (a pending save lands
+// there first) and the load pushes a new one, so Back brings the replaced
+// model back.
 function loadExample(ex: { content: string; flows?: boolean }) {
-  // A button load replaces the whole diagram, so don't recycle the previous
-  // example's positions (ids like "stock#2" recur across examples, and nodes
-  // migrating across the canvas jam on each other's collision discs) — start
-  // every node fresh at its layout slot. Typing edits still recycle. An
-  // armed palette tool (and any half-picked link source, about to go stale)
-  // disarms with the model it belonged to, and the selection (ids about to
-  // be replaced) clears.
+  flushSave();
+  loadModel({ ...snapshot(), source: ex.content, flows: ex.flows ?? false, pins: {}, ports: {} });
+  scheduleSave({ push: true });
+}
+
+// Replace the whole model — an example button, or a permalink (the page's
+// hash on load, a pasted link, Back/Forward). The previous model's
+// positions don't recycle (ids like "stock#2" recur across models, and
+// nodes migrating across the canvas jam on each other's collision discs):
+// every node starts fresh at its layout slot, while typing edits still
+// recycle. An armed palette tool (and any half-picked link source, about to
+// go stale) disarms with the model it belonged to, and the selection (ids
+// about to be replaced) clears. Then the view applies — horizon and flows
+// before the compile, so update() charts the right run once — the text goes
+// in through setSource, and the state's hand placements wait in pendingView
+// for the new nodes. A playing animation carries over but starts its run
+// from the beginning; the toggle itself flips last, once update() has
+// traced the run it plays.
+function loadModel(p: PageState): void {
   disarmTool();
   closeRename();
   selected.clear();
   simulation.nodes([]);
-  // Each button lands on the view its figure shows: the flows toggle resets
-  // to the entry's declared flag ("figure 31 & 33" presets it on, everything
-  // else off — figure 32's chart is the bare inventory line). The horizon,
-  // by contrast, is the user's and survives loads.
-  showFlows = ex.flows ?? false;
+  tEnd = p.horizon;
+  horizonInput.property('value', tEnd);
+  showFlows = p.flows;
   flowsInput.property('checked', showFlows);
-  // A playing animation carries over to the new figure (the toggle, like
-  // the horizon, is the user's) but starts its run from the beginning.
+  if (namesOnly !== p.namesOnly) toggleNamesOnly();
+  userZoom = p.zoom;
+  [panX, panY] = p.pan;
+  ensureViewEase();
+  exampleSections.examples.property('open', p.examplesOpen);
+  exampleSections.figures.property('open', p.figuresOpen);
   playT = 0;
   playHold = 0;
   pulseState.clear();
-  textInput.property('value', ex.content);
-  textInput.node()?.dispatchEvent(new Event('input'));
+  pendingView = { pins: p.pins, ports: p.ports };
+  setSource(p.source);
+  if (animating !== p.animate) toggleAnimation();
 }
 
 // The open inline rename editor, if any (only one at a time). `cancel`
@@ -2748,17 +2803,15 @@ function isValidName(name: string): boolean {
 // which mirrors the lexer) tiles the text into spans tagged with their
 // normalized name, so only whole-name identifier runs are replaced —
 // operators, formula reserved words, and unrelated text pass through. Then
-// the edit dispatches through the editor's own input path (compile, diagram,
-// chart, highlight). Renaming leaves the token COUNT unchanged, so parser
-// ids — and thus node ids and positions — survive.
+// the edit goes through setSource (compile, diagram, chart, highlight).
+// Renaming leaves the token COUNT unchanged, so parser ids — and thus node
+// ids and positions — survive.
 function renameNode(oldName: string, raw: string): void {
   const ta = textInput.node();
   if (!ta) return;
   const cleaned = raw.trim().replace(/\s+/g, ' ');
   if (cleaned === '' || cleaned === oldName || !isValidName(cleaned)) return;
-  const renamed = nameSpans(ta.value).map(s => (s.name === oldName ? cleaned : s.text)).join('');
-  textInput.property('value', renamed);
-  ta.dispatchEvent(new Event('input'));
+  setSource(nameSpans(ta.value).map(s => (s.name === oldName ? cleaned : s.text)).join(''));
 }
 
 // Open the inline rename box over a node's name label. An HTML <input>
@@ -2861,6 +2914,7 @@ function portDrag() {
         simulation.alphaTarget(0);
       }
       if (dist <= 3) delete d.portAngle;
+      scheduleSave();
     });
 }
 
@@ -2913,6 +2967,10 @@ function drag() {
       if (!event.active) {
         simulation.alphaTarget(0);
       }
+      // Whatever the gesture does to the pin (keep, release, or undo the
+      // press's) is page state; the save runs later, off a timer, so it
+      // reads the pin as this handler leaves it.
+      scheduleSave();
       // A drag keeps the pin; a click (no meaningful movement) removes it.
       // The brief alphaTarget kick above doubles as the resettle that shows
       // a released node drifting back to where the forces want it. While an
@@ -2946,4 +3004,197 @@ function drag() {
         d.fy = null;
       }
     })
+}
+
+// ---- Permalink: the whole page state in the URL hash ----
+// The address bar is always a link to exactly what's on screen: the model's
+// source text, verbatim, plus the view — horizon, flows, names only,
+// animate, zoom and pan, the open example sections — and the hand
+// placements (pinned nodes, slid ports), encoded by ui/permalink.ts. What
+// the forces or the source decide (unpinned positions, accents, the compile
+// error) is left for them to decide again, and what lasts only a gesture
+// (an armed tool, the selection, the playhead) isn't saved at all.
+//
+// Saving: every state change calls scheduleSave() — each text change from
+// the input handler (typing, and every programmatic edit through
+// setSource), each view control, the end of each drag — and a short
+// debounce folds a burst into one write. The save snapshots the state when
+// it RUNS, not when it was scheduled (a placement pins its node just after
+// its text dispatches), skips a write that would change nothing, and
+// replaceState()s the hash: no history entry per keystroke, and no
+// hashchange for our own writes. Only an example load pushes an entry (see
+// loadExample). Encoding is async (CompressionStream), so writes queue in
+// order on one promise chain, and one queued before a navigation never
+// lands after it, in the entry the page moved to.
+//
+// Restoring: the page's hash on load and every later hashchange (a pasted
+// link, an edited hash, Back/Forward) decode into loadModel. A link that
+// can't be read says so in the error panel and stays in the address bar
+// until the next change replaces it.
+const SAVE_DELAY_MS = 300;
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+// The next write pushes a history entry instead of replacing this one.
+let pushNext = false;
+// The canonical JSON of the state the hash holds (as last written or
+// read), so a write that would spell it again is skipped; null after a
+// failed write, so the next save writes whatever it has.
+let savedWire: string | null = '';
+// Bumped by every navigation: a write queued before it is dropped.
+let navGen = 0;
+let saveChain: Promise<void> = Promise.resolve();
+// A restored link's hand placements, waiting for the nodes they belong to:
+// the first compile after the restore applies them (applyPendingView), and
+// every snapshot carries them until then — so a link to a draft that
+// doesn't compile yet loses nothing.
+let pendingView: Pick<PageState, 'pins' | 'ports'> | null = null;
+
+function scheduleSave(opts: { push?: boolean } = {}): void {
+  if (opts.push) pushNext = true;
+  if (saveTimer != null) clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveNow, SAVE_DELAY_MS);
+}
+
+// A save still waiting out its debounce happens now.
+function flushSave(): void {
+  if (saveTimer != null) saveNow();
+}
+
+function saveNow(): void {
+  if (saveTimer != null) clearTimeout(saveTimer);
+  saveTimer = null;
+  const push = pushNext;
+  pushNext = false;
+  const state = snapshot();
+  const wire = canonical(state);
+  if (wire === savedWire) return;
+  savedWire = wire;
+  const gen = navGen;
+  saveChain = saveChain
+    .then(() => encode(state))
+    .then(token => {
+      if (gen !== navGen) return;
+      // The default state is the bare page URL.
+      const url = token === '' ? location.pathname + location.search : `#${token}`;
+      if (push) history.pushState(history.state, '', url);
+      else history.replaceState(history.state, '', url);
+    })
+    .catch((err: unknown) => {
+      // Browsers rate-limit history writes (Safari throws past 100 in 30 s):
+      // forget what the hash holds, so the next save tries again.
+      savedWire = null;
+      console.warn('Could not save the page state into the URL:', err);
+    });
+}
+
+// The page's state right now, in the permalink's terms.
+function snapshot(): PageState {
+  const pins: PageState['pins'] = { ...pendingView?.pins };
+  const ports: PageState['ports'] = { ...pendingView?.ports };
+  for (const n of simulation.nodes()) {
+    // ticked() pins every port each frame, so a port's fx/fy is no hand
+    // placement — its slid bearing is.
+    if (n.type === 'port') {
+      if (n.portAngle != null) ports[n.id] = n.portAngle;
+    } else if (n.fx != null && n.fy != null) {
+      pins[n.id] = [n.fx, n.fy];
+    }
+  }
+  return {
+    source: textInput.property('value') as string,
+    horizon: tEnd,
+    flows: showFlows,
+    namesOnly,
+    animate: animating,
+    zoom: userZoom,
+    pan: [panX, panY],
+    pins,
+    ports,
+    examplesOpen: exampleSections.examples.property('open') as boolean,
+    figuresOpen: exampleSections.figures.property('open') as boolean,
+  };
+}
+
+// Land a restored link's hand placements on the nodes the compile just
+// built: each pin as a drag leaves it (pinPlaced), each port's slid
+// bearing. Ids this model doesn't have are dropped.
+function applyPendingView(): void {
+  if (!pendingView) return;
+  const { pins, ports } = pendingView;
+  pendingView = null;
+  for (const n of simulation.nodes()) {
+    if (n.type === 'port') {
+      const a = ports[n.id];
+      if (a != null) n.portAngle = a;
+    } else {
+      const p = pins[n.id];
+      if (p) pinPlaced(n, p[0], p[1]);
+    }
+  }
+}
+
+// Open a decoded link. The hash already holds this state, so the save the
+// load schedules finds nothing to write — unless the link named something
+// this model lacks (a pin on a missing id), which the save then drops.
+function restore(p: PageState): void {
+  loadModel(p);
+  savedWire = canonical(p);
+}
+
+// A link that can't be read — most often one cut short in copying — says
+// so where compile errors do, rather than opening an empty editor
+// unexplained. The next edit's compile replaces the notice.
+function linkNotice(): void {
+  pre.style('display', null)
+    .text("This link's model couldn't be read. It may have been cut short when it was copied.");
+}
+
+// Every later change of hash is a navigation: a pasted or edited link, or
+// Back/Forward through the entries example loads push. A save still waiting
+// belongs to the entry the page just left, so it's dropped (and a queued
+// write skipped, via navGen); then the new entry's state loads — unless the
+// page already shows it.
+window.addEventListener('hashchange', () => {
+  navGen++;
+  if (saveTimer != null) clearTimeout(saveTimer);
+  saveTimer = null;
+  pushNext = false;
+  const hash = location.hash;
+  void decode(hash).then(p => {
+    if (location.hash !== hash) return; // a later navigation took over
+    if (!p) {
+      // The hash holds nothing a state could match: the next change writes
+      // over it, whatever that change leaves.
+      savedWire = null;
+      linkNotice();
+    } else if (canonical(p) === canonical(snapshot())) {
+      savedWire = canonical(p);
+    } else {
+      restore(p);
+    }
+  });
+});
+
+// A save still waiting when the page is hidden or loses focus (a tab
+// switch, a click into the address bar to copy the link) lands at once.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') flushSave();
+});
+window.addEventListener('blur', flushSave);
+
+// Open the link the page was loaded with. The container stays hidden until
+// the decode settles (visibility only — layout and measurement carry on),
+// sparing a frame of the empty editor. An unreadable link leaves savedWire
+// at '' (unlike a hashchange's): the fresh page's own section toggles fire
+// just after load, and their save must not wipe the link before anyone
+// has read the notice — a real change replaces it.
+const startHash = location.hash;
+if (startHash.length > 1) {
+  container.style('visibility', 'hidden');
+  void decode(startHash)
+    .then(p => {
+      if (location.hash !== startHash) return; // a navigation took over
+      if (p) restore(p);
+      else linkNotice();
+    })
+    .finally(() => container.style('visibility', null));
 }

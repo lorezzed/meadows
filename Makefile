@@ -69,7 +69,9 @@ dist: build
 # clearance, driving ui/layout.ts's real computeLayout + force simulation)
 # plus the playback contract (test/playback.mjs: the animate toggle's trace,
 # shared scales, loop activity, pulse routes, and water-line breaks in
-# ui/playback.ts).
+# ui/playback.ts) plus the permalink codec (test/permalink.mjs: the URL
+# hash's round trips, canonical wire, cut-short and hostile links, and the
+# link captured when the format shipped, in ui/permalink.ts).
 # After an INTENDED output change: node test/golden.mjs --capture
 test: build
 	nix --experimental-features 'nix-command flakes' develop --command spago test
@@ -79,6 +81,7 @@ test: build
 	node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/format.mjs
 	node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/layout.mjs
 	node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/playback.mjs
+	node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/permalink.mjs
 
 # Run the esbuild dev server against ui/index.html. Uses `--watch=forever` (not
 # plain `--watch`) so the watcher survives a closed stdin — backgrounded or

@@ -48,10 +48,11 @@ make run-with in="a=>j"  # in= form REQUIRED when the input contains '='
 make test         # spago test (PureScript unit suite) + golden battery
                   #   (test/golden.mjs: byte-exact graph JSON + positioned errors)
                   #   + headless frontend checks (test/simulate.mjs,
-                  #   test/highlight.mjs, test/layout.mjs, and
-                  #   test/playback.mjs run ui/simulate.ts / ui/highlight.ts /
-                  #   ui/layout.ts / ui/playback.ts directly via node's TS
-                  #   type stripping) + the formatter contract (test/format.mjs).
+                  #   test/highlight.mjs, test/layout.mjs, test/playback.mjs,
+                  #   and test/permalink.mjs run ui/simulate.ts /
+                  #   ui/highlight.ts / ui/layout.ts / ui/playback.ts /
+                  #   ui/permalink.ts directly via node's TS type
+                  #   stripping) + the formatter contract (test/format.mjs).
                   #   Refresh goldens after an INTENDED change: node test/golden.mjs --capture
 
 # Inside `nix develop` (or `make shell`) you also have the raw tools:
@@ -69,7 +70,10 @@ end-to-end JSON seam byte-exactly, and `test/simulate.mjs` / `test/highlight.mjs
 simulator, the editor's highlight tokenizer, the formatter (reference style,
 graph preservation, idempotence), the diagram layout, and the animate toggle's
 playback (trace, shared scales, loop activity, pulse routes, water-line
-breaks) against the real compiled backend.
+breaks) against the real compiled backend; `test/permalink.mjs` checks the
+URL-hash codec on its own (every example round-trips, the canonical wire,
+cut-short and hostile links, and a golden link captured when the format
+shipped, which must decode forever).
 
 ### Build coupling (important)
 
@@ -365,7 +369,12 @@ playback bullet below). Almost everything lives in **`app.ts`**:
   *string* result is a compile error: the editor's border flags red, the `<pre>`
   appears with the message in red, and `update()` is skipped (the last good
   graph stays). Otherwise the `<pre>` hides again and the `System` is passed
-  to `update(system)`.
+  to `update(system)` (then `applyPendingView()` lands a restored link's
+  pins — see the permalink bullet). Every programmatic edit enters through
+  `setSource(text)` (set the value, dispatch `input`), so this handler is
+  the ONE path every source change takes — typing, format, example loads,
+  palette placements, deletes, renames — and its `finally` schedules the
+  URL save on every path, compile errors included.
 - The editor color-codes node names: the `<textarea>` sits on a `.highlight`
   backdrop `<div>` that renders the same text with every recognized name in
   its accent (weight 600), the textarea's own glyphs transparent above it
@@ -393,9 +402,9 @@ playback bullet below). Almost everything lives in **`app.ts`**:
 - A "format" button in a `.tools` row tucked under the editor's right corner
   (order 2 after the editor wrap; pill styling shared with the example
   buttons) reprints the model via the backend's `format` (see
-  `src/Formatter.purs`) through the same value-set + input-dispatch path as
-  `loadExample` — compile, diagram recycle (token-preserving, so node ids
-  and positions survive), and highlight all refresh. Unlexable input returns
+  `src/Formatter.purs`) through `setSource`, like every programmatic edit —
+  compile, diagram recycle (token-preserving, so node ids and positions
+  survive), and highlight all refresh. Unlexable input returns
   unchanged, so the button no-ops on broken models.
 - `update()` does the d3 data-join per node type (dots→`circle`, stocks→`rect`,
   faucets/clouds→`image` with inlined SVGs from `ui/shape/`, ports→small open
@@ -614,6 +623,40 @@ playback bullet below). Almost everything lives in **`app.ts`**:
   hop. The chart's playhead follows every frame. The playback's bindings
   live in a state block ahead of the first `update()` call — module init
   runs it, and a `let`/`const` declared further down is still in its TDZ.
+- The **permalink** (the section at the end of app.ts): the URL hash always
+  holds the page's whole state, coded by `ui/permalink.ts` (below) — the
+  source verbatim (non-compiling drafts included), the horizon, flows,
+  names only, animate, zoom and pan, which example sections are open, and
+  the hand placements: `fx`/`fy` pins by node id and `portAngle` by port id
+  (ports never count as pins — `ticked()` pins every port each frame).
+  Unpinned positions (the forces re-derive them), anything derived from
+  the source, and gesture state (tool, selection, playhead) are
+  deliberately not saved. Every state change calls `scheduleSave()` — the
+  input handler's `finally`, each view control, the ends of node/port
+  drags and pans, section toggles — which debounces 300 ms; `saveNow()`
+  snapshots the state WHEN IT RUNS (a palette placement pins its node just
+  after its text dispatches), skips a write whose `canonical` JSON is
+  unchanged, and `replaceState`s: no history entry per keystroke, and our
+  own writes never fire `hashchange`. Encoding is async, so writes queue in
+  order on one promise chain, and `navGen` drops a write queued before a
+  navigation. `loadModel(state)` is the one "replace the whole model" path
+  (fresh layout; tool, rename, and selection reset; view applied, horizon
+  and flows before the compile; `setSource`; the animate toggle last, once
+  `update()` has traced its run): an example load runs it after
+  `flushSave()` with the current view (flows reset to the entry's flag) and
+  its save PUSHES an entry, so Back undoes a load; link restores run it
+  too. On startup (with a hash, the container stays `visibility: hidden`
+  until the decode settles — no top-level await, since the esbuild bundle
+  is an IIFE) and on every `hashchange` (a pasted link, Back/Forward),
+  `decode` → `restore` → `loadModel`; the link's pins wait in
+  `pendingView` until `applyPendingView()` lands them after the next
+  successful `update()` (carried in snapshots meanwhile, so a link to a
+  draft that doesn't compile loses nothing). An unreadable link shows a
+  notice in the error `<pre>` and stays in the address bar until the next
+  change. Hiding the page or blurring the window flushes a pending save.
+  The fresh page's values (`namesOnly`, `showFlows`, zoom and pan, the
+  sections) initialize from `DEFAULTS`, so a bare URL means exactly the
+  fresh page.
 
 Two sibling modules add the **behavior-over-time chart** (the book's figure 6 to
 the diagram's figure 5):
@@ -795,6 +838,27 @@ for a faucet-less loop. `waterSpans` is the tank's water line as the
 spans left once every text box it crosses (the name, the readout — app.ts
 measures them with getBBox) is cut out, padded, so it never strikes
 through either.
+
+**`ui/permalink.ts`** — the URL-hash codec, pure with NO imports at all
+(`test/permalink.mjs` runs it headlessly; CompressionStream,
+DecompressionStream, TextEncoder, and btoa/atob are node globals).
+`PageState` is the whole saved state and `DEFAULTS` the fresh page (its
+`horizon` pinned to simulate.ts's `T_END` by the test). `canonical(state)`
+is the wire JSON — short keys (`src`, `t`, `flows`, `names`, `play`,
+`zoom`, `pan`, `pins`, `ports`, `examples`, `figures`) in a fixed order,
+only the fields that differ from `DEFAULTS`, numbers snapped to a grid
+(positions to 0.1, bearings wrapped into atan2's range at 0.01 rad, zoom to
+4 places), ids sorted — so equal states spell equal JSON, and the default
+state spells ''. `encode` gives `VERSION` (`1`) + base64url(deflate-raw(the
+JSON)), or '' for the default state (a bare URL); the largest example's
+token is ~760 characters. `decode` never throws: an empty hash is the
+defaults; a wrong version, bad base64url, corrupt or truncated deflate, a
+token or inflated JSON over 256 KiB, invalid UTF-8, or a non-object is
+null; otherwise each field is read on its own (a malformed one falls back
+to its default) and clamped by `clampHorizon` (1–1000) / `clampZoom`
+(0.2–8), which the t = field and the zoom buttons share. The test's golden
+token must decode forever: before changing the wire, bump `VERSION` and
+keep reading the old one.
 
 `update()` clears `group`/`loop`/`value`/`steps` on recycled nodes before
 merging new data (the JSON omits absent `Maybe` keys, so stale values would

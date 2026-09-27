@@ -455,6 +455,14 @@ mid-run.
   a loop by clicking its nodes in order; and select / delete act on what's
   already there. Every one of them is a *text* edit — the statement is
   appended to (or removed from) the editor, so the source stays the model.
+- The **address bar** is a link to what's on screen. It holds the model's
+  text exactly as typed, the view (the chart's horizon and flows checkbox,
+  names only, animate, zoom and pan, which example sections are open), and
+  every node you pinned or port you slid. It keeps up as you work without
+  piling up history, so a reload, a bookmark, or a link you send reopens
+  the same page. Nodes you haven't pinned lay themselves out afresh, as
+  they do for an example. An example load does add a history entry, so
+  Back brings back the model it replaced.
 
 ## The CLI
 
@@ -490,20 +498,22 @@ ui/                   the frontend (TypeScript + d3)
   simulate.ts           the forward-Euler engine (pure; runs headless)
   playback.ts           the animation's model: fills, paces, loop pulse routes
                         (pure; runs headless)
+  permalink.ts          the page state <-> URL hash codec (pure; runs headless)
   chart.ts              behavior-over-time panel
   highlight.ts          editor tokenizer mirroring the lexer's naming
   example.ts            the example buttons
 test/                 unit suite (test/Main.purs), byte-exact goldens
                       (golden.mjs + goldens.json), headless frontend checks
-                      (simulate/highlight/format/layout/playback .mjs)
+                      (simulate/highlight/format/layout/playback/permalink .mjs)
 ```
 
 `make test` runs every layer. The goldens pin the compiler's JSON output
 byte-for-byte; after an *intended* output change, refresh them with
 `node test/golden.mjs --capture`. The formatter, simulator, highlighter,
-layout, and playback tests run `ui/*.ts` directly under node's type stripping
-against the real compiled backend — another reason `spago build` must precede
-them (the `make test` target does this for you).
+layout, playback, and permalink tests run `ui/*.ts` directly under node's
+type stripping, all but the permalink codec against the real compiled
+backend — another reason `spago build` must precede them (the `make test`
+target does this for you).
 
 ## License
 
