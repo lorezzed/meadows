@@ -21,17 +21,21 @@ const roundTrip = (label, input) => {
 // Every example round-trips, and its span names agree exactly with the
 // compiled graph's named nodes (dots, stocks, faucets — clouds and ports are
 // nameless): every mention the editor would color is a real node, and every
-// named node is found in the text.
+// named node is found in the text. The same holds with every line echoed in
+// a comment above it and trailing it: names in comments color nothing.
 for (const { label, content } of exampleList) {
-  roundTrip(label, content);
+  const commented = content.split('\n').map(line => `// ${line}\n${line} // ${line}`).join('\n');
   const out = JSON.parse(M.go(content));
   if (typeof out === 'string') { fail(label, `example no longer compiles: ${out}`); continue; }
   const want = new Set(out.nodes
     .filter(n => n.type === 'dot' || n.type === 'stock' || n.type === 'faucet')
     .map(n => n.label));
-  const got = new Set(nameSpans(content).filter(s => s.name != null).map(s => s.name));
-  for (const n of want) if (!got.has(n)) fail(label, `missing name: ${JSON.stringify(n)}`);
-  for (const n of got) if (!want.has(n)) fail(label, `phantom name: ${JSON.stringify(n)}`);
+  for (const [what, src] of [[label, content], [`${label}, commented`, commented]]) {
+    roundTrip(what, src);
+    const got = new Set(nameSpans(src).filter(s => s.name != null).map(s => s.name));
+    for (const n of want) if (!got.has(n)) fail(what, `missing name: ${JSON.stringify(n)}`);
+    for (const n of got) if (!want.has(n)) fail(what, `phantom name: ${JSON.stringify(n)}`);
+  }
 }
 
 // Surface edges, pinned against Lexer.purs's rules.
@@ -71,6 +75,21 @@ expect('cos outside a formula is a name', 'cos -> b', ['cos', 'b']);
 expect('nested parens keep the formula context',
   'f: (max(0.09, 0.21 - 0.048 * t) + max(0, 0.27 * sin(pi * (t - 5) / 10)))', ['f']);
 expect('a loop-open never opens a formula', 'R(t -> b)', ['t', 'b']);
+expect('a comment line names nothing', '// chickens -> eggs [coop] | R(', []);
+expect('a trailing comment names nothing', 'a -> b // c -> [d]', ['a', 'b']);
+expect('a comment ends at its newline', '// x\ny', ['y']);
+expect('a comment glues to nothing', 'a//b', ['a']);
+expect('a comment ends a formula line', 'a: (x // y', ['a', 'x']);
+expect('a lone slash is plain division', 'a: (x / y)', ['a', 'x', 'y']);
+expect('the formula context still resets after a comment', 'a: (x // (\nt -> b', ['a', 'x', 't', 'b']);
+
+// A comment is one span, flagged for the editor's gray, the newline outside it.
+{
+  const spans = nameSpans('a // b\nc');
+  const want = [{ text: 'a', name: 'a' }, { text: ' ' }, { text: '// b', comment: true },
+    { text: '\n' }, { text: 'c', name: 'c' }];
+  if (JSON.stringify(spans) !== JSON.stringify(want)) fail('comment span', JSON.stringify(spans));
+}
 
 // The raw slice is preserved even though the NAME normalizes its spaces.
 {

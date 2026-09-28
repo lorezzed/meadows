@@ -18,7 +18,7 @@ import Effect.Console (log)
 import Effect.Exception (throw)
 import Evaluator (Graph, Link, NodeType(..), RFormula, evaluate)
 import Expr (Expr(..), FormOp(..), Ref(..))
-import Lexer (LoopKind(..), Operator(..), Token(..), tokenize)
+import Lexer (LoopKind(..), Operator(..), Token(..), tokenize, tokenizeWithComments)
 import Parser (Annot(..), Dir(..), Tree(..), parse)
 import Parsing (Position(..))
 
@@ -165,6 +165,31 @@ tests =
       "line 1, column 3" (parseAll "a -x")
   , expectErrorAt "a number's trailing bare dot fails at the dot"
       "line 1, column 2" (toksOf "5.")
+  -- Lexer: comments (`//` to the end of the line) never reach the parser
+  , expectEq "a comment runs to the end of its line, whatever it holds"
+      (Right (TokIdent "a" : TokOp ArrowR : TokIdent "b" : Nil))
+      (toksOf "a -> b // c -> [d] | R(")
+  , expectEq "a comment glues to nothing: a//b is a name, then a comment"
+      (Right (TokIdent "a" : Nil))
+      (toksOf "a//b")
+  , expectEq "a lone slash still divides"
+      (Right (TokIdent "a" : TokSlash : TokIdent "b" : Nil))
+      (toksOf "a / b")
+  , expectEq "comment lines read as blank lines: one separator between statements"
+      (Right (TokIdent "a" : TokSep : TokIdent "b" : Nil))
+      (toksOf "a\n// note\n\n// more\nb")
+  , expectEq "a comment alone lexes to nothing"
+      (Right Nil)
+      (toksOf "// just a note")
+  , expectEq "comment lines alone lex like blank lines"
+      (Right (TokSep : Nil))
+      (toksOf "// just a note\n// and another")
+  , expectEq "the separator a comment line leaves sits at the first newline"
+      (Right (Tuple 1 1 : Tuple 1 2 : Tuple 3 1 : Nil))
+      (posOf "a\n// note\nb")
+  , expectEq "the formatter's stream keeps each comment's text, trailing blanks dropped"
+      (Right (TokIdent "a" : TokComment " note" : TokSep : TokComment "x" : Nil))
+      (map _.tok <$> tokenizeWithComments "a // note  \n//x")
   -- Parser: tree shapes and exact ids (mint order: atoms after their tokens,
   -- operators after op+name before the right operand, parens before the body)
   , expectEq "arrow AST (ids: left 0, operator 1, right 2)"
@@ -198,6 +223,13 @@ tests =
   , expectEq "blank lines yield no empty statements"
       (Right (NodeExpr 0 "a" Nothing : NodeExpr 1 "b" Nothing : Nil))
       (parseAll "\na\n\nb\n")
+  , expectEq "comments yield no statements and mint no ids"
+      (Right (NodeExpr 0 "a" Nothing : NodeExpr 1 "b" Nothing : Nil))
+      (parseAll "// header\na // trailing\n// between [x] -> y\nb\n// footer")
+  , expectErrorAt "a comment line doesn't carry a broken statement on to the next"
+      "line 1, column 5" (parseAll "a ->\n// note\nb")
+  , expectErrorAt "a comment ends its line even inside a formula"
+      "line 1, column 5" (parseAll "a: (b // c)")
   , expectEq "stock term"
       (Right (StockExpr 0 "s" Nothing : Nil)) (parseAll "[s]")
   -- Parser: value annotations (stocks, faucets, and dot constants)

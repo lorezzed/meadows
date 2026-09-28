@@ -48,15 +48,35 @@ expect('multi-space name normalizes', 'water   in   tub', 'water in tub');
 expect('blank lines collapse', 'a->b\n\n\nc->d', 'a->b\nc->d'.replace(/->/g, ' -> '));
 expect('integral numbers reprint bare', '[a: 50.0]=>out: 2.50|', '[a: 50] =>out: 2.5 |');
 expect('unlexable input untouched', '5.', '5.');
+expect('a comment line keeps its own line', '// the flock\n|=>hatching[chickens]',
+  '// the flock\n| =>hatching [chickens]');
+expect('a trailing comment sits one space after the code, its text kept',
+  'a->b    //why  ', 'a -> b //why');
+expect('blank lines around comments collapse too', '// a\n\n\n// b\n\na->b',
+  '// a\n// b\na -> b');
+expect('a comment never glues to an opener', 'R(   // unfinished', 'R( // unfinished');
 
 // Every example: formatting preserves the compiled graph byte-exactly and
-// is a fixed point of itself.
+// is a fixed point of itself — and so does the example with a comment line
+// above each line and a comment trailing each, whose comments all survive,
+// in order, each text as written (less trailing blanks).
+const commentTexts = (src) => src.split('\n').filter(l => l.includes('//'))
+  .map(l => l.slice(l.indexOf('//')).trimEnd());
 for (const { label, content } of exampleList) {
   const formatted = M.format(content);
   if (M.go(formatted) !== M.go(content))
     fail(label, 'formatting changed the compiled graph');
   if (M.format(formatted) !== formatted)
     fail(label, `not idempotent:\n${M.format(formatted)}`);
+  const commented = content.split('\n')
+    .map(line => `//  on: ${line}\n${line}   // why (${label})  `).join('\n');
+  const reprinted = M.format(commented);
+  if (M.go(reprinted) !== M.go(content))
+    fail(`${label}, commented`, 'formatting or comments changed the compiled graph');
+  if (M.format(reprinted) !== reprinted)
+    fail(`${label}, commented`, `not idempotent:\n${M.format(reprinted)}`);
+  if (JSON.stringify(commentTexts(reprinted)) !== JSON.stringify(commentTexts(commented)))
+    fail(`${label}, commented`, `comments lost or changed:\n${reprinted}`);
 }
 
 if (failures) { console.log(`${failures} failure(s)`); process.exit(1); }

@@ -122,6 +122,14 @@ JSON error string). Two small modules sit beside it rather than in it:
      now closed formulas of `t` for curves — and explicit lag-stock
      structure). `t`, `pi`, `cos`, `sin`, `min`, `max` are ordinary
      identifiers to the lexer; the parser reserves them inside formulas
+   - `//` → a comment to the end of the line (`TokComment`, carrying its
+     text less trailing blanks; tried before `/`, and since no other lexeme
+     holds a `/`, a line's first `//` always opens its comment). Only
+     `tokenizeWithComments` — the formatter's view — keeps them: `tokenize`,
+     the parser's, drops each comment and merges the separators a comment
+     line leaves touching into the first (at the newline ending the line
+     above, where a missing-operand error points), so a comment line reads
+     exactly as a blank line and comment-free source lexes as it always did
 
 2. **`Parser.purs`** — `parse :: List PosToken -> Either String (List Tree)`, one `Tree`
    per newline-separated statement. A combinator parser over the token stream:
@@ -309,7 +317,8 @@ concern in each of two copies.
 
 Alongside the pipeline sits **`Formatter.purs`** — `format :: String -> String`,
 the canonical pretty-printer behind the UI's format button. It re-lexes with the
-real lexer and reprints the token stream (so it can never disagree with the
+real lexer (`tokenizeWithComments`, so comments survive) and reprints the token
+stream (so it can never disagree with the
 syntax): one statement per line (blank lines collapse), tokens space-separated
 except where a lexeme glues to its neighbor — brackets hug their stock, a colon
 hugs the name before it, faucet ops take their name (`| =>tree growth [wood in
@@ -321,7 +330,9 @@ tight inside formula groups only (`2x`, `2(a + b)`, `x(a + b)` — which also
 glues time shifts and function calls: `orders(t - delivery delay)`,
 `cos(2 * pi * t / 10)`; `5 [stock]` at statement
 level keeps its space).
-Arrows, formula operators, and a shift's `-` breathe on both sides. Token-preserving (a name
+Arrows, formula operators, and a shift's `-` breathe on both sides. A comment
+keeps its text: a comment line stays a line of its own, and a trailing
+comment sits one space after its code, never glued to it. Token-preserving (a name
 followed by a number keeps its space — `x2` would re-lex as one identifier;
 numbers reprint from their value, integral ones without `.0`) and total: input
 that doesn't lex comes back untouched. `test/format.mjs` pins the reference
@@ -380,13 +391,16 @@ playback bullet below). Almost everything lives in **`app.ts`**:
   URL save on every path, compile errors included.
 - The editor color-codes node names: the `<textarea>` sits on a `.highlight`
   backdrop `<div>` that renders the same text with every recognized name in
-  its accent (weight 600), the textarea's own glyphs transparent above it
+  its accent (weight 600) and every comment in `--faint` gray (a `.comment`
+  span, normal weight), the textarea's own glyphs transparent above it
   (caret/selection native; the shared CSS rule pins every glyph-positioning
   property, plus `scrollbar-gutter: stable` so classic scrollbars can't skew
   the wrap; scrollTop syncs on scroll/input; a `\u200b` sentinel keeps a
   trailing newline's height). **`ui/highlight.ts`** (pure, dependency-free,
   headlessly tested like simulate.ts) scans the source into spans, mirroring
-  the lexer's naming: multi-word joining with whitespace normalization
+  the lexer's naming: `//` to the end of the line as one `comment` span
+  that names nothing (the newline outside it), multi-word joining with
+  whitespace normalization
   (`water   in   tub` IS `water in tub`), `R(`/`B(` loop-opens excluded, the
   greedy join (`foo R(` is one name "foo R"), and formula-context tracking
   for the reserved words — a paren group opened right after a `:` (nested
@@ -569,7 +583,8 @@ playback bullet below). Almost everything lives in **`app.ts`**:
   label — multi-word-safe and substring-proof, since the lexer tokenizes
   (`warming discrepancy` survives deleting `discrepancy`); an anonymous cloud
   maps to the `|` at its ordinal (cloud ids run in `|`-token order, so the
-  k-th cloud is the k-th `|` across the source); ports carry no text and are
+  k-th cloud is the k-th `|` across the source, counting only code — a line's
+  first `//` opens its comment); ports carry no text and are
   skipped (they vanish with their stock or arrow). Ports are never
   selectable. The delete tool also removes **links**: a transparent
   wide-stroke twin of every link (`linkHit`, `d` mirrored from the visible

@@ -374,9 +374,11 @@ fParen = defer \_ -> do
   tk TokRParen <?> "a closing ')' in the formula"
   fShiftTail f
 -- | program := sep? (statement sepEndBy sep) eof
--- | The lexer collapses every newline run into a single TokSep, so one
--- | optional leading separator plus sepEndBy covers blank leading, interior,
--- | and trailing lines without ever producing an empty statement.
+-- | The lexer collapses every newline run into a single TokSep (comment
+-- | lines included — `tokenize` drops them and merges the separators they
+-- | leave), so one optional leading separator plus sepEndBy covers blank
+-- | leading, interior, and trailing lines without ever producing an empty
+-- | statement.
 program :: P (List Tree)
 program = do
   optional (tk TokSep)

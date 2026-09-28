@@ -1,8 +1,9 @@
 // Surface scanner for the editor's color backdrop: split DSL source into
 // spans whose concatenation is exactly the input, tagging each identifier
 // run with its normalized NAME so the editor can color every mention of a
-// node alike. Pure and dependency-free (no imports at all), mirroring
-// simulate.ts, so node can run it headlessly (test/highlight.mjs).
+// node alike, and flagging each comment so it can gray it. Pure and
+// dependency-free (no imports at all), mirroring simulate.ts, so node can
+// run it headlessly (test/highlight.mjs).
 //
 // This mirrors Lexer.purs only as far as coloring needs:
 // - a word is letter (letter | digit | _)* — Unicode classes, like the
@@ -24,6 +25,9 @@
 //   these words outside a formula is an ordinary node name — including a
 //   statement-level `t` (`t -> b` names a node t, and so does `R(t -> b)`:
 //   a loop-open never opens a formula);
+// - `//` opens a comment that runs to the end of its line (the newline
+//   excluded): one span flagged `comment`, naming nothing inside it, since
+//   the lexer drops comments before the parser runs;
 // - everything else — operators, numbers, brackets, clouds, newlines — is
 //   plain. (A digit only joins a name after a leading letter: `a2` is one
 //   name, but in `2x` the digit stays plain and `x` is the name, matching
@@ -33,6 +37,8 @@ export type Span = {
   text: string;
   /** The normalized node name, present when this span is an identifier run. */
   name?: string;
+  /** Present when this span is a comment: `//` to the end of its line. */
+  comment?: true;
 };
 
 const letter = /\p{L}/u;
@@ -54,6 +60,15 @@ export function nameSpans(input: string): Span[] {
   let depth = 0;
   while (i < input.length) {
     const ch = input[i]!;
+    if (ch === "/" && input[i + 1] === "/") {
+      // The newline stays out of the comment, so it still resets `depth`.
+      let j = i + 2;
+      while (j < input.length && input[j] !== "\n" && input[j] !== "\r") j++;
+      flushPlain();
+      spans.push({ text: input.slice(i, j), comment: true });
+      i = j;
+      continue;
+    }
     if (!letter.test(ch)) {
       if (ch === "\n") depth = 0;
       else if (ch === "(") {

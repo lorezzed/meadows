@@ -51,7 +51,9 @@ alone will silently run stale code.
 ## The language
 
 A model is a sequence of statements, one per line (blank lines are ignored).
-Each statement is a chain of nodes joined by arrows.
+Each statement is a chain of nodes joined by arrows. `//` starts a comment,
+which runs to the end of the line, on a line of its own or after a
+statement.
 
 | You write | You get |
 |---|---|
@@ -65,6 +67,7 @@ Each statement is a chain of nodes joined by arrows.
 | `name: 5` | a value — initial rate for a faucet, constant for a dot |
 | `name: 0 @5: 3` | a **schedule** — 0 until t=5, then 3 |
 | `name: (expr)` | a **formula** — a rate law or computed auxiliary |
+| `// note` | a **comment** — ignored through the end of the line |
 
 ### Names and identity
 
@@ -453,10 +456,11 @@ mid-run.
 - The **editor** color-codes every recognized name with its node's accent —
   the same hue that node wears in the diagram and the chart, so a line in the
   chart, a box in the diagram, and a word in the source visually connect.
+  Comments show in grey, names in them uncolored.
 - The **format** button reprints the model in the canonical style (one
-  statement per line, spacing normalized — see `src/Formatter.purs`). It is
-  token-preserving, so node identities and diagram positions survive; input
-  that doesn't lex is left untouched.
+  statement per line, spacing normalized, comments kept — see
+  `src/Formatter.purs`). It is token-preserving, so node identities and
+  diagram positions survive; input that doesn't lex is left untouched.
 - In the **diagram**: drag a node to pin it where you drop it; click a pinned
   node to release it back to the forces. Ports drag along their stock's
   boundary. Clicking a node's label renames it everywhere. Dragging empty

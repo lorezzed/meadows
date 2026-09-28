@@ -409,6 +409,9 @@ const css = `
     color: var(--ink);
     pointer-events: none;
   }
+  /* A comment (// to the end of the line) recedes: the faint gray the
+     placeholder and the header's subtitle use, never a node's accent. */
+  .highlight .comment { color: var(--faint); }
   .text-input {
     position: relative; /* paints above the backdrop */
     width: 100%;
@@ -1035,12 +1038,12 @@ tools.append('button')
 // Rebuild the editor's color backdrop: the same text the textarea holds,
 // with every recognized node name in its accent (weight 600 so pale accents
 // still carry; the mono face keeps the same advance width when bold, so the
-// glyphs stay exactly under the textarea's). Wholesale rebuild per
-// keystroke — models are tiny.
+// glyphs stay exactly under the textarea's) and every comment gray.
+// Wholesale rebuild per keystroke — models are tiny.
 function renderHighlight(text: string): void {
   highlight.selectAll('span').remove();
   for (const s of nameSpans(text)) {
-    const span = highlight.append('span').text(s.text);
+    const span = highlight.append('span').text(s.text).classed('comment', s.comment === true);
     const c = s.name != null ? nameColor.get(s.name) : undefined;
     if (c != null) span.style('color', c).style('font-weight', 600);
   }
@@ -2655,8 +2658,8 @@ function deleteAt(d: Node): void {
 // never leave a half-statement that fails to parse. A named node's lines are
 // found by compiling each line alone and matching its label (multi-word-safe,
 // substring-proof — the lexer does the tokenizing); an anonymous cloud maps
-// to the source `|` at its ordinal (cloud ids run in `|`-token order). Ports
-// carry no text and are skipped.
+// to the source `|` at its ordinal (cloud ids run in `|`-token order; a `|`
+// in a comment is no token). Ports carry no text and are skipped.
 function deleteNodes(ids: string[]): void {
   const ta = textInput.node();
   if (!ta) return;
@@ -2697,10 +2700,14 @@ function deleteNodes(ids: string[]): void {
     });
   }
   // Clouds: the k-th `|` character across the source (top-to-bottom) is the
-  // k-th cloud by ascending id; remove the line it sits on.
+  // k-th cloud by ascending id; remove the line it sits on. Only the code
+  // counts: a line's first `//` opens its comment (no other lexeme holds a
+  // `/`).
   if (cloudRanks.length) {
     const lineOfPipe: number[] = [];
-    lines.forEach((line, i) => { for (const ch of line) if (ch === '|') lineOfPipe.push(i); });
+    lines.forEach((line, i) => {
+      for (const ch of line.split('//')[0]!) if (ch === '|') lineOfPipe.push(i);
+    });
     for (const rank of cloudRanks) {
       const li = lineOfPipe[rank];
       if (li != null) remove.add(li);

@@ -8,6 +8,7 @@ module Lexer
   , loopLetter
   , opSymbol
   , tokenize
+  , tokenizeWithComments
   )
   where
 
@@ -16,7 +17,9 @@ import Prelude
 import Control.Alt ((<|>))
 import Data.Array as Array
 import Data.Either (Either(..))
-import Data.List (List, (:))
+import Data.Foldable (foldl)
+import Data.List (List(..), (:))
+import Data.List as List
 import Data.Maybe (Maybe(..))
 import Data.Number as Number
 import Data.String.CodeUnits as SCU
@@ -24,7 +27,7 @@ import Data.String (joinWith)
 import Parsing (Parser, ParseError, Position(..), fail, parseErrorMessage, parseErrorPosition, position, runParser)
 import Parsing.Combinators (many, option, try, (<?>))
 import Parsing.String (char, string, eof)
-import Parsing.String.Basic (oneOf, letter, alphaNum)
+import Parsing.String.Basic (oneOf, noneOf, letter, alphaNum)
 
 import Data.Show.Generic (genericShow)
 import Data.Generic.Rep (class Generic)
@@ -72,6 +75,7 @@ data Token
   | TokSlash
   | TokNumber Number
   | TokSep
+  | TokComment String
 
 derive instance eqToken :: Eq Token
 derive instance genericToken :: Generic Token _
@@ -168,6 +172,20 @@ rightBracket = char ']'
 cloud :: Parser String Char
 cloud = char '|'
 
+-- | `//` to the end of the line is a comment. It lexes as a token carrying
+-- | its text (after the `//`, trailing blanks dropped) so the formatter can
+-- | reprint it; `tokenize` drops it before the parser sees anything. No
+-- | other lexeme contains a `/`, so the first `//` on a line always opens
+-- | its comment, and a lone `/` still divides. Must be tried before the `/`
+-- | operator in `token`.
+comment :: Parser String String
+comment = do
+  _ <- try (string "//")
+  body <- many (noneOf [ '\n', '\r' ])
+  pure $ SCU.fromCharArray $ Array.reverse $ Array.dropWhile blank $ Array.reverse $ Array.fromFoldable body
+  where
+  blank c = c == ' ' || c == '\t'
+
 -- | A loop annotation opens with the exact two-char lexeme `R(` or `B(`
 -- | (uppercase, no space) -- a loop-open, the way `[` is a stock-open. The
 -- | `try` backtracks a partial match, so a bare `R`, `R->b`, or `Rx(` still
@@ -190,6 +208,8 @@ token
   <|> (TokCaret <$ char '^')
   <|> (TokPlus <$ char '+')
   <|> (TokStar <$ char '*')
+  -- before the `/` operator, which would take a comment's first slash
+  <|> (TokComment <$> comment)
   <|> (TokSlash <$ char '/')
   <|> (TokNumber <$> numberLit)
   -- after numberLit, so `-` followed by digits stays a signed literal and a
@@ -225,11 +245,27 @@ tokens = do
   eof <?> "end of input (cannot read this character)"
   pure toks
 
-tokenize :: String -> Either String (List PosToken)
-tokenize input =
+-- | The whole token stream, comments included: the formatter's view, which
+-- | reprints them.
+tokenizeWithComments :: String -> Either String (List PosToken)
+tokenizeWithComments input =
   case runParser input tokens of
     Left err -> Left (formatParseError err)
     Right toks -> Right toks
+
+-- | The parser's view: the stream without its comments. Dropping a comment
+-- | line leaves the separators either side of it touching, and they merge
+-- | into the first (at the newline that ends the line above, where a
+-- | "missing operand" error points), so a comment line reads exactly like a
+-- | blank one, and source without comments lexes as it always did.
+tokenize :: String -> Either String (List PosToken)
+tokenize = map uncomment <<< tokenizeWithComments
+  where
+  uncomment = List.reverse <<< foldl keep Nil
+  keep acc t = case t.tok, acc of
+    TokComment _, _ -> acc
+    TokSep, { tok: TokSep } : _ -> acc
+    _, _ -> t : acc
 
 -- | Human rendering for "unexpected <token>" messages; keeps the
 -- | token -> lexeme mapping (the surface syntax) solely in the lexer.
@@ -252,6 +288,7 @@ describeToken TokStar = "'*'"
 describeToken TokSlash = "'/'"
 describeToken (TokNumber n) = "number " <> show n
 describeToken TokSep = "end of line"
+describeToken (TokComment _) = "comment"
 
 opSymbol :: Operator -> String
 opSymbol ArrowR = "->"

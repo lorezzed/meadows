@@ -28,6 +28,9 @@
 -- | Arrows, formula operators, and a shift's `-` breathe on both sides:
 -- | a -> b, capital / 3, orders(t - delivery delay).
 -- | Numbers reprint from their value — integral without the trailing `.0`.
+-- | Comments keep their own text (trailing blanks dropped): a comment line
+-- | stays a line of its own, and a comment after code sits one space after
+-- | it, whatever the code before — `a -> b // why`.
 module Formatter (format) where
 
 import Prelude
@@ -37,7 +40,7 @@ import Data.Foldable (foldl)
 import Data.Int as Int
 import Data.List (List(..), dropWhile, reverse, (:))
 import Data.Maybe (Maybe(..))
-import Lexer (Operator(..), Token(..), loopLetter, opSymbol, tokenize)
+import Lexer (Operator(..), Token(..), loopLetter, opSymbol, tokenizeWithComments)
 
 -- | What kind of paren region the printer is inside: a loop annotation's
 -- | body holds statement-level syntax (arrows keep their spaces), a formula
@@ -47,7 +50,7 @@ data Ctx = LoopCtx | GroupCtx
 type St = { out :: String, prev :: Maybe Token, stack :: List Ctx }
 
 format :: String -> String
-format input = case tokenize input of
+format input = case tokenizeWithComments input of
   Left _ -> input
   Right toks -> print (trimSeps (map _.tok toks))
   where
@@ -92,6 +95,7 @@ print toks = (foldl step { out: "", prev: Nothing, stack: Nil } toks).out
   sep (Just prev) cur stack = if tight then "" else " "
     where
     tight = case prev, cur of
+      _, TokComment _ -> false
       TokLBracket, _ -> true
       TokLoop _, _ -> true
       TokLParen, _ -> true
@@ -132,6 +136,7 @@ print toks = (foldl step { out: "", prev: Nothing, stack: Nil } toks).out
     TokStar -> "*"
     TokSlash -> "/"
     TokNumber n -> showNumber n
+    TokComment s -> "//" <> s
     TokSep -> "\n" -- unreachable (step handles it); kept for totality
 
 -- | Reprint a number the way the DSL writes them: integral values without

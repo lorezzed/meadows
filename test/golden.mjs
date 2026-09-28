@@ -757,6 +757,11 @@ const errorCases = [
   ['a: (x(t ~ 1))',     /^Tokenization error: line 1, column 9: /],  // the smooth shift is gone
   ['a: (x(t - 3 - d))', /^Parsing error: line 1, column 13: /],  // a compound time needs parens
   ['s=>f\na: (x(t - f))', /^Model error: /],                     // a shift time is a value, not a flow
+  // Comments: `//` to the end of the line, gone before the parser runs
+  ['// note\na->',        /^Parsing error: line 2, column 2: /],   // comment lines still count
+  ['a->b // note\nc->',   /^Parsing error: line 2, column 2: /],
+  ['a-> // note\nb',      /^Parsing error: line 1, column 12: /],  // the line still ends at its newline
+  ['a: (x // y)',         /^Parsing error: line 1, column 5: /],   // a comment ends the formula's line too
 ];
 
 if (process.argv.includes('--capture')) {
@@ -776,6 +781,19 @@ for (const input of goldenInputs) {
   const got = M.go(input);
   if (got !== want) fail(input, `\n  want ${want}\n  got  ${got}`);
 }
+
+// Comments are invisible to the compiler: every golden input, with a
+// comment line above each of its lines and a comment trailing each (names,
+// brackets, clouds, and a loop-open among them), compiles to its own golden
+// byte-exactly — ids, ports, and loop numbering untouched.
+for (const input of goldenInputs) {
+  const commented = input.split('\n')
+    .map(line => `// above: ${line}\n${line} // [x] => y | R( z -> w`)
+    .join('\n') + '\n// the end';
+  if (M.go(commented) !== goldens[input]) fail(input, 'comments changed the compiled graph');
+}
+if (M.go('// just a note\n// and another') !== '{"nodes":[],"links":[]}')
+  fail('comments alone', 'a model of comments alone should be the empty graph');
 
 for (const [input, re] of errorCases) {
   const out = JSON.parse(M.go(input));   // error results are JSON strings
