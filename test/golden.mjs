@@ -234,25 +234,56 @@ const EX_CAR36 = car32('0.6');
 
 // The sketch buttons (not book figures): structure alone, not a number
 // anywhere — one balancing loop, R against B, a fix that backfires, two
-// populations, and a stock-less causal loop (see ui/example.ts).
+// populations, and a stock-less causal loop — each explaining its loops
+// in comments (see ui/example.ts).
 const EX_HUNGER = `| =>eating [food in stomach] =>digestion |
-B(eating <- hunger <- food in stomach)`;
+B(eating <- hunger <- food in stomach)
+// Eating fills the stomach, and digestion empties it.
+// B: more hunger, more eating, a fuller stomach, less hunger.
+// One link turns more into less, so the loop pushes back:
+// it's what ends a meal.`;
 
 const EX_CHICKEN = `| =>hatching [chickens] =>road crossings |
 R(hatching <- eggs <- chickens)
-B(road crossings <- chickens)`;
+B(road crossings <- chickens)
+// Chickens hatch from eggs, and leave by crossing the road.
+// R: more chickens, more eggs, more hatching, more chickens.
+// Every link keeps the direction, so change comes back bigger.
+// B: more chickens, more road crossings, fewer chickens.
+// One link turns more into less, so the loop pushes back.
+// Boom or dwindling flock? Whichever loop is stronger wins,
+// and only numbers can say which.`;
 
 const EX_BURNOUT = `| =>new tasks [backlog] =>finishing tasks |
 B(finishing tasks <- overtime <- backlog)
-R(new tasks <- mistakes <- fatigue <- overtime <- backlog)`;
+R(new tasks <- mistakes <- fatigue <- overtime <- backlog)
+// Tasks pile into the backlog and leave it once finished.
+// B: a bigger backlog, more overtime, more tasks finished,
+// a smaller backlog. One link turns more into less, so the
+// loop pushes back.
+// R: more overtime, more fatigue, more mistakes, and each
+// mistake comes back as a new task: a bigger backlog, more
+// overtime. Every link keeps the direction, so it snowballs.
+// A fix that backfires: overtime clears the backlog today,
+// and the fatigue it leaves behind refills it later.`;
 
 const EX_PREDATOR = `| =>rabbit births [rabbits] =>rabbits eaten |
 | =>fox births [foxes] =>fox deaths |
 R(rabbit births <- rabbits)
 B(fox births <- rabbits -> rabbits eaten <- foxes)
-B(fox deaths <- foxes)`;
+B(fox deaths <- foxes)
+// Rabbits are born and eaten; foxes are born and die.
+// R: more rabbits, more rabbit births, more rabbits.
+// B: more foxes, more rabbits eaten, fewer rabbits, fewer fox
+// births, fewer foxes. One link turns more into less, so the
+// loop pushes back: foxes thrive until the rabbits run short.
+// B: more foxes, more fox deaths, fewer foxes.`;
 
-const EX_CONFIDENCE = `R(confidence -> practice -> skill -> confidence)`;
+const EX_CONFIDENCE = `R(confidence -> practice -> skill -> confidence)
+// A loop on its own, no stocks or flows: a causal loop diagram.
+// R: more confidence, more practice, more skill, more confidence.
+// Every link keeps the direction, so change comes back bigger,
+// downhill as readily as up: a vicious circle is the same loop.`;
 
 // The starter buttons (not book figures): the simplest systems, one
 // behavior each — constant inflow, net of two flows, growth, decay,

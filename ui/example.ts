@@ -725,60 +725,83 @@ regeneration rate: (112 (resource / 1000 * (1 - resource / 1000))^2)`
     // the stocks, flows, and loops you'd draw on a whiteboard before any
     // quantity is known. They lead the examples row: structure first, then
     // the numbers. The chart stays an empty frame; the diagram tells the
-    // story, and the animate toggle still beats every loop.
+    // story, and the animate toggle still beats every loop. Each explains
+    // itself in comments, one plain rule throughout: walk the loop link by
+    // link, and a link that turns more into less makes it push back (B),
+    // while links that all keep the direction make it snowball (R). The
+    // model comes first and its notes after, like a caption: the editor
+    // shows about six lines, so a load keeps every statement in view.
     {
-        // One balancing loop through a relay dot: the fuller the stomach,
-        // the less the hunger, the slower the eating — the loop that ends
-        // a meal.
+        // One balancing loop through a relay dot.
         label: 'hunger',
         content: `| =>eating [food in stomach] =>digestion |
-B(eating <- hunger <- food in stomach)`
+B(eating <- hunger <- food in stomach)
+// Eating fills the stomach, and digestion empties it.
+// B: more hunger, more eating, a fuller stomach, less hunger.
+// One link turns more into less, so the loop pushes back:
+// it's what ends a meal.`
     },
     {
-        // The classic first causal loop diagram: chickens lay eggs that
-        // hatch into more chickens (R), and more chickens make more road
-        // crossings that leave fewer of them (B). Which loop dominates —
-        // a boom or a dwindling flock — is the one question the sketch
-        // can't answer without numbers.
+        // The classic first causal loop diagram, R against B: which loop
+        // dominates is the one question a sketch can't answer.
         label: 'chicken & egg',
         content: `| =>hatching [chickens] =>road crossings |
 R(hatching <- eggs <- chickens)
-B(road crossings <- chickens)`
+B(road crossings <- chickens)
+// Chickens hatch from eggs, and leave by crossing the road.
+// R: more chickens, more eggs, more hatching, more chickens.
+// Every link keeps the direction, so change comes back bigger.
+// B: more chickens, more road crossings, fewer chickens.
+// One link turns more into less, so the loop pushes back.
+// Boom or dwindling flock? Whichever loop is stronger wins,
+// and only numbers can say which.`
     },
     {
-        // A fix that backfires: overtime clears the backlog (B), but
-        // overtime breeds fatigue, fatigue breeds mistakes, and every
-        // mistake comes back as a new task (R) — the balancing loop that
-        // works today, the vicious circle that wins later. The loops leave
-        // the backlog along one arrow (backlog -> overtime, drawn once)
-        // and close on opposite taps, so each letter keeps its own side.
+        // A fix that backfires. The loops leave the backlog along one
+        // arrow (backlog -> overtime, drawn once) and close on opposite
+        // taps, so each letter keeps its own side.
         label: 'burnout',
         content: `| =>new tasks [backlog] =>finishing tasks |
 B(finishing tasks <- overtime <- backlog)
-R(new tasks <- mistakes <- fatigue <- overtime <- backlog)`
+R(new tasks <- mistakes <- fatigue <- overtime <- backlog)
+// Tasks pile into the backlog and leave it once finished.
+// B: a bigger backlog, more overtime, more tasks finished,
+// a smaller backlog. One link turns more into less, so the
+// loop pushes back.
+// R: more overtime, more fatigue, more mistakes, and each
+// mistake comes back as a new task: a bigger backlog, more
+// overtime. Every link keeps the direction, so it snowballs.
+// A fix that backfires: overtime clears the backlog today,
+// and the fatigue it leaves behind refills it later.`
     },
     {
-        // Two populations, three loops: rabbits breed (R), foxes die (B),
-        // and between the bands the loop that makes them cycle (B) —
-        // rabbits feed fox births, foxes eat rabbits. That loop's two
-        // arrows share no node, and one expression can't draw them
-        // without a third to join them, so its annotation fans out from
-        // rabbits: rabbits -> rabbits eaten is a real arrow too (a meal
-        // takes rabbits as well as foxes).
+        // Two populations, three loops. The cross-band loop's two arrows
+        // share no node, and one expression can't draw them without a
+        // third to join them, so its annotation fans out from rabbits:
+        // rabbits -> rabbits eaten is a real arrow too (a meal takes
+        // rabbits as well as foxes).
         label: 'predator & prey',
         content: `| =>rabbit births [rabbits] =>rabbits eaten |
 | =>fox births [foxes] =>fox deaths |
 R(rabbit births <- rabbits)
 B(fox births <- rabbits -> rabbits eaten <- foxes)
-B(fox deaths <- foxes)`
+B(fox deaths <- foxes)
+// Rabbits are born and eaten; foxes are born and die.
+// R: more rabbits, more rabbit births, more rabbits.
+// B: more foxes, more rabbits eaten, fewer rabbits, fewer fox
+// births, fewer foxes. One link turns more into less, so the
+// loop pushes back: foxes thrive until the rabbits run short.
+// B: more foxes, more fox deaths, fewer foxes.`
     },
     {
         // No stocks at all: a causal loop diagram of three dots, closed by
-        // naming its first node again. Confidence brings practice,
-        // practice brings skill, skill brings confidence — a virtuous
-        // circle, and after a setback the same loop runs vicious.
+        // naming its first node again.
         label: 'confidence',
-        content: `R(confidence -> practice -> skill -> confidence)`
+        content: `R(confidence -> practice -> skill -> confidence)
+// A loop on its own, no stocks or flows: a causal loop diagram.
+// R: more confidence, more practice, more skill, more confidence.
+// Every link keeps the direction, so change comes back bigger,
+// downhill as readily as up: a vicious circle is the same loop.`
     },
 
     // Starter models (not from the book): the simplest systems, one behavior

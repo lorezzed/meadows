@@ -372,7 +372,8 @@ playback bullet below). Almost everything lives in **`app.ts`**:
   holding that heading and the positioned `.diagram` the overlays anchor to.
   The example pills sit in two collapsible `<details>` sections
   (`addExampleSection`) — "examples" (open: the sketches — structure with
-  not a number anywhere — then the starter models, one elementary behavior
+  not a number anywhere, each captioned by `//` comments after its model
+  that walk its loops — then the starter models, one elementary behavior
   each, simplest first, then the showcase models) above
   "figures from the book" (every
   `figure N` entry, collapsed by default) — each a
