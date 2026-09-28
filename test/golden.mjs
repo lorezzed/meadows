@@ -232,6 +232,28 @@ const EX_CAR3132 = car32('0.3');
 const EX_CAR35 = car32('0.2');
 const EX_CAR36 = car32('0.6');
 
+// The sketch buttons (not book figures): structure alone, not a number
+// anywhere — one balancing loop, R against B, a fix that backfires, two
+// populations, and a stock-less causal loop (see ui/example.ts).
+const EX_HUNGER = `| =>eating [food in stomach] =>digestion |
+B(eating <- hunger <- food in stomach)`;
+
+const EX_CHICKEN = `| =>hatching [chickens] =>road crossings |
+R(hatching <- eggs <- chickens)
+B(road crossings <- chickens)`;
+
+const EX_BURNOUT = `| =>new tasks [backlog] =>finishing tasks |
+B(finishing tasks <- overtime <- backlog)
+R(new tasks <- mistakes <- fatigue <- overtime <- backlog)`;
+
+const EX_PREDATOR = `| =>rabbit births [rabbits] =>rabbits eaten |
+| =>fox births [foxes] =>fox deaths |
+R(rabbit births <- rabbits)
+B(fox births <- rabbits -> rabbits eaten <- foxes)
+B(fox deaths <- foxes)`;
+
+const EX_CONFIDENCE = `R(confidence -> practice -> skill -> confidence)`;
+
 // The starter buttons (not book figures): the simplest systems, one
 // behavior each — constant inflow, net of two flows, growth, decay,
 // equilibrium, goal-seeking, S-curve, a two-stock chain (see ui/example.ts).
@@ -651,6 +673,11 @@ const goldenInputs = [
   EX_CHAIN47,     // figure 47 — the materials-economy chain, structure only
   EX_POP48,       // figure 48 — the bare population stock, structure only
   EX_TRIO49,      // figure 49 — three everyday stocks, one with a branch outflow
+  EX_HUNGER,      // sketch: one balancing loop through a relay dot
+  EX_CHICKEN,     // sketch: R and B pulling on one stock
+  EX_BURNOUT,     // sketch: a fix (B) and its backfire (R), one shared arrow
+  EX_PREDATOR,    // sketch: two bands, a cross-band loop annotated as a fan
+  EX_CONFIDENCE,  // sketch: a stock-less three-dot loop, closed by name
   EX_PIGGY,       // starter: a constant inflow, nothing out
   EX_INBOX,       // starter: two constant flows, the stock moves by their net
   EX_RABBITS,     // starter: births ∝ rabbits — the reinforcing loop
@@ -1137,6 +1164,60 @@ if (trio49.links.filter(l => l.target === t49Of('registered unemployed')?.id).le
   fail('trio 49', 'one inflow — the layoff rate');
 if (trio49.nodes.some(n => n.value !== undefined || n.loop !== undefined))
   fail('trio 49', 'the structure figure carries no numbers and no loops');
+
+// The sketch buttons: structure alone — no node carries a value, a schedule,
+// or a formula — with the census their statements spell (stocks / faucets /
+// clouds / dots / ports: a port per stock-tailed arrow, none between dots),
+// each loop tagging exactly the nodes it names, and every info arrow by its
+// logical endpoints (a port read as its stock), each drawn once.
+const sketchArrows = (g) => {
+  const byId = new Map(g.nodes.map(n => [n.id, n]));
+  const end = (id) => { const n = byId.get(id); return n?.type === 'port' ? byId.get(n.parent)?.label : n?.label; };
+  return g.links.filter(l => l.type === 'arrow').map(l => `${end(l.source)} > ${end(l.target)}`).sort();
+};
+const sketchLoops = (g) => {
+  const m = new Map();
+  for (const n of g.nodes) for (const name of n.loop ?? []) m.set(name, [...(m.get(name) ?? []), n.label]);
+  return JSON.stringify([...m].map(([k, v]) => [k, v.sort()]).sort());
+};
+for (const [label, input, census, loops, arrows] of [
+  ['hunger', EX_HUNGER, '1/2/2/1/1',
+    { B0: ['eating', 'food in stomach', 'hunger'] },
+    ['food in stomach > hunger', 'hunger > eating']],
+  ['chicken & egg', EX_CHICKEN, '1/2/2/1/2',
+    { R0: ['chickens', 'eggs', 'hatching'], B1: ['chickens', 'road crossings'] },
+    ['chickens > eggs', 'chickens > road crossings', 'eggs > hatching']],
+  // Both loops leave the backlog along the one backlog > overtime arrow.
+  ['burnout', EX_BURNOUT, '1/2/2/3/1',
+    { B0: ['backlog', 'finishing tasks', 'overtime'],
+      R1: ['backlog', 'fatigue', 'mistakes', 'new tasks', 'overtime'] },
+    ['backlog > overtime', 'fatigue > mistakes', 'mistakes > new tasks',
+      'overtime > fatigue', 'overtime > finishing tasks']],
+  // The cross-band loop's annotation fans out from rabbits, so its four
+  // members are one expression's (rabbits > rabbits eaten joins the two).
+  ['predator & prey', EX_PREDATOR, '2/4/4/0/5',
+    { R0: ['rabbit births', 'rabbits'], B1: ['fox births', 'foxes', 'rabbits', 'rabbits eaten'],
+      B2: ['fox deaths', 'foxes'] },
+    ['foxes > fox deaths', 'foxes > rabbits eaten', 'rabbits > fox births',
+      'rabbits > rabbit births', 'rabbits > rabbits eaten']],
+  // Stock-less: naming the first dot again closes the circle.
+  ['confidence', EX_CONFIDENCE, '0/0/0/3/0',
+    { R0: ['confidence', 'practice', 'skill'] },
+    ['confidence > practice', 'practice > skill', 'skill > confidence']],
+]) {
+  const g = JSON.parse(M.go(input));
+  if (g.nodes.some(n => n.value !== undefined || n.steps !== undefined || n.expr !== undefined))
+    fail(label, 'a sketch carries no numbers: no value, schedule, or formula');
+  const got = ['stock', 'faucet', 'cloud', 'dot', 'port'].map(t => g.nodes.filter(n => n.type === t).length).join('/');
+  if (got !== census) fail(label, `census ${got}, want ${census}`);
+  const wantLoops = JSON.stringify(Object.entries(loops).map(([k, v]) => [k, [...v].sort()]).sort());
+  if (sketchLoops(g) !== wantLoops) fail(label, `loops ${sketchLoops(g)}, want ${wantLoops}`);
+  if (JSON.stringify(sketchArrows(g)) !== JSON.stringify(arrows))
+    fail(label, `arrows ${JSON.stringify(sketchArrows(g))}`);
+}
+const prey = JSON.parse(M.go(EX_PREDATOR));
+if (!(prey.nodes.find(n => n.label === 'rabbits')?.group === 0 && prey.nodes.find(n => n.label === 'foxes')?.group === 1))
+  fail('predator & prey', 'two bands in statement order: rabbits over foxes');
 
 console.log(failures ? `${failures} FAILURE(S)` : 'ALL CHECKS PASSED');
 process.exit(failures ? 1 : 0);

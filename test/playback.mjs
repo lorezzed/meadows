@@ -256,6 +256,38 @@ const expectRoute = (label, system, loopName, want, depths) => {
   if (b2 && pulseAt(b2, 0.1).length !== 2) fail('figure 37 pulse', 'two hops in flight at depth 0');
 }
 {
+  // The sketches carry no numbers, so the chart plots nothing — but every
+  // loop still plans a route, so the animate toggle has pulses to beat.
+  for (const label of ['hunger', 'chicken & egg', 'burnout', 'predator & prey', 'confidence']) {
+    const system = sys(example(label));
+    if (hasNumbers(system)) fail(`${label} sketch`, 'a sketch carries no numbers');
+    if (loopPlans(system.nodes, system.links).length === 0) fail(`${label} sketch`, 'its loops plan no pulses');
+  }
+  // burnout: both loops leave the backlog along the one shared arrow and
+  // come home on opposite taps — the fix against its outflow, the backfire
+  // with its inflow.
+  const burnout = sys(example('burnout'));
+  expectRoute('burnout route', burnout, 'B0', [
+    '0:backlog->overtime', '1:overtime->finishing tasks', '2:finishing tasks->backlog ~pipe'], 3);
+  expectRoute('burnout route', burnout, 'R1', [
+    '0:backlog->overtime', '1:overtime->fatigue', '2:fatigue->mistakes',
+    '3:mistakes->new tasks', '4:new tasks->backlog pipe'], 5);
+  // predator & prey: the cross-band loop's annotation fans out from rabbits
+  // (figure 37's shape) — one bead crosses the meal's short way home while
+  // the other runs through the foxes to the rabbits-eaten tap.
+  expectRoute('predator & prey route', sys(example('predator & prey')), 'B1', [
+    '0:rabbits->fox births', '0:rabbits->rabbits eaten', '1:fox births->foxes pipe',
+    '1:rabbits eaten->rabbits ~pipe', '2:foxes->rabbits eaten'], 3);
+  // confidence: a stock-less circle from its lowest id, three hops home;
+  // with no faucet there is no activity to read, so it beats at the idle
+  // pace.
+  const confidence = sys(example('confidence'));
+  const r0 = expectRoute('confidence route', confidence, 'R0', [
+    '0:confidence->practice', '1:practice->skill', '2:skill->confidence'], 3);
+  if (r0 && loopActivity(playback(trace(confidence)), r0, 0) !== null)
+    fail('confidence activity', 'a faucet-less loop reads null activity');
+}
+{
   // Edge cases: a stock-less loop starts at its lowest id; a stock with no
   // way out yields the start to a member with one; a link the walk never
   // reaches sets out from its own tail at depth 0; a lone member has no

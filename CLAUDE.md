@@ -359,8 +359,9 @@ playback bullet below). Almost everything lives in **`app.ts`**:
   "diagram" over the diagram panel — the right column is a `.diagram-column`
   holding that heading and the positioned `.diagram` the overlays anchor to.
   The example pills sit in two collapsible `<details>` sections
-  (`addExampleSection`) — "examples" (open: the starter models — one
-  elementary behavior each, simplest first — then the showcase models) above
+  (`addExampleSection`) — "examples" (open: the sketches — structure with
+  not a number anywhere — then the starter models, one elementary behavior
+  each, simplest first, then the showcase models) above
   "figures from the book" (every
   `figure N` entry, collapsed by default) — each a
   wrapping `.example-group` row; the nesting is transparent to

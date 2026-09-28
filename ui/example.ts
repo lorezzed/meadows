@@ -721,6 +721,66 @@ regeneration rate: (112 (resource / 1000 * (1 - resource / 1000))^2)`
 [registered unemployed] =>registration lapses |`
     },
 
+    // Sketches (not from the book): structure alone, not a number anywhere —
+    // the stocks, flows, and loops you'd draw on a whiteboard before any
+    // quantity is known. They lead the examples row: structure first, then
+    // the numbers. The chart stays an empty frame; the diagram tells the
+    // story, and the animate toggle still beats every loop.
+    {
+        // One balancing loop through a relay dot: the fuller the stomach,
+        // the less the hunger, the slower the eating — the loop that ends
+        // a meal.
+        label: 'hunger',
+        content: `| =>eating [food in stomach] =>digestion |
+B(eating <- hunger <- food in stomach)`
+    },
+    {
+        // The classic first causal loop diagram: chickens lay eggs that
+        // hatch into more chickens (R), and more chickens make more road
+        // crossings that leave fewer of them (B). Which loop dominates —
+        // a boom or a dwindling flock — is the one question the sketch
+        // can't answer without numbers.
+        label: 'chicken & egg',
+        content: `| =>hatching [chickens] =>road crossings |
+R(hatching <- eggs <- chickens)
+B(road crossings <- chickens)`
+    },
+    {
+        // A fix that backfires: overtime clears the backlog (B), but
+        // overtime breeds fatigue, fatigue breeds mistakes, and every
+        // mistake comes back as a new task (R) — the balancing loop that
+        // works today, the vicious circle that wins later. The loops leave
+        // the backlog along one arrow (backlog -> overtime, drawn once)
+        // and close on opposite taps, so each letter keeps its own side.
+        label: 'burnout',
+        content: `| =>new tasks [backlog] =>finishing tasks |
+B(finishing tasks <- overtime <- backlog)
+R(new tasks <- mistakes <- fatigue <- overtime <- backlog)`
+    },
+    {
+        // Two populations, three loops: rabbits breed (R), foxes die (B),
+        // and between the bands the loop that makes them cycle (B) —
+        // rabbits feed fox births, foxes eat rabbits. That loop's two
+        // arrows share no node, and one expression can't draw them
+        // without a third to join them, so its annotation fans out from
+        // rabbits: rabbits -> rabbits eaten is a real arrow too (a meal
+        // takes rabbits as well as foxes).
+        label: 'predator & prey',
+        content: `| =>rabbit births [rabbits] =>rabbits eaten |
+| =>fox births [foxes] =>fox deaths |
+R(rabbit births <- rabbits)
+B(fox births <- rabbits -> rabbits eaten <- foxes)
+B(fox deaths <- foxes)`
+    },
+    {
+        // No stocks at all: a causal loop diagram of three dots, closed by
+        // naming its first node again. Confidence brings practice,
+        // practice brings skill, skill brings confidence — a virtuous
+        // circle, and after a setback the same loop runs vicious.
+        label: 'confidence',
+        content: `R(confidence -> practice -> skill -> confidence)`
+    },
+
     // Starter models (not from the book): the simplest systems, one behavior
     // each, in rising order — a stock filling at a constant rate, the net
     // of two flows, compounding growth, exponential decay, an equilibrium,
