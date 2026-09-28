@@ -3,12 +3,17 @@
 // backend (output/Main), trace the run, and assert what the animate toggle
 // reads — levels identical to the chart's, rates that conserve against
 // them, one shared scale for tanks and one for pipes, loop activity, and
-// each loop's causal pulse route. Both modules are dependency-free with
-// type-only imports, so node runs them directly (type stripping).
+// each loop's causal pulse route — plus the toggle's own state machine:
+// the animate setting and the reduced-motion hold. Both modules are
+// dependency-free with type-only imports, so node runs them directly (type
+// stripping).
 // Run with:   node test/playback.mjs
 import * as M from '../output/Main/index.js';
 import { simulate, trace, hasNumbers, T_END, DT } from '../ui/simulate.ts';
-import { playback, loopPlans, loopActivity, pulseAt, waterSpans, HOP_SECONDS } from '../ui/playback.ts';
+import {
+  playback, loopPlans, loopActivity, pulseAt, waterSpans, HOP_SECONDS,
+  isPlaying, openAnimate, pressAnimate, loadAnimate, motionChanged,
+} from '../ui/playback.ts';
 import { exampleList } from '../ui/example.ts';
 
 let failures = 0;
@@ -338,6 +343,85 @@ const expectRoute = (label, system, loopName, want, depths) => {
   expect('a sliver under a pixel', waterSpans(0, -47, 47, [{ x: -43.5, y: -8, width: 87, height: 14 }]), '(none)');
   expect('an off-centre box', waterSpans(0, -47, 47, [{ x: 10, y: -8, width: 20, height: 14 }]), '-47..7 33..47');
   expect('a custom gap', waterSpans(0, -47, 47, [name], 0), '-47..-26 26..47');
+}
+{
+  // The animate toggle's state machine: `on` is the setting (page state,
+  // saved in the link), `held` the reduced-motion hold (the viewer's own).
+  // A state reads as one word: playing, held, or off.
+  const S = (on, held) => ({ on, held });
+  const show = (s) => (s.held ? 'held' : s.on ? 'playing' : 'off');
+  const expect = (label, got, want) => {
+    if (show(got) !== want) fail(`animate: ${label}`, `got ${show(got)}, want ${want}`);
+  };
+  // A page opens with the setting on: playing — or held, under reduced motion.
+  expect('a fresh page plays', openAnimate(true, false), 'playing');
+  expect('a fresh page holds under reduced motion', openAnimate(true, true), 'held');
+  expect('a page opened off stays off', openAnimate(false, true), 'off');
+  // The viewer's press starts a held run, else flips the setting.
+  expect('a press stops a run', pressAnimate(S(true, false)), 'off');
+  expect('a press starts a stopped run', pressAnimate(S(false, false)), 'playing');
+  expect('a press starts a held run', pressAnimate(S(true, true)), 'playing');
+  // A load or a link sets the setting, holding what it turns on under
+  // reduced motion...
+  expect('a link turning it on plays', loadAnimate(S(false, false), true, false), 'playing');
+  expect('a link turning it on holds under reduced motion', loadAnimate(S(false, false), true, true), 'held');
+  expect('a link turning it off stops a run', loadAnimate(S(true, false), false, true), 'off');
+  expect('a link turning it off clears a hold', loadAnimate(S(true, true), false, true), 'off');
+  // ...and one leaving it as it was changes nothing: the very state comes
+  // back, so a run the viewer started plays on and a held one stays held.
+  const theirs = S(true, false), heldRun = S(true, true);
+  if (loadAnimate(theirs, true, true) !== theirs) fail('animate', 'a load must leave a run the viewer started playing');
+  if (loadAnimate(heldRun, true, true) !== heldRun) fail('animate', 'a load must leave a held run held');
+  // The preference changing mid-session.
+  expect('asking for reduced motion holds a run', motionChanged(S(true, false), true), 'held');
+  expect('dropping it lets a held run play', motionChanged(S(true, true), false), 'playing');
+  expect('with the setting off there is nothing to hold', motionChanged(S(false, false), true), 'off');
+  // The rules, over every state and every input: under reduced motion only
+  // a press starts a run; a hold never touches the setting; nothing holds
+  // without reduced motion; a press always starts or stops the run; and
+  // held implies on.
+  for (const s of [S(false, false), S(true, false), S(true, true)]) {
+    for (const on of [false, true]) {
+      for (const reduced of [false, true]) {
+        const next = loadAnimate(s, on, reduced);
+        const at = `${show(s)} loading ${on ? 'on' : 'off'}${reduced ? ' under reduced motion' : ''}`;
+        if (next.on !== on) fail('animate', `${at}: a load sets the setting`);
+        if (reduced && !isPlaying(s) && isPlaying(next)) fail('animate', `${at}: a load started a run`);
+        if (!reduced && next.held && !s.held) fail('animate', `${at}: a hold without reduced motion`);
+        if (next.held && !next.on) fail('animate', `${at}: held without the setting`);
+      }
+    }
+    for (const reduced of [false, true]) {
+      const next = motionChanged(s, reduced);
+      const at = `${show(s)} as the preference turns ${reduced ? 'on' : 'off'}`;
+      if (next.on !== s.on) fail('animate', `${at}: the preference changed the setting`);
+      if (reduced && isPlaying(next)) fail('animate', `${at}: a run plays under reduced motion`);
+      if (!reduced && next.held) fail('animate', `${at}: a hold without reduced motion`);
+    }
+    const pressed = pressAnimate(s);
+    if (pressed.held) fail('animate', `${show(s)}: a press never holds`);
+    if (isPlaying(pressed) === isPlaying(s)) fail('animate', `${show(s)}: a press starts or stops the run`);
+  }
+  // A reduced-motion viewer's session, as app.ts composes it: a page opens
+  // with the setting on and restores its link through loadAnimate; an
+  // example load keeps the current setting; Back/Forward is a link.
+  const reload = (linkOn) => loadAnimate(openAnimate(true, true), linkOn, true);
+  let s = openAnimate(true, true);
+  const walk = [];
+  const step = (next) => { s = next; walk.push(show(s)); };
+  step(loadAnimate(s, s.on, true));   // load an example: still held
+  step(pressAnimate(s));              // their press: playing
+  step(loadAnimate(s, s.on, true));   // another example: plays on
+  step(pressAnimate(s));              // press again: off (the link says so)
+  step(reload(s.on));                 // reload: off
+  step(pressAnimate(s));              // press: playing (the link drops play)
+  step(reload(s.on));                 // reload: the link says on, held
+  step(motionChanged(s, false));      // they drop reduced motion: playing
+  step(motionChanged(s, true));       // and ask for it again: held
+  step(pressAnimate(s));              // their press: playing
+  step(loadAnimate(s, true, true));   // Back to an animating entry: plays on
+  const want = 'held playing playing off off playing held playing held playing playing';
+  if (walk.join(' ') !== want) fail('animate session', `\n  got  ${walk.join(' ')}\n  want ${want}`);
 }
 
 console.log(failures ? `${failures} FAILURE(S)` : 'PLAYBACK CHECKS PASSED');

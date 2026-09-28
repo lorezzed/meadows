@@ -400,7 +400,12 @@ page load, reload or shared link, starts with it unticked.
 ### The animate toggle
 
 The chart draws a run as lines; the **animate** button in the diagram's
-bottom-right corner plays the same run on the diagram itself. The whole
+bottom-right corner plays the same run on the diagram itself. It's on from
+the start, so a model plays as soon as it loads; press it to hold the
+diagram still. If your system asks for reduced motion, nothing moves until
+you press it: a new model, a reload, or a link that animates waits for your
+press. The setting itself stays as it was, so a link you pass on still
+animates for everyone else. The whole
 horizon sweeps by in twelve seconds, whatever `t =` says, rests on the final
 state, and loops. A playhead crosses the chart in step, a clock beside the
 button tells the time, and every mark reads the chart's own numbers:
@@ -460,7 +465,8 @@ mid-run.
   (on by default) labels each node with its name alone, hiding its value,
   schedule, or formula — the editor still has them; release it for the full
   labels (`water in tub: 50`). Nothing moves either way. The
-  **animate** button in the corner below plays the run on the diagram (see
+  **animate** button in the corner below (on by default, unless your system
+  asks for reduced motion) plays the run on the diagram (see
   [the animate toggle](#the-animate-toggle)).
 - A **palette** in the diagram's other corner edits the model by drawing:
   pickers for a dot, stock, faucet or cloud place one at the next click; the

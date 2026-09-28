@@ -70,10 +70,11 @@ end-to-end JSON seam byte-exactly, and `test/simulate.mjs` / `test/highlight.mjs
 simulator, the editor's highlight tokenizer, the formatter (reference style,
 graph preservation, idempotence), the diagram layout, and the animate toggle's
 playback (trace, shared scales, loop activity, pulse routes, water-line
-breaks) against the real compiled backend; `test/permalink.mjs` checks the
+breaks, and the toggle's state machine — the setting and the reduced-motion
+hold) against the real compiled backend; `test/permalink.mjs` checks the
 URL-hash codec on its own (every example round-trips, the canonical wire,
-cut-short and hostile links, and a golden link captured when the format
-shipped, which must decode forever).
+cut-short and hostile links, and a golden link captured when each format
+version shipped, each of which must decode forever).
 
 ### Build coupling (important)
 
@@ -589,7 +590,18 @@ playback bullet below). Almost everything lives in **`app.ts`**:
   corner under the zoom cluster — `aria-pressed`, a play/pause icon, and a
   `t =` clock beside it while a run plays, which `sizeClock` fixes at the
   horizon's widest reading so the right-anchored bar never shifts as the
-  digits grow) plays the run ON the diagram.
+  digits grow) plays the run ON the diagram. It is on by default, so the
+  first model loaded plays at once — unless the viewer's system asks for
+  reduced motion (`reducedMotion`, a `matchMedia` query). The toggle's
+  state is `anim`, ui/playback.ts's `AnimateState` (see below): the animate
+  SETTING (`on` — page state, saved in the link, opened from
+  `DEFAULTS.animate`) and the reduced-motion hold (`held`). Its three
+  inputs are that module's transitions, each applied through `setAnim`
+  (repaint, restart the run when it has just begun playing, re-gate,
+  save): the press (`toggleAnimation` → `pressAnimate`), a load or link
+  (`setAnimate`, loadModel's last step → `loadAnimate`), and the query's
+  `change` event (`motionChanged`). `paintPlayButton` shows `isPlaying` —
+  pressed, pause icon, exactly while the run plays.
   `refreshPlayback()` gates it after every `update()` and horizon change:
   shown when there is a run to play (`lastRun`, the trace `refreshChart()`
   just took — present exactly when the chart plots) or a loop to pulse
@@ -659,8 +671,9 @@ playback bullet below). Almost everything lives in **`app.ts`**:
   draft that doesn't compile loses nothing). An unreadable link shows a
   notice in the error `<pre>` and stays in the address bar until the next
   change. Hiding the page or blurring the window flushes a pending save.
-  The fresh page's values (`namesOnly`, zoom and pan, the sections)
-  initialize from `DEFAULTS`, so a bare URL means exactly the fresh page.
+  The fresh page's values (`namesOnly`, the animate setting, zoom and
+  pan, the sections) initialize from `DEFAULTS`, so a bare URL means
+  exactly the fresh page.
 
 Two sibling modules add the **behavior-over-time chart** (the book's figure 6 to
 the diagram's figure 5):
@@ -844,7 +857,19 @@ faucet's |pace| — 0 while its taps are shut (the loop falls silent), null
 for a faucet-less loop. `waterSpans` is the tank's water line as the
 spans left once every text box it crosses (the name, the readout — app.ts
 measures them with getBBox) is cut out, padded, so it never strikes
-through either.
+through either. `AnimateState` is the toggle itself as a pure state
+machine: `on`, the animate setting (page state, saved in the link), and
+`held`, the hold that keeps the run still for a viewer whose system asks
+for reduced motion — who gets no motion they didn't start. `isPlaying` is
+`on && !held`; `openAnimate` is the state a page opens in (held from the
+start under reduced motion); `pressAnimate` is the viewer's press (it
+starts a held run, else flips the setting — the one transition that may
+start a run under reduced motion); `loadAnimate` is a load or link setting
+the setting (turning it on holds under reduced motion; leaving it as it
+was returns the very state, so a run the viewer started plays on and a
+held one stays held); `motionChanged` follows the preference mid-session.
+A hold never touches the setting, so a bare URL stays bare and a link
+passed on still animates for everyone else.
 
 **`ui/permalink.ts`** — the URL-hash codec, pure with NO imports at all
 (`test/permalink.mjs` runs it headlessly; CompressionStream,
@@ -856,17 +881,21 @@ is the wire JSON — short keys (`src`, `t`, `names`, `play`, `zoom`, `pan`,
 fields that differ from `DEFAULTS`, numbers snapped to a grid
 (positions to 0.1, bearings wrapped into atan2's range at 0.01 rad, zoom to
 4 places), ids sorted — so equal states spell equal JSON, and the default
-state spells ''. `encode` gives `VERSION` (`1`) + base64url(deflate-raw(the
+state spells ''. `encode` gives `VERSION` (`2`) + base64url(deflate-raw(the
 JSON)), or '' for the default state (a bare URL); the largest example's
 token is ~760 characters. `decode` never throws: an empty hash is the
-defaults; a wrong version, bad base64url, corrupt or truncated deflate, a
-token or inflated JSON over 256 KiB, invalid UTF-8, or a non-object is
-null; otherwise each field is read on its own (a malformed one falls back
-to its default, a key it doesn't read is ignored — the first links'
-retired `flows` among them) and clamped by `clampHorizon` (1–1000) /
-`clampZoom` (0.2–8), which the t = field and the zoom buttons share. The
-test's golden token must decode forever: before changing the wire, bump
-`VERSION` and keep reading the old one.
+defaults; a version it doesn't read, bad base64url, corrupt or truncated
+deflate, a token or inflated JSON over 256 KiB, invalid UTF-8, or a
+non-object is null; otherwise each field is read on its own (a malformed
+one falls back to its default, a key it doesn't read is ignored — the
+first links' retired `flows` among them) and clamped by `clampHorizon`
+(1–1000) / `clampZoom` (0.2–8), which the t = field and the zoom buttons
+share. A field the wire omits means the default of the version that wrote
+the link, so `READS` maps every version `decode` accepts to its own fresh
+page: version 2 turned the animate toggle on by default, and a version-1
+link that omits `play` (it meant off) still opens still. The test's golden
+tokens, one per version, must decode forever: before changing the wire —
+a default included — bump `VERSION` and add the old one to `READS`.
 
 `update()` clears `group`/`loop`/`value`/`steps` on recycled nodes before
 merging new data (the JSON omits absent `Maybe` keys, so stale values would

@@ -4,9 +4,10 @@
 // non-default view, its text byte for byte; equal states spell equal
 // tokens, URL-safe and small; a cut-short token never opens a DIFFERENT
 // model; unreadable tokens decode to null without throwing; each field is
-// checked and clamped on its own; and a link captured when the format
-// shipped still opens. The module has no imports, so node runs it directly
-// (type stripping); CompressionStream and friends are node globals.
+// checked and clamped on its own; and a link captured when each version
+// shipped still opens, read against that version's defaults. The module
+// has no imports, so node runs it directly (type stripping);
+// CompressionStream and friends are node globals.
 // Run with:   node test/permalink.mjs
 import assert from 'node:assert/strict';
 import { DEFAULTS, VERSION, canonical, clampHorizon, clampZoom, decode, encode } from '../ui/permalink.ts';
@@ -30,11 +31,11 @@ const example = (label) => {
 };
 const URL_SAFE = /^[A-Za-z0-9_-]+$/;
 // The wire format spelled independently (node's own base64url), for
-// hand-made payloads the encoder would never write.
-const tokenOf = async (payload) => {
+// hand-made payloads the encoder would never write — under any version.
+const tokenOf = async (payload, version = VERSION) => {
   const bytes = typeof payload === 'string' ? new TextEncoder().encode(payload) : payload;
   const deflated = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'));
-  return '#' + VERSION + Buffer.from(await new Response(deflated).arrayBuffer()).toString('base64url');
+  return '#' + version + Buffer.from(await new Response(deflated).arrayBuffer()).toString('base64url');
 };
 
 // The fresh page: the default state, a bare URL.
@@ -47,18 +48,19 @@ same('a lone # decodes to the defaults', await decode('#'), state({}));
 // Only what differs from the defaults reaches the wire, in one fixed order.
 same('a source alone', canonical(state({ source: 'a -> b' })), '{"src":"a -> b"}');
 same('every field', canonical(state({
-  source: 'a', horizon: 25, namesOnly: false, animate: true, zoom: 1.25,
+  source: 'a', horizon: 25, namesOnly: false, animate: false, zoom: 1.25,
   pan: [3, -4], pins: { 'stock#2': [1, 2] }, ports: { 'port#0': 1.5 },
   examplesOpen: false, figuresOpen: true,
-})), '{"src":"a","t":25,"names":false,"play":true,"zoom":1.25,"pan":[3,-4],'
+})), '{"src":"a","t":25,"names":false,"play":false,"zoom":1.25,"pan":[3,-4],'
   + '"pins":{"stock#2":[1,2]},"ports":{"port#0":1.5},"examples":false,"figures":true}');
 same('the flows checkbox is not page state', 'flows' in DEFAULTS, false);
+same('a fresh page animates', DEFAULTS.animate, true);
 
 // Every example round-trips — source byte for byte, every view field back —
 // as a URL-safe token under the size budget (compression stays on: the
 // largest example measured 763 characters when the format shipped).
 const view = {
-  horizon: 25, namesOnly: false, animate: true, zoom: 1.5625, pan: [12.5, -40],
+  horizon: 25, namesOnly: false, animate: false, zoom: 1.5625, pan: [12.5, -40],
   pins: { 'stock#2': [100.5, -20], 'dot#7': [0, 0], 'cloud#0': [-80, 300] },
   ports: { 'port#0': 1.57, 'port#3': -3.14 },
   examplesOpen: false, figuresOpen: true,
@@ -123,13 +125,20 @@ same('each field is checked on its own', await decode(await tokenOf(JSON.stringi
 same('a non-finite number falls back', await decode(await tokenOf('{"src":"a","t":1e999}')), state({ source: 'a' }));
 // A key the decoder doesn't read is ignored — the first links carried the
 // flows checkbox, since dropped from the page state — and the rest opens.
-same('the retired flows key is ignored', await decode(await tokenOf('{"src":"a","flows":true,"names":false}')),
-  state({ source: 'a', namesOnly: false }));
+same('the retired flows key is ignored', await decode(await tokenOf('{"src":"a","flows":true,"names":false}', '1')),
+  state({ source: 'a', namesOnly: false, animate: false }));
+// A field a link leaves out means the default of the version that wrote
+// it: version 1's fresh page had the animate toggle off, version 2's on.
+same('a version-1 link without play opens still', (await decode(await tokenOf('{"src":"a"}', '1')))?.animate, false);
+same('a version-1 link with play opens animating',
+  (await decode(await tokenOf('{"src":"a","play":true}', '1')))?.animate, true);
+same('a version-2 link without play opens animating', (await decode(await tokenOf('{"src":"a"}', '2')))?.animate, true);
+same('turning animate off is spelled out', canonical(state({ source: 'a', animate: false })), '{"src":"a","play":false}');
 
 // Unreadable tokens decode to null — never a throw.
 for (const [label, hash] of [
   ['not base64url', '#1!!!'],
-  ['an unknown version', '#2' + (await encode(state({ source: 'a' }))).slice(1)],
+  ['an unknown version', '#3' + (await encode(state({ source: 'a' }))).slice(1)],
   ['a length no padding fixes', '#1abcde'],
   ['not deflate', '#1' + Buffer.from('hello world').toString('base64url')],
   ['not JSON', await tokenOf('not json')],
@@ -169,10 +178,22 @@ for (const [label, hash] of [
 // to the stock's top. It must open field for field in every later version —
 // before changing the wire, bump VERSION and keep reading this one. (It was
 // captured with the flows checkbox ticked; that key is ignored since the
-// checkbox left the page state, and the link opens the same otherwise.)
+// checkbox left the page state. And it was captured under version 1, whose
+// fresh page had the animate toggle off: the link says nothing of it, so
+// it opens still, though version 2 animates a fresh page.)
 const GOLDEN = '#1bY5NboMwEEavYk02qTQgA3WaWA2LXgNYWMYkqOBBtlHUJty9coWaqMpu_t687wreaZBQnSkwTV1njGQZ5w07lppo6O1JMp7mO3ar7cd2HbH3hLW9185Myuqv2N75l9o6opEFM07GqTC7-HLPkvKRqe2NHcuzUeGuqHpt2r8UvInG9SIqLsqNsfxnfoCeqKP2CQgIAWTBEbqBLh5kcLNBsGo0HmSnBm8QvolGkFkqdrlAmJQFWSWFSAVmeYMw9daDvEJLYXMAWRWCY8F5g-AD6c8NB1nlrxyzPU9FsyBM5MIvEYu4TrJUvC0IXX-anVlTLD8';
 same('the shipped link still opens', await decode(GOLDEN), state({
-  source: example('figure 10 & 11'), horizon: 30, namesOnly: false,
+  source: example('figure 10 & 11'), horizon: 30, namesOnly: false, animate: false,
+  zoom: 1.5625, pan: [-35.5, 12],
+  pins: { 'stock#0': [240, 180.5], 'dot#9': [350, 300] }, ports: { 'port#0': -1.57 },
+  figuresOpen: true,
+}));
+// The same page captured when version 2 shipped, animating: the wire
+// leaves `play` out, and the link must open animating in every later
+// version, exactly as the version-1 link opens still.
+const GOLDEN_V2 = '#2bY5NboMwEEavYk02rTSgAeoktRoWvQawsByToAYPso2qNuHulauoiarsvvl58-YMwRtQ0Bw5CsN9b60SBVEndrVhPg3uoATl5VpcWvf-dG2Jt0zsh2C8nbQzX6m88c-t88yjiHacrNdx9unkVmT1PdO6i9jVR6vjTdEMxu7_vqAuGa8bSfGp_ZjiP_Md9ECdtA9AQIigKkJwerQBVK9PwSJ8M4-gilyuS4kwaQeqySqZSyzKDmEaXAB1hj3H1SuoppKEFVGHECKbjxWBasoXwmJLuewWhIl9_CVSSOOsyOVmQeiHw-yTOPrZLj8';
+same('the version-2 link still opens', await decode(GOLDEN_V2), state({
+  source: example('figure 10 & 11'), horizon: 30, namesOnly: false, animate: true,
   zoom: 1.5625, pan: [-35.5, 12],
   pins: { 'stock#0': [240, 180.5], 'dot#9': [350, 300] }, ports: { 'port#0': -1.57 },
   figuresOpen: true,

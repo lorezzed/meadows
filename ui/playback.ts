@@ -204,3 +204,40 @@ export function waterSpans(y: number, x0: number, x1: number, boxes: TextBox[], 
   }
   return spans;
 }
+
+// The animate toggle's state. `on` is the animate SETTING: page state,
+// saved in the link, on for a fresh page. `held` keeps the run still while
+// the setting is on, for a viewer whose system asks for reduced motion:
+// they get no motion they didn't start, so a fresh page, or a load or link
+// that turns the setting on, holds the run until their own press. A hold
+// never touches the setting, so the link says what the page says and a
+// link they pass on still animates for everyone else. Held implies on.
+export type AnimateState = { readonly on: boolean; readonly held: boolean };
+
+// Whether the run plays: the setting on, and nothing holding it.
+export const isPlaying = (s: AnimateState): boolean => s.on && !s.held;
+
+// The state a page opens in with the setting `on`: held from the start
+// for a viewer who asks for reduced motion (`reduced`).
+export const openAnimate = (on: boolean, reduced: boolean): AnimateState =>
+  ({ on, held: on && reduced });
+
+// The viewer's own press: it starts a held run (the setting is already on)
+// or flips the setting. The one transition that may start a run under
+// reduced motion.
+export const pressAnimate = (s: AnimateState): AnimateState =>
+  s.held ? { on: true, held: false } : { on: !s.on, held: false };
+
+// A load or a link sets the setting. Turning it on holds the run for a
+// viewer who asks for reduced motion; turning it off stops it. A setting
+// left as it was changes nothing (the very state comes back), so a run the
+// viewer started plays on through example loads and Back/Forward, and a
+// held one stays held.
+export const loadAnimate = (s: AnimateState, on: boolean, reduced: boolean): AnimateState =>
+  on === s.on ? s : openAnimate(on, reduced);
+
+// The motion preference changed mid-session: asking for reduced motion
+// holds a playing run (the setting stays on), and dropping the request
+// lets a held run play.
+export const motionChanged = (s: AnimateState, reduced: boolean): AnimateState =>
+  ({ on: s.on, held: s.on && reduced });

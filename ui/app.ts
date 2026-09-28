@@ -6,7 +6,10 @@ import faucetSvg from './shape/faucet.svg'
 import cloudSvg from './shape/cloud.svg'
 import { exampleList } from "./example";
 import { T_END, flowSeries, goalRefs, hasDelays, hasNumbers, trace, type Trace } from "./simulate";
-import { HOP_SECONDS, loopActivity, loopPlans, playback, pulseAt, waterSpans, type LoopPlan, type Playback } from "./playback";
+import {
+  HOP_SECONDS, isPlaying, loadAnimate, loopActivity, loopPlans, motionChanged, openAnimate, playback,
+  pressAnimate, pulseAt, waterSpans, type AnimateState, type LoopPlan, type Playback,
+} from "./playback";
 import { createChart, STOCK_PALETTE } from "./chart";
 import { nameSpans } from "./highlight";
 import { canonical, clampHorizon, clampZoom, decode, DEFAULTS, encode, type PageState } from "./permalink";
@@ -616,8 +619,10 @@ zoomButtons.append('button')
 // The animate toggle, in the diagram's bottom-right corner: it plays the
 // run on the diagram — stocks fill and drain, pipes flow, feedback loops
 // pulse — with the playhead's clock beside it (see the playback section
-// after canvasPan). refreshPlayback hides it while the model has nothing
-// to animate.
+// after canvasPan). It starts on (DEFAULTS.animate), so the first model
+// loaded plays at once — unless the viewer's system asks for reduced
+// motion (see `anim`); refreshPlayback hides it while the model has
+// nothing to animate.
 const playbackBar = diagram
   .append('div')
   .attr('class', 'playback')
@@ -653,7 +658,14 @@ playButton.append('span').text('animate');
 // pace). `pulseState` holds, per loop name, the beat clock: an emission
 // phase, the last beat's time (the letter's throb), and the birth times of
 // the pulses still in flight.
-let animating = false;
+//
+// `anim` is the toggle's state (ui/playback.ts's AnimateState): `on`, the
+// animate setting — page state, saved in the link, on for a fresh page —
+// and `held`, the hold that keeps the run still for a viewer whose system
+// asks for reduced motion until their own press. Every change goes
+// through setAnim.
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+let anim: AnimateState = openAnimate(DEFAULTS.animate, reducedMotion.matches);
 let pb: Playback | null = null;
 let playT = 0;
 let playHold = 0;
@@ -665,6 +677,7 @@ type PulseState = { phase: number; beat: number; born: number[] };
 const pulseState = new Map<string, PulseState>();
 let playTimer: d3.Timer | null = null;
 let lastFrame = 0;
+paintPlayButton();
 
 // The build palette overlaying the svg's top-left corner: one picker per
 // node kind (dot, stock, faucet — placed as a minimal cloud-to-cloud flow,
@@ -866,7 +879,7 @@ const FLOWS_RATE_TITLE = "plot each faucet's rate — the flows behind the stock
 const flowsLabel = horizonRow
   .append('label')
   .attr('title', FLOWS_RATE_TITLE)
-const flowsInput = flowsLabel.append('input')
+flowsLabel.append('input')
   .attr('type', 'checkbox')
   .property('checked', showFlows)
   .on('change', function () {
@@ -2078,18 +2091,43 @@ const throbInk = d3.interpolateRgb("#444", PULSE_INK);
 // Levels read out like the chart tooltip's: comma'd, ≤2 decimals.
 const fmtLevel = d3.format(",.2~f");
 
+// The toggle's three inputs, each a transition of ui/playback.ts's state
+// machine: the viewer's press (it starts a held run, else flips the
+// setting), a load or link setting the setting (setAnimate — loadModel's
+// last step), and the motion preference changing mid-session.
 function toggleAnimation(): void {
-  animating = !animating;
-  playButton.classed('active', animating).attr('aria-pressed', String(animating));
-  playIcon.attr('d', animating ? PAUSE_ICON : PLAY_ICON);
-  if (animating) {
-    // Every press plays the run from its start, every loop primed to beat.
+  setAnim(pressAnimate(anim));
+}
+function setAnimate(on: boolean): void {
+  setAnim(loadAnimate(anim, on, reducedMotion.matches));
+}
+reducedMotion.addEventListener('change', () => {
+  setAnim(motionChanged(anim, reducedMotion.matches));
+});
+
+// Move the toggle to its next state: repaint the button, restart the run
+// when it has just begun playing (every start plays from the beginning,
+// every loop primed to beat), re-gate the playback, and save the setting.
+function setAnim(next: AnimateState): void {
+  if (next.on === anim.on && next.held === anim.held) return;
+  const started = !isPlaying(anim) && isPlaying(next);
+  anim = next;
+  paintPlayButton();
+  if (started) {
     playT = 0;
     playHold = 0;
     pulseState.clear();
   }
   refreshPlayback();
   scheduleSave();
+}
+
+// The button shows whether the run plays: pressed, with the pause icon,
+// exactly while it does. A held run shows play, since a press starts it.
+function paintPlayButton(): void {
+  const playing = isPlaying(anim);
+  playButton.classed('active', playing).attr('aria-pressed', String(playing));
+  playIcon.attr('d', playing ? PAUSE_ICON : PLAY_ICON);
 }
 
 // Rebuild what the playback reads — after every update() (the model) and
@@ -2103,7 +2141,7 @@ function refreshPlayback(): void {
   const animatable = lastRun != null || plans.length > 0;
   if (animatable) playbackBar.style('display', null);
   else playbackBar.style('display', 'none');
-  if (!animating || !animatable) {
+  if (!isPlaying(anim) || !animatable) {
     pb = null;
     stopPlayback();
     return;
@@ -2754,8 +2792,9 @@ function loadExample(ex: { content: string }) {
 // the compile, so update() charts the right run once — the text goes
 // in through setSource, and the state's hand placements wait in pendingView
 // for the new nodes. A playing animation carries over but starts its run
-// from the beginning; the toggle itself flips last, once update() has
-// traced the run it plays.
+// from the beginning; the animate setting applies last (setAnimate, which
+// holds a run it turns on for a viewer who asks for reduced motion), once
+// update() has traced the run it plays.
 function loadModel(p: PageState): void {
   disarmTool();
   closeRename();
@@ -2774,7 +2813,7 @@ function loadModel(p: PageState): void {
   pulseState.clear();
   pendingView = { pins: p.pins, ports: p.ports };
   setSource(p.source);
-  if (animating !== p.animate) toggleAnimation();
+  setAnimate(p.animate);
 }
 
 // The open inline rename editor, if any (only one at a time). `cancel`
@@ -3102,7 +3141,7 @@ function snapshot(): PageState {
     source: textInput.property('value') as string,
     horizon: tEnd,
     namesOnly,
-    animate: animating,
+    animate: anim.on,
     zoom: userZoom,
     pan: [panX, panY],
     pins,

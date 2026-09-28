@@ -11,6 +11,10 @@
 // ids sorted — so one state always spells one JSON, and a fresh page spells
 // none at all (a bare URL). The version character leads the token, so a
 // future format can change everything after it while old links still open.
+// A field a link leaves out means the default of the version that wrote it,
+// so changing a default is changing the wire: version 2 turned the animate
+// toggle on for a fresh page, and a version-1 link that says nothing of it
+// still opens with it off (see READS).
 //
 // A hash is untrusted input (anyone can send a link): `decode` caps the
 // token's length before inflating and the inflated size while inflating,
@@ -26,7 +30,9 @@ export type PageState = {
   horizon: number;
   // The diagram's names-only labels.
   namesOnly: boolean;
-  // The animate toggle (a restored run plays from t = 0).
+  // The animate setting (on for a fresh page; a restored run plays from
+  // t = 0). A viewer who asks for reduced motion sees a run held still
+  // until their own press, but that hold is theirs, not page state.
   animate: boolean;
   // The zoom cluster's factor on the auto-fit view, and the pan offset
   // (viewBox user units) on its center.
@@ -44,13 +50,14 @@ export type PageState = {
 };
 
 // The state a fresh page opens in — what a bare URL means. app.ts builds its
-// controls from these (its play button is built unpressed, matching
-// `animate`), and test/permalink.mjs pins `horizon` to simulate.ts's T_END.
+// controls from these (its animate setting starts on, the run held for a
+// viewer who asks for reduced motion), and test/permalink.mjs pins
+// `horizon` to simulate.ts's T_END.
 export const DEFAULTS: Readonly<PageState> = Object.freeze<PageState>({
   source: '',
   horizon: 10,
   namesOnly: true,
-  animate: false,
+  animate: true,
   zoom: 1,
   pan: [0, 0],
   pins: {},
@@ -59,7 +66,16 @@ export const DEFAULTS: Readonly<PageState> = Object.freeze<PageState>({
   figuresOpen: false,
 });
 
-export const VERSION = '1';
+export const VERSION = '2';
+
+// Every version `decode` reads, by the fresh page its links were written
+// against — a field the wire omits takes that version's default. Version 1
+// (the first links) had the animate toggle off, so its links omit `play`
+// exactly when they meant it off.
+const READS = new Map<string, Readonly<PageState>>([
+  ['1', Object.freeze<PageState>({ ...DEFAULTS, animate: false })],
+  [VERSION, DEFAULTS],
+]);
 
 // The ranges the controls allow. The t = field and the zoom buttons clamp
 // through these too, so a link can't open a view the controls couldn't reach.
@@ -91,8 +107,8 @@ const zoomStep = (z: number): number => round(clampZoom(z), 4);
 const PIN_ID = /^(dot|stock|faucet|cloud)#\d+$/;
 const PORT_ID = /^port#\d+$/;
 
-const fresh = (): PageState =>
-  ({ ...DEFAULTS, pan: [DEFAULTS.pan[0], DEFAULTS.pan[1]], pins: {}, ports: {} });
+const fresh = (base: Readonly<PageState> = DEFAULTS): PageState =>
+  ({ ...base, pan: [base.pan[0], base.pan[1]], pins: {}, ports: {} });
 
 // A record's entries whose ids match, sorted by id and mapped — or null
 // when none survive.
@@ -138,13 +154,14 @@ export async function encode(s: PageState): Promise<string> {
 }
 
 // The state a hash carries (with or without its leading '#'): the defaults
-// for an empty one, null for any token that can't be read — wrong version,
-// not base64url, not deflate, cut short, oversized, not UTF-8, not a JSON
-// object. Never throws.
+// for an empty one, null for any token that can't be read — a version it
+// doesn't read, not base64url, not deflate, cut short, oversized, not
+// UTF-8, not a JSON object. Never throws.
 export async function decode(hash: string): Promise<PageState | null> {
   const token = hash.startsWith('#') ? hash.slice(1) : hash;
   if (token === '') return fresh();
-  if (token.length > MAX_TOKEN || token[0] !== VERSION) return null;
+  const base = READS.get(token[0]!);
+  if (token.length > MAX_TOKEN || !base) return null;
   const bytes = fromBase64url(token.slice(1));
   if (!bytes) return null;
   const json = await inflate(bytes);
@@ -155,7 +172,7 @@ export async function decode(hash: string): Promise<PageState | null> {
   } catch {
     return null;
   }
-  return isRecord(wire) ? fromWire(wire) : null;
+  return isRecord(wire) ? fromWire(wire, base) : null;
 }
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -165,13 +182,14 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
 // A wire object back to a full state: each field read on its own, falling
-// back to its default when absent or malformed, and snapped to the same grid
-// and ranges `canonical` writes — so a decoded state's canonical JSON is the
-// one it was read from, whenever this module wrote the link. A key it
-// doesn't read is ignored: the first links carried the chart's flows
-// checkbox (`flows`), since dropped from the page state, and still open.
-function fromWire(w: Record<string, unknown>): PageState {
-  const s = fresh();
+// back to the writing version's default (`base`) when absent or malformed,
+// and snapped to the same grid and ranges `canonical` writes — so a decoded
+// state's canonical JSON is the one it was read from, whenever this version
+// wrote the link. A key it doesn't read is ignored: the first
+// links carried the chart's flows checkbox (`flows`), since dropped from
+// the page state, and still open.
+function fromWire(w: Record<string, unknown>, base: Readonly<PageState>): PageState {
+  const s = fresh(base);
   if (typeof w.src === 'string') s.source = w.src;
   if (isNum(w.t)) s.horizon = clampHorizon(w.t);
   if (typeof w.names === 'boolean') s.namesOnly = w.names;
