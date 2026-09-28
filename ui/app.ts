@@ -12,12 +12,18 @@ import {
 } from "./playback";
 import { createChart, STOCK_PALETTE } from "./chart";
 import { nameSpans } from "./highlight";
+import { loopInstances, type LoopInstance } from "./loops";
 import { canonical, clampHorizon, clampZoom, decode, DEFAULTS, encode, type PageState } from "./permalink";
 import {
   svgWidth, svgHeight, rowGap, dotRadius, stockWidth, stockHeight, faucetWidth,
   faucetHeight, faucetLift, cloudWidth, cloudHeight, portRadius,
   computeLayout, createSimulation,
 } from "./layout";
+
+// How far a loop in focus dims every mark outside it (a hovered or
+// keyboard-focused loop letter — see renderLoopFocus): the stylesheet's
+// loop-dim opacity, and drawPulses' factor for the other loops' pulses.
+const LOOP_DIM = 0.2;
 
 // All page chrome lives in this stylesheet, injected via d3 so index.html
 // stays a bare shell. It is keyed on the class names assigned below; the
@@ -299,6 +305,12 @@ const css = `
   /* A node picked into a loop tool's in-progress chain wears a distinct
      (violet) glow, so building a loop reads apart from a selection. */
   svg.svg g.loop-pick { filter: url(#loop-glow); }
+  /* A hovered (or keyboard-focused) loop letter lights its loop: every mark
+     outside it dims (renderLoopFocus sets the class), and the letter takes
+     the loop violet, the hue of the loop tools and the pulses. CSS fill
+     outranks the fill attribute the playback writes each frame. */
+  svg.svg .loop-dim { opacity: ${LOOP_DIM}; }
+  svg.svg text.loop-letter.loop-lit { fill: #7c3aed; }
   /* The link-delete hit twins are inert until the delete tool arms, then
      their fat stroke becomes clickable (nodes, drawn above them, still win a
      shared click). */
@@ -803,9 +815,10 @@ const paletteHint = palette.append('div')
 // rather than on the path itself, because a per-path click listener gets
 // eaten by the canvas pan drag, while this bubble-phase svg handler fires
 // reliably with the path as its target. Otherwise, only a background click
-// (target is the svg itself) acts — a click on a shape has that shape as its
-// target and routes through the node gestures. d3.pointer maps through the
-// viewBox CTM, so the drop lands under the cursor at any zoom/pan.
+// acts — the svg itself, or a loop letter (hoverable, but canvas to every
+// tool) — while a click on a shape has that shape as its target and routes
+// through the node gestures. d3.pointer maps through the viewBox CTM, so the
+// drop lands under the cursor at any zoom/pan.
 svg.on('click', (event: MouseEvent) => {
   if (armedTool == null) return;
   const target = event.target as Element;
@@ -814,7 +827,7 @@ svg.on('click', (event: MouseEvent) => {
     if (d) deleteLink(d);
     return;
   }
-  if (target !== svg.node()) return;
+  if (target !== svg.node() && !target.classList.contains('loop-letter')) return;
   const [x, y] = d3.pointer(event, svg.node());
   placeAt(x ?? 0, y ?? 0);
 });
@@ -1269,13 +1282,18 @@ const pulseBeads = pulseLayer.append("g")
 
 // Loop letters render topmost: each R(...)/B(...) annotation floats its
 // letter inside its loop (a pure overlay — loop labels are not simulation
-// nodes and feel no forces). Each instance records the links joining two of
-// its members — the loop's drawn boundary — so the letter can park at that
-// boundary's mean (pipe midpoints, arc bulge apexes) rather than at the
-// member centroid, which a wide stock rect pulls onto its own body.
-type LoopInstance = { name: string, letter: string, members: Node[], edges: Link[] };
+// nodes and feel no forces). Each instance (ui/loops.ts) records the links
+// joining two of its members — the loop's drawn boundary — so the letter
+// can park at that boundary's mean (pipe midpoints, arc bulge apexes)
+// rather than at the member centroid, which a wide stock rect pulls onto
+// its own body.
 let loopLabel = svg.append("g")
   .selectAll<SVGTextElement, LoopInstance>("text");
+// The loop in focus, by name: the one whose letter the pointer rests on, or
+// that keyboard focus holds. Its members, edges, and ports stay lit while
+// every other mark dims (renderLoopFocus). By name because update()
+// rebuilds the instances; a loop that vanishes lets go.
+let focusedLoop: string | null = null;
 
 const systemNodes: Node[] = [];
 const systemLinks: Link[] = []
@@ -1483,42 +1501,33 @@ function update(system: System) {
     })
     .call(portDrag(), undefined);
 
-  // One floating letter per loop annotation: group the nodes by loop name
-  // (a node can be in several loops) and derive each letter from its name
-  // ("R0" -> "R"). ticked() parks the letter at its members' centroid.
-  const loopMembers = new Map<string, Node[]>();
-  for (const d of nodes) {
-    for (const name of d.loop ?? []) {
-      const arr = loopMembers.get(name) ?? [];
-      arr.push(d);
-      loopMembers.set(name, arr);
-    }
-  }
-  // Link endpoints are still id strings here (the force rewrites them to
-  // node objects later), so match member-to-member links by id either way.
-  // A port endpoint counts as its parent stock: loop tags never land on
-  // ports, but the stock→faucet arc closing a loop hangs off one — its
-  // bulge apex must keep feeding the letter's parking spot.
-  const memberEnd = (e: Link["source"]): string => {
-    const n = nodeById.get(endId(e));
-    return n?.type === "port" && n.parent != null ? n.parent : endId(e);
-  };
-  const loopInstances: LoopInstance[] = [...loopMembers.entries()]
-    .map(([name, members]) => {
-      const ids = new Set(members.map(m => m.id));
-      const edges = links.filter(l => ids.has(memberEnd(l.source)) && ids.has(memberEnd(l.target)));
-      return { name, letter: name.charAt(0), members, edges };
-    });
+  // One floating letter per loop annotation. ui/loops.ts groups the members
+  // (a node can be in several loops) and finds the edges between them, a
+  // port counting as its stock: the stock→faucet arc closing a loop hangs
+  // off one, and its bulge apex must keep feeding the letter's parking spot.
+  // ticked() parks each letter on its loop's boundary. Hovering a letter, or
+  // tabbing to it, puts its loop in focus (see renderLoopFocus) — but not a
+  // pointer arriving with a button held (a drag or a pan sweeping across),
+  // nor the focus a click gives, so clicking a letter never leaves its loop
+  // lit.
   loopLabel = loopLabel
-    .data(loopInstances, d => d.name)
-    .join("text")
+    .data(loopInstances(nodes, links), d => d.name)
+    .join(enter => enter.append("text")
+      .attr("class", "loop-letter")
+      .attr("tabindex", 0)
+      .on("mouseenter", (event: MouseEvent, d) => { if (event.buttons === 0) focusLoop(d.name); })
+      .on("mouseleave", () => focusLoop(null))
+      .on("focus", function (_event: FocusEvent, d) { if (this.matches(":focus-visible")) focusLoop(d.name); })
+      .on("blur", () => focusLoop(null)))
     .attr("text-anchor", "middle")
     .attr("dy", "0.32em")
     .attr("font-size", 28)
     .attr("font-family", "sans-serif")
     .attr("fill", "#444")
-    .attr("pointer-events", "none")
+    .attr("aria-label", d =>
+      `${d.letter === "R" ? "reinforcing" : "balancing"} loop: ${d.members.map(m => m.label).join(", ")}`)
     .text(d => d.letter);
+  renderLoopFocus();
 
   // The playback's routes and lookups (see the state block by the animate
   // toggle): each loop's pulse route, planned on these very link objects so
@@ -2290,7 +2299,8 @@ function drawPulses(now: number, dt: number): void {
         if (!path || len === 0) continue;
         const e = d3.easeCubicInOut(frac);
         const p = path.getPointAtLength((hop.reversed ? 1 - e : e) * len);
-        beads.push({ x: p.x, y: p.y, o: Math.min(1, frac / 0.15, (1 - frac) / 0.15) });
+        const o = Math.min(1, frac / 0.15, (1 - frac) / 0.15);
+        beads.push({ x: p.x, y: p.y, o: focusedLoop != null && plan.name !== focusedLoop ? o * LOOP_DIM : o });
       }
     }
   }
@@ -2621,6 +2631,37 @@ function renderLoopChain(): void {
   }
 }
 
+// Put a loop in focus (by name), or none.
+function focusLoop(name: string | null): void {
+  if (focusedLoop === name) return;
+  focusedLoop = name;
+  renderLoopFocus();
+}
+
+// Light the loop in focus: its members, its edges (their bubbles included),
+// and the ports on them keep full strength while every other mark dims, and
+// its own letter turns violet. Classes only, the stylesheet doing the rest,
+// so ticked() and the playback's per-frame writes never fight it (the other
+// loops' pulses dim in drawPulses). Runs on every focus change and at the
+// end of update(): new marks join dimmed, and a loop that vanished lets go.
+function renderLoopFocus(): void {
+  const loop = loopLabel.data().find(d => d.name === focusedLoop);
+  if (!loop) focusedLoop = null;
+  const members = new Set(loop?.members.map(m => m.id));
+  const edges = new Set(loop?.edges);
+  const dim = (inLoop: boolean): boolean => loop != null && !inLoop;
+  for (const sel of [nodeDot, nodeStock, nodeFaucet, nodeCloud]) {
+    sel.classed('loop-dim', (d: Node) => dim(members.has(d.id)));
+  }
+  nodePort.classed('loop-dim', (d: Node) => dim(loop?.ports.has(d.id) ?? false));
+  for (const sel of [flowLink, flowAnim, infoLink]) {
+    sel.classed('loop-dim', (d: Link) => dim(edges.has(d)));
+  }
+  loopLabel
+    .classed('loop-dim', d => dim(d === loop))
+    .classed('loop-lit', d => d === loop);
+}
+
 // Close the current loop chain into a statement. Needs ≥2 members; writes
 // `R(a -> b -> c)` / `B(...)` with the members in click order (the info
 // arrows it implies dedup against any already drawn), then disarms.
@@ -2789,23 +2830,24 @@ function loadExample(ex: { content: string }) {
 }
 
 // Replace the whole model — an example button, or a permalink (the page's
-// hash on load, a pasted link, Back/Forward). The previous model's
-// positions don't recycle (ids like "stock#2" recur across models, and
-// nodes migrating across the canvas jam on each other's collision discs):
-// every node starts fresh at its layout slot, while typing edits still
-// recycle. An armed palette tool (and any half-picked link source, about to
-// go stale) disarms with the model it belonged to, and the selection (ids
-// about to be replaced) clears. Then the view applies — the horizon before
-// the compile, so update() charts the right run once — the text goes
-// in through setSource, and the state's hand placements wait in pendingView
-// for the new nodes. A playing animation carries over but starts its run
-// from the beginning; the animate setting applies last (setAnimate, which
-// holds a run it turns on for a viewer who asks for reduced motion), once
-// update() has traced the run it plays.
+// hash on load, a pasted link, Back/Forward). The previous model's positions
+// don't recycle (ids like "stock#2" recur across models, and nodes migrating
+// across the canvas jam on each other's collision discs): every node starts
+// fresh at its layout slot, while typing edits still recycle. An armed
+// palette tool (and any half-picked link source, about to go stale) disarms
+// with the model it belonged to, and the selection and the loop in focus
+// (ids and names about to be replaced) clear. Then the view applies — the
+// horizon before the compile, so update() charts the right run once — the
+// text goes in through setSource, and the state's hand placements wait in
+// pendingView for the new nodes. A playing animation carries over but starts
+// its run from the beginning; the animate setting applies last (setAnimate,
+// which holds a run it turns on for a viewer who asks for reduced motion),
+// once update() has traced the run it plays.
 function loadModel(p: PageState): void {
   disarmTool();
   closeRename();
   selected.clear();
+  focusedLoop = null;
   simulation.nodes([]);
   tEnd = p.horizon;
   horizonInput.property('value', tEnd);

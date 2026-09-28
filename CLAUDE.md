@@ -49,10 +49,11 @@ make test         # spago test (PureScript unit suite) + golden battery
                   #   (test/golden.mjs: byte-exact graph JSON + positioned errors)
                   #   + headless frontend checks (test/simulate.mjs,
                   #   test/highlight.mjs, test/layout.mjs, test/playback.mjs,
-                  #   and test/permalink.mjs run ui/simulate.ts /
-                  #   ui/highlight.ts / ui/layout.ts / ui/playback.ts /
-                  #   ui/permalink.ts directly via node's TS type
-                  #   stripping) + the formatter contract (test/format.mjs).
+                  #   test/loops.mjs, and test/permalink.mjs run
+                  #   ui/simulate.ts / ui/highlight.ts / ui/layout.ts /
+                  #   ui/playback.ts / ui/loops.ts / ui/permalink.ts directly
+                  #   via node's TS type stripping) + the formatter contract
+                  #   (test/format.mjs).
                   #   Refresh goldens after an INTENDED change: node test/golden.mjs --capture
 
 # Inside `nix develop` (or `make shell`) you also have the raw tools:
@@ -71,7 +72,9 @@ simulator, the editor's highlight tokenizer, the formatter (reference style,
 graph preservation, idempotence), the diagram layout, and the animate toggle's
 playback (trace, shared scales, loop activity, pulse routes, water-line
 breaks, and the toggle's state machine — the setting and the reduced-motion
-hold) against the real compiled backend; `test/permalink.mjs` checks the
+hold) against the real compiled backend, and `test/loops.mjs` checks the
+loop overlay (each loop's members, edges, and ports — what a hovered letter
+lights); `test/permalink.mjs` checks the
 URL-hash codec on its own (every example round-trips, the canonical wire,
 cut-short and hostile links, and a golden link captured when each format
 version shipped, each of which must decode forever).
@@ -431,7 +434,19 @@ playback bullet below). Almost everything lives in **`app.ts`**:
   the band pins and forbidding the aux web from hanging below a lone band —
   floaters instead rest at `floatY`, one row below a single band.) It also groups nodes by their `loop`
   names into one floating letter (`<text>`) per annotation — a pure overlay that
-  never enters `simulation.nodes()`. Node text renders via `nodeText`: the
+  never enters `simulation.nodes()`, its instances built by **`ui/loops.ts`**
+  (below). A letter is the loop's handle: hovering it — or tabbing to it
+  (`tabindex` 0, an `aria-label` naming the loop's members) — puts that loop
+  in focus (`focusedLoop`, by name; `renderLoopFocus` re-runs at the end of
+  every `update()`, so a vanished loop lets go). Its members, its edges
+  (their bubbles included), and the ports on them keep full strength while
+  every other mark takes the `loop-dim` class (`LOOP_DIM` opacity, shared
+  with `drawPulses`, which dims the other loops' beads) and its letter
+  turns the pulse violet (`loop-lit`; CSS fill outranks the fill the
+  playback writes each frame). A press held from elsewhere (a drag or pan
+  sweeping across) never focuses a letter, mouse focus from a click never
+  counts (only `:focus-visible` does), and a click on a letter is canvas to
+  every palette tool — so pans and placements work over letters as before. Node text renders via `nodeText`: the
   bare name while the **names only** toggle leading the zoom cluster is
   pressed (`namesOnly`, an `aria-pressed` button — pressed by default), else
   `displayLabel`, the name plus `: value` when the node carries one
@@ -842,6 +857,18 @@ the diagram's figure 5):
   updates on a horizon change — only a playing animation re-reads the new
   run; loading an example keeps the chosen horizon). `render` and `empty`
   take the horizon as a trailing parameter defaulting to `T_END`.
+
+**`ui/loops.ts`** — the diagram's feedback loops as the overlay draws them,
+pure and dependency-free (type-only imports; `test/loops.mjs` runs it
+headlessly). `loopInstances(nodes, links)` gives one `LoopInstance` per
+annotation, in the compiler's source order: its `name` and `letter`, its
+`members` (every node the annotation tags — never a cloud or a port), its
+`edges` (every link whose ends, a port read as its parent stock, are both
+members — pipes and info arcs alike), and its `ports` (the port ends of
+those edges: untagged, but where the loop's arcs meet their stocks). The
+letter parks on the edges' boundary; a letter in focus lights exactly the
+members, edges, and ports. Link ends may be id strings or the force's node
+objects.
 
 **`ui/playback.ts`** — the animate toggle's model, pure and dependency-free
 like simulate.ts (type-only imports; `test/playback.mjs` runs it

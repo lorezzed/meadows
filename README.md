@@ -462,17 +462,19 @@ mid-run.
   statement per line, spacing normalized, comments kept — see
   `src/Formatter.purs`). It is token-preserving, so node identities and
   diagram positions survive; input that doesn't lex is left untouched.
-- In the **diagram**: drag a node to pin it where you drop it; click a pinned
-  node to release it back to the forces. Ports drag along their stock's
-  boundary. Clicking a node's label renames it everywhere. Dragging empty
-  space pans; a `+` / `1×` / `−` cluster in the corner zooms (`1×` resets
-  both), and oversized models auto-fit. Beside the cluster, **names only**
-  (on by default) labels each node with its name alone, hiding its value,
-  schedule, or formula — the editor still has them; release it for the full
-  labels (`water in tub: 50`). Nothing moves either way. The
-  **animate** button in the corner below (on by default, unless your system
-  asks for reduced motion) plays the run on the diagram (see
-  [the animate toggle](#the-animate-toggle)).
+- In the **diagram**: drag a node to pin it where you drop it; click a
+  pinned node to release it back to the forces. Ports drag along their
+  stock's boundary. Clicking a node's label renames it everywhere. Hovering
+  a loop's `R` or `B` (or tabbing to it) highlights that loop: its nodes and
+  the links joining them keep full strength while the rest of the diagram
+  fades, and the letter turns violet. Dragging empty space pans; a `+` /
+  `1×` / `−` cluster in the corner zooms (`1×` resets both), and oversized
+  models auto-fit. Beside the cluster, **names only** (on by default) labels
+  each node with its name alone, hiding its value, schedule, or formula —
+  the editor still has them; release it for the full labels (`water in tub:
+  50`). Nothing moves either way. The **animate** button in the corner below
+  (on by default, unless your system asks for reduced motion) plays the run
+  on the diagram (see [the animate toggle](#the-animate-toggle)).
 - A **palette** in the diagram's other corner edits the model by drawing:
   pickers for a dot, stock, faucet or cloud place one at the next click; the
   arrow and flow pickers run a source→target pick; the `R` / `B` pickers mark
