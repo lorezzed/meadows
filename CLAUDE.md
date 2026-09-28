@@ -69,7 +69,8 @@ ids, evaluator identity/link/group/value rules), `test/golden.mjs` pins the
 end-to-end JSON seam byte-exactly, and `test/simulate.mjs` / `test/highlight.mjs` /
 `test/format.mjs` / `test/layout.mjs` / `test/playback.mjs` check the frontend
 simulator, the editor's highlight tokenizer, the formatter (reference style,
-graph preservation, idempotence), the diagram layout, and the animate toggle's
+graph preservation, idempotence — plus each example's model-then-notes
+shape), the diagram layout, and the animate toggle's
 playback (trace, shared scales, loop activity, pulse routes, water-line
 breaks, and the toggle's state machine — the setting and the reduced-motion
 hold) against the real compiled backend, and `test/loops.mjs` checks the
@@ -339,7 +340,8 @@ comment sits one space after its code, never glued to it. Token-preserving (a na
 followed by a number keeps its space — `x2` would re-lex as one identifier;
 numbers reprint from their value, integral ones without `.0`) and total: input
 that doesn't lex comes back untouched. `test/format.mjs` pins the reference
-style, graph-JSON preservation, and idempotence over every example.
+style, graph-JSON preservation, and idempotence over every example (and
+each example's model-then-notes shape).
 
 `Main` exports `go` and re-exports Formatter's `format`. The terminal runner is
 `src/CLI.purs` (argv → `go` → stdout), kept out of `Main` so the browser bundle
@@ -375,14 +377,18 @@ playback bullet below). Almost everything lives in **`app.ts`**:
   holding that heading and the positioned `.diagram` the overlays anchor to.
   The example pills sit in two collapsible `<details>` sections
   (`addExampleSection`) — "examples" (open: the sketches — structure with
-  not a number anywhere, each captioned by `//` comments after its model
-  that walk its loops — then the starter models, one elementary behavior
+  not a number anywhere, their notes walking each loop link by link —
+  then the starter models, one elementary behavior
   each, simplest first, then the showcase models) above
   "figures from the book" (every
   `figure N` entry, collapsed by default) — each a
   wrapping `.example-group` row; the nesting is transparent to
   `updateActiveExamples`, which still selects every `button` under
-  `.examples`.
+  `.examples`. Every example is its model, then its notes: `//` comment
+  lines after the last statement, like a caption, telling what the model
+  shows (a number in a note is the run's own reading at the default
+  horizon — reread the notes when a model's numbers change);
+  `test/format.mjs` holds every example to that shape.
 - On textarea `input`: calls `interpreter.go(input)` and `JSON.parse`s the result. A
   *string* result is a compile error: the editor's border flags red, the `<pre>`
   appears with the message in red, and `update()` is skipped (the last good
@@ -839,10 +845,10 @@ the diagram's figure 5):
   `false`): an example entry is exactly `{ label, content }` — the source
   the interpreter compiles and nothing beside it — so no button presets
   the view, and the toggle, like the `t =` horizon, survives loads
-  ("figure 31 & 33" is "figure 31 & 32"'s model; figure 33's panels are
-  its flows, one tick away); nor is it page state (the permalink carries
-  no `flows`), so every page load, reload and shared link included,
-  starts it off.
+  ("figure 31 & 33" is "figure 31 & 32"'s model with a 2-day response
+  delay; figure 33's panels are its flows, one tick away); nor is it
+  page state (the permalink carries no `flows`), so every page load,
+  reload and shared link included, starts it off.
   `STOCK_PALETTE` is the base palette for the per-node accent assignment
   described on the `update()` bullet (fixed-order, assigned by slot, never
   cycled, clamped by `textAccent` before any view uses it). The

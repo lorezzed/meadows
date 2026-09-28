@@ -180,10 +180,18 @@ for (const [label, hash] of [
 // captured with the flows checkbox ticked; that key is ignored since the
 // checkbox left the page state. And it was captured under version 1, whose
 // fresh page had the animate toggle off: the link says nothing of it, so
-// it opens still, though version 2 animates a fresh page.)
+// it opens still, though version 2 animates a fresh page.) A link keeps the
+// text it was made from, so the source is spelled out as captured: the
+// example as it read before the examples took notes.
+const GOLDEN_SOURCE = `[hot coffee: 100] =>cooling: 0.26 |
+B(cooling <- discrepancy <- hot coffee)
+room temperature: 18 -> discrepancy
+| =>heating: 0.26 [iced coffee: 0]
+B(heating <- warming discrepancy <- iced coffee)
+room temperature -> warming discrepancy`;
 const GOLDEN = '#1bY5NboMwEEavYk02qTQgA3WaWA2LXgNYWMYkqOBBtlHUJty9coWaqMpu_t687wreaZBQnSkwTV1njGQZ5w07lppo6O1JMp7mO3ar7cd2HbH3hLW9185Myuqv2N75l9o6opEFM07GqTC7-HLPkvKRqe2NHcuzUeGuqHpt2r8UvInG9SIqLsqNsfxnfoCeqKP2CQgIAWTBEbqBLh5kcLNBsGo0HmSnBm8QvolGkFkqdrlAmJQFWSWFSAVmeYMw9daDvEJLYXMAWRWCY8F5g-AD6c8NB1nlrxyzPU9FsyBM5MIvEYu4TrJUvC0IXX-anVlTLD8';
 same('the shipped link still opens', await decode(GOLDEN), state({
-  source: example('figure 10 & 11'), horizon: 30, namesOnly: false, animate: false,
+  source: GOLDEN_SOURCE, horizon: 30, namesOnly: false, animate: false,
   zoom: 1.5625, pan: [-35.5, 12],
   pins: { 'stock#0': [240, 180.5], 'dot#9': [350, 300] }, ports: { 'port#0': -1.57 },
   figuresOpen: true,
@@ -193,7 +201,7 @@ same('the shipped link still opens', await decode(GOLDEN), state({
 // version, exactly as the version-1 link opens still.
 const GOLDEN_V2 = '#2bY5NboMwEEavYk02rTSgAeoktRoWvQawsByToAYPso2qNuHulauoiarsvvl58-YMwRtQ0Bw5CsN9b60SBVEndrVhPg3uoATl5VpcWvf-dG2Jt0zsh2C8nbQzX6m88c-t88yjiHacrNdx9unkVmT1PdO6i9jVR6vjTdEMxu7_vqAuGa8bSfGp_ZjiP_Md9ECdtA9AQIigKkJwerQBVK9PwSJ8M4-gilyuS4kwaQeqySqZSyzKDmEaXAB1hj3H1SuoppKEFVGHECKbjxWBasoXwmJLuewWhIl9_CVSSOOsyOVmQeiHw-yTOPrZLj8';
 same('the version-2 link still opens', await decode(GOLDEN_V2), state({
-  source: example('figure 10 & 11'), horizon: 30, namesOnly: false, animate: true,
+  source: GOLDEN_SOURCE, horizon: 30, namesOnly: false, animate: true,
   zoom: 1.5625, pan: [-35.5, 12],
   pins: { 'stock#0': [240, 180.5], 'dot#9': [350, 300] }, ports: { 'port#0': -1.57 },
   figuresOpen: true,

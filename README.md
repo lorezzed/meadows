@@ -445,15 +445,17 @@ mid-run.
   balancing one), burnout (a fix that backfires), predator & prey (two
   populations), and confidence (a loop with no stocks). They're structure
   alone, so the chart stays empty while the diagram draws every loop and
-  animate still pulses them. Comments under each model walk its loops link
-  by link and say why each one reinforces or balances. Eight starter models
+  animate still pulses them. Eight starter models
   follow, the simplest systems with one behavior each: piggy bank (a
   straight line), inbox (the net of two flows), rabbits (exponential
   growth), medicine (exponential decay), leaky bucket (an equilibrium),
   learning (goal-seeking), fish pond (an S-curve), and snowmelt (two stocks
   in a chain). A few showcase models come next — epidemic, caffeine, boom &
   bust, skydiver, plus one per formula keyword — and then the book's
-  figures, folded under their own heading (click it to open).
+  figures, folded under their own heading (click it to open). Every
+  example explains itself in comments under its model: the sketches walk
+  each loop link by link and say why it reinforces or balances, and the
+  rest say what the chart and the diagram are showing you, and why.
 - The **editor** color-codes every recognized name with its node's accent —
   the same hue that node wears in the diagram and the chart, so a line in the
   chart, a box in the diagram, and a word in the source visually connect.

@@ -56,6 +56,18 @@ expect('blank lines around comments collapse too', '// a\n\n\n// b\n\na->b',
   '// a\n// b\na -> b');
 expect('a comment never glues to an opener', 'R(   // unfinished', 'R( // unfinished');
 
+// Every example is its model, then its notes (see ui/example.ts): some
+// statements, then comment lines to the end, so a note that lost its // can't
+// slip into the model as a stray node.
+for (const { label, content } of exampleList) {
+  const lines = content.split('\n');
+  const notes = lines.findIndex(l => l.startsWith('//'));
+  if (notes < 0) fail(label, 'no notes');
+  else if (notes === 0) fail(label, 'the notes come before the model');
+  else if (lines.slice(notes).some(l => !l.startsWith('//')))
+    fail(label, `not a comment among the notes: ${lines.slice(notes).find(l => !l.startsWith('//'))}`);
+}
+
 // Every example: formatting preserves the compiled graph byte-exactly and
 // is a fixed point of itself — and so does the example with a comment line
 // above each line and a comment trailing each, whose comments all survive,
