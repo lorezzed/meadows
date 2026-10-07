@@ -262,12 +262,13 @@ B(breeding <- price <- pigs at market)
 ```
 
 Every farmer is acting on information that is already out of date, so supply
-keeps overshooting demand: the herd swings between 90 and 177 and never
-settles (the **boom & bust** button — raise `t =` to 40 to watch several more
-cycles). Drop the shift, writing `breeding: (price)`, and the model still
-compiles — this loop runs through a *stock*, not formula-to-formula, so there
-was never a cycle to reject — but the herd slides straight to 133 and sits
-there. The oscillation is the delay, and nothing else.
+keeps overshooting demand: the herd surges from 90 to 177, slumps to 95, and
+settles only slowly, each swing a little smaller than the last (the
+**boom & bust** button — raise `t =` to 40 to watch the swings die down).
+Drop the shift, writing `breeding: (price)`, and the model still compiles —
+this loop runs through a *stock*, not formula-to-formula, so there was never a
+cycle to reject — but the herd slides straight to 133 and sits there. The
+oscillation is the delay, and nothing else.
 
 There is deliberately no smoothing primitive: perception-style reads *are* the
 pipeline shift, and exponential approach falls out of goal-seeking faucets.
