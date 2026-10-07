@@ -8,9 +8,12 @@
 // Format: `#` + VERSION + base64url(deflate-raw(UTF-8(JSON))). The JSON is
 // the canonical wire object (see `canonical`): short keys, only the fields
 // that differ from DEFAULTS, numbers snapped to a fixed grid, pin and port
-// ids sorted — so one state always spells one JSON, and a fresh page spells
-// none at all (a bare URL). The version character leads the token, so a
-// future format can change everything after it while old links still open.
+// ids sorted — so one state always spells one JSON, and the default state
+// spells none at all. A bare URL stands for the page's HOME state: the default
+// state unless the page says otherwise (app.ts opens an example there), in
+// which case the default state — an empty editor — takes the token of `{}`.
+// The version character leads the token, so a future format can change
+// everything after it while old links still open.
 // A field a link leaves out means the default of the version that wrote it,
 // so changing a default is changing the wire: version 2 turned the animate
 // toggle on for a fresh page, and a version-1 link that says nothing of it
@@ -49,8 +52,9 @@ export type PageState = {
   figuresOpen: boolean;
 };
 
-// The state a fresh page opens in — what a bare URL means. app.ts builds its
-// controls from these (its animate setting starts on, the run held for a
+// The default state: the fresh view on an empty editor — what a bare URL
+// means, unless the page has a home of its own (see `encode`). app.ts builds
+// its controls from these (its animate setting starts on, the run held for a
 // viewer who asks for reduced motion), and test/permalink.mjs pins
 // `horizon` to simulate.ts's T_END.
 export const DEFAULTS: Readonly<PageState> = Object.freeze<PageState>({
@@ -82,9 +86,9 @@ const READS = new Map<string, Readonly<PageState>>([
 export const clampHorizon = (t: number): number => Math.min(1000, Math.max(1, t));
 export const clampZoom = (z: number): number => Math.min(8, Math.max(0.2, z));
 
-// Far past any real model (the largest example's token is under 800
-// characters, its JSON about 3 KB), near enough that a hostile link can't
-// stall the page: characters of token, then bytes once inflated.
+// Far past any real model (the largest example's token is under 1000
+// characters, the largest JSON about 3 KB), near enough that a hostile link
+// can't stall the page: characters of token, then bytes once inflated.
 const MAX_TOKEN = 1 << 18;
 const MAX_JSON_BYTES = 1 << 18;
 
@@ -107,8 +111,14 @@ const zoomStep = (z: number): number => round(clampZoom(z), 4);
 const PIN_ID = /^(dot|stock|faucet|cloud)#\d+$/;
 const PORT_ID = /^port#\d+$/;
 
-const fresh = (base: Readonly<PageState> = DEFAULTS): PageState =>
-  ({ ...base, pan: [base.pan[0], base.pan[1]], pins: {}, ports: {} });
+// A state of its own: nothing shared with the one it copies.
+const copyOf = (s: Readonly<PageState>): PageState => ({
+  ...s,
+  pan: [s.pan[0], s.pan[1]],
+  pins: Object.fromEntries(Object.entries(s.pins)
+    .map(([id, [x, y]]): [string, [number, number]] => [id, [x, y]])),
+  ports: { ...s.ports },
+});
 
 // A record's entries whose ids match, sorted by id and mapped — or null
 // when none survive.
@@ -144,22 +154,32 @@ export function canonical(s: PageState): string {
   return Object.keys(w).length ? JSON.stringify(w) : '';
 }
 
-// The hash token for a state ('' for the default state: a bare URL).
-export async function encode(s: PageState): Promise<string> {
-  const json = canonical(s);
-  if (json === '') return '';
+// One wire JSON as a hash token.
+async function pack(json: string): Promise<string> {
   const deflated = new Blob([new TextEncoder().encode(json)]).stream()
     .pipeThrough(new CompressionStream('deflate-raw'));
   return VERSION + toBase64url(new Uint8Array(await new Response(deflated).arrayBuffer()));
 }
 
-// The state a hash carries (with or without its leading '#'): the defaults
-// for an empty one, null for any token that can't be read — a version it
-// doesn't read, not base64url, not deflate, cut short, oversized, not
-// UTF-8, not a JSON object. Never throws.
-export async function decode(hash: string): Promise<PageState | null> {
+// The hash token for a state: '' — a bare URL — for `home`, the state the
+// page opens a bare URL on. That is the default state unless the page has a
+// home of its own; then the default state, no longer the bare URL's, takes
+// the token of `{}`, which reads as every default. No other state's token
+// depends on `home`.
+export async function encode(s: PageState, home: Readonly<PageState> = DEFAULTS): Promise<string> {
+  const json = canonical(s);
+  if (json === canonical(home)) return '';
+  return pack(json === '' ? '{}' : json);
+}
+
+// The state a hash carries (with or without its leading '#'): `home` for an
+// empty one (the defaults, unless the page has a home of its own), null for
+// any token that can't be read — a version it doesn't read, not base64url,
+// not deflate, cut short, oversized, not UTF-8, not a JSON object. Never
+// throws.
+export async function decode(hash: string, home: Readonly<PageState> = DEFAULTS): Promise<PageState | null> {
   const token = hash.startsWith('#') ? hash.slice(1) : hash;
-  if (token === '') return fresh();
+  if (token === '') return copyOf(home);
   const base = READS.get(token[0]!);
   if (token.length > MAX_TOKEN || !base) return null;
   const bytes = fromBase64url(token.slice(1));
@@ -189,7 +209,7 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 // links carried the chart's flows checkbox (`flows`), since dropped from
 // the page state, and still open.
 function fromWire(w: Record<string, unknown>, base: Readonly<PageState>): PageState {
-  const s = fresh(base);
+  const s = copyOf(base);
   if (typeof w.src === 'string') s.source = w.src;
   if (isNum(w.t)) s.horizon = clampHorizon(w.t);
   if (typeof w.names === 'boolean') s.namesOnly = w.names;

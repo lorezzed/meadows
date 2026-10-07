@@ -1333,3 +1333,9 @@ B(consumption <- town reservoir)
     },
 
 ]
+
+// The example a bare URL opens on (app.ts's home state): a stock, both its
+// flows, a formula, and a feedback loop in three statements, so the first
+// thing a visitor sees is every panel at work — the tank filling, both pipes
+// running, the loop pulsing, and the chart settling onto its equilibrium.
+export const homeExample = exampleList.find(x => x.label === 'leaky bucket')!;

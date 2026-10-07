@@ -14,7 +14,7 @@ import {
   playback, loopPlans, loopActivity, pulseAt, waterSpans, HOP_SECONDS,
   isPlaying, openAnimate, pressAnimate, loadAnimate, motionChanged,
 } from '../ui/playback.ts';
-import { exampleList } from '../ui/example.ts';
+import { exampleList, homeExample } from '../ui/example.ts';
 
 let failures = 0;
 const fail = (label, msg) => { failures++; console.log(`FAIL ${label}: ${msg}`); };
@@ -87,6 +87,24 @@ for (const { label, content } of exampleList) {
     }
   }
   if (worst) fail(`${label} conservation`, worst);
+}
+
+// The page opens on an example that plays (ui/example.ts's homeExample, the
+// bare URL's model): one of the buttons, tracing a run for the chart and the
+// tanks, every tap running at some point, and a loop to pulse.
+{
+  if (!exampleList.includes(homeExample)) fail('home example', 'is not one of the example buttons');
+  const system = sys(homeExample.content);
+  if (!hasNumbers(system)) fail('home example', 'has no numbers: the chart would open empty');
+  const run = trace(system);
+  if (run.stocks.length === 0 || run.stocks.every(s => s.levels.every(v => v === s.levels[0])))
+    fail('home example', 'no stock moves');
+  if (run.rates.length === 0 || run.rates.some(r => r.rates.every(v => v === 0)))
+    fail('home example', 'a tap never opens');
+  const plans = loopPlans(system.nodes, system.links);
+  const pb = playback(run);
+  if (plans.length === 0 || plans.some(plan => !(loopActivity(pb, plan, T_END / 2) > 0)))
+    fail('home example', 'no loop is beating mid-run');
 }
 
 // figures 5 & 6: the tub drains at exactly 5 until it is empty; the

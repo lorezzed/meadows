@@ -12,7 +12,7 @@
 import assert from 'node:assert/strict';
 import { DEFAULTS, VERSION, canonical, clampHorizon, clampZoom, decode, encode } from '../ui/permalink.ts';
 import { T_END } from '../ui/simulate.ts';
-import { exampleList } from '../ui/example.ts';
+import { exampleList, homeExample } from '../ui/example.ts';
 
 let failures = 0;
 const fail = (label, msg) => { failures++; console.log(`FAIL ${label}: ${msg}`); };
@@ -76,6 +76,41 @@ for (const { label, content } of exampleList) {
   if (bare.length > largest.length) largest = { label, length: bare.length };
 }
 if (largest.length > 1000) fail('size budget', `${largest.label}: ${largest.length} characters`);
+
+// A page may open its bare URL on a home state of its own (app.ts opens the
+// home example on the fresh view). Then home spells no hash and an empty
+// hash reads back as home; the default state — an emptied editor — takes a
+// token that says so out loud, readable with or without a home; and no
+// other state's token moves.
+{
+  const home = state({ source: homeExample.content });
+  same('home encodes to no hash', await encode(home, home), '');
+  same('an empty hash decodes to home', await decode('', home), home);
+  same('a lone # decodes to home', await decode('#', home), home);
+  const opened = await decode('', home);
+  if (opened === home || opened.pan === home.pan || opened.pins === home.pins || opened.ports === home.ports)
+    fail('home', 'the decoded home shares state with the home it copies');
+  const empty = await encode(state({}), home);
+  if (!empty.startsWith(VERSION) || !URL_SAFE.test(empty) || empty.length > 16)
+    fail('the emptied editor', `wants a short URL-safe token of its own, got ${JSON.stringify(empty)}`);
+  same('the emptied editor reopens empty', await decode(`#${empty}`, home), state({}));
+  same('on a page without a home too', await decode(`#${empty}`), state({}));
+  same('home written out in full still opens', await decode(`#${await encode(home)}`, home), home);
+  for (const s of [
+    state({ source: 'a -> b' }),
+    state({ horizon: 25 }),
+    state({ source: homeExample.content, horizon: 25 }),
+    state({ source: homeExample.content, pins: { 'stock#2': [1, 2] } }),
+    state({ source: example('figure 10 & 11'), ...view }),
+  ]) {
+    same('home moves no other token', await encode(s, home), await encode(s));
+    same('nor any other reading', await decode(`#${await encode(s, home)}`, home), s);
+  }
+  // A home with a view and placements of its own comes back whole.
+  const placed = state({ source: 'x', zoom: 1.25, pan: [3, -4], pins: { 'dot#0': [1, 2] }, ports: { 'port#0': 1.5 } });
+  same('a home with placements', await decode('', placed), placed);
+  same('still encodes to no hash', await encode(placed, placed), '');
+}
 
 // Text survives exactly as typed: whitespace, line endings, any script.
 for (const [label, source] of [

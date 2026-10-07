@@ -77,7 +77,8 @@ hold) against the real compiled backend, and `test/loops.mjs` checks the
 loop overlay (each loop's members, edges, and ports — what a hovered letter
 lights); `test/permalink.mjs` checks the
 URL-hash codec on its own (every example round-trips, the canonical wire,
-cut-short and hostile links, and a golden link captured when each format
+the home state a bare URL may stand for, cut-short and hostile links, and
+a golden link captured when each format
 version shipped, each of which must decode forever).
 
 ### Build coupling (important)
@@ -388,7 +389,10 @@ playback bullet below). Almost everything lives in **`app.ts`**:
   lines after the last statement, like a caption, telling what the model
   shows (a number in a note is the run's own reading at the default
   horizon — reread the notes when a model's numbers change);
-  `test/format.mjs` holds every example to that shape.
+  `test/format.mjs` holds every example to that shape. The file also
+  exports `homeExample`, the entry a bare URL opens on (the permalink
+  bullet below); `test/playback.mjs` holds it to a button whose run
+  plays: a stock that moves, every tap opening, a loop beating.
 - On textarea `input`: calls `interpreter.go(input)` and `JSON.parse`s the result. A
   *string* result is a compile error: the editor's border flags red, the `<pre>`
   appears with the message in red, and `update()` is skipped (the last good
@@ -708,9 +712,20 @@ playback bullet below). Almost everything lives in **`app.ts`**:
   draft that doesn't compile loses nothing). An unreadable link shows a
   notice in the error `<pre>` and stays in the address bar until the next
   change. Hiding the page or blurring the window flushes a pending save.
-  The fresh page's values (`namesOnly`, the animate setting, zoom and
-  pan, the sections) initialize from `DEFAULTS`, so a bare URL means
-  exactly the fresh page.
+  The fresh page's view (`namesOnly`, the animate setting, zoom and
+  pan, the sections) initializes from `DEFAULTS`, and a bare URL opens
+  `HOME`: that view on the home example (`homeExample` in
+  `ui/example.ts`, the leaky bucket), so a first visit lands on a model
+  that runs rather than an empty editor. With no hash to decode, startup
+  `restore`s it synchronously — in time for the first paint, and leaving
+  `savedWire` at its canonical JSON, so the saves the load schedules find
+  the address already right. `HOME` goes to the codec both ways
+  (`encode(state, HOME)`, `decode(hash, HOME)`): the home state writes the
+  bare URL (an edit undone, the home pill pressed, both land back on it),
+  an empty hash — Back to the first entry included — reads back as it,
+  and the emptied editor takes a short token of its own, so every page
+  still reloads as itself. An unreadable link still shows its notice over
+  an empty editor, never home.
 
 Two sibling modules add the **behavior-over-time chart** (the book's figure 6 to
 the diagram's figure 5):
@@ -923,17 +938,22 @@ passed on still animates for everyone else.
 **`ui/permalink.ts`** — the URL-hash codec, pure with NO imports at all
 (`test/permalink.mjs` runs it headlessly; CompressionStream,
 DecompressionStream, TextEncoder, and btoa/atob are node globals).
-`PageState` is the whole saved state and `DEFAULTS` the fresh page (its
+`PageState` is the whole saved state and `DEFAULTS` the default state —
+the fresh view on an empty editor (its
 `horizon` pinned to simulate.ts's `T_END` by the test). `canonical(state)`
 is the wire JSON — short keys (`src`, `t`, `names`, `play`, `zoom`, `pan`,
 `pins`, `ports`, `examples`, `figures`) in a fixed order, only the
 fields that differ from `DEFAULTS`, numbers snapped to a grid
 (positions to 0.1, bearings wrapped into atan2's range at 0.01 rad, zoom to
 4 places), ids sorted — so equal states spell equal JSON, and the default
-state spells ''. `encode` gives `VERSION` (`2`) + base64url(deflate-raw(the
-JSON)), or '' for the default state (a bare URL); the largest example's
-token is ~760 characters. `decode` never throws: an empty hash is the
-defaults; a version it doesn't read, bad base64url, corrupt or truncated
+state spells ''. `encode(state, home = DEFAULTS)` gives `VERSION` (`2`) +
+base64url(deflate-raw(the JSON)), or '' — a bare URL — for `home`, the
+state the page opens a bare URL on: the default state unless the page
+passes its own (app.ts's `HOME`), in which case the default state takes
+the token of `{}` (every default, said out loud) and no other state's
+token moves; the largest example's token is under 1000 characters, the
+test's budget. `decode(hash, home = DEFAULTS)` never throws: an empty hash
+is a copy of `home`; a version it doesn't read, bad base64url, corrupt or truncated
 deflate, a token or inflated JSON over 256 KiB, invalid UTF-8, or a
 non-object is null; otherwise each field is read on its own (a malformed
 one falls back to its default, a key it doesn't read is ignored — the

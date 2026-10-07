@@ -441,6 +441,10 @@ mid-run.
 
 ## The playground
 
+The page opens on **leaky bucket**, one of the starter models, already
+running: its tank fills, both pipes flow, its loop beats, and the chart
+settles onto the equilibrium.
+
 - **Example buttons** open on five sketches with no numbers at all: hunger
   (one balancing loop), chicken & egg (a reinforcing loop against a
   balancing one), burnout (a fix that backfires), predator & prey (two
@@ -492,7 +496,10 @@ mid-run.
   piling up history, so a reload, a bookmark, or a link you send reopens
   the same page. Nodes you haven't pinned lay themselves out afresh, as
   they do for an example. An example load does add a history entry, so
-  Back brings back the model it replaced.
+  Back brings back the model it replaced. The bare address is the opening
+  page itself, the leaky bucket on the default view: change anything and
+  the address takes a link (an emptied editor has a short one of its own),
+  and put it back and the address is bare again.
 
 ## The CLI
 

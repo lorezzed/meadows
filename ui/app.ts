@@ -4,7 +4,7 @@ import * as interpreter from '../output/Main/index'
 import type { Expr, Node, Link, System } from "./type";
 import faucetSvg from './shape/faucet.svg'
 import cloudSvg from './shape/cloud.svg'
-import { exampleList } from "./example";
+import { exampleList, homeExample } from "./example";
 import { T_END, flowSeries, goalRefs, hasDelays, hasNumbers, trace, type Trace } from "./simulate";
 import {
   HOP_SECONDS, isPlaying, loadAnimate, loopActivity, loopPlans, motionChanged, openAnimate, playback,
@@ -3118,6 +3118,13 @@ function drag() {
 // link, an edited hash, Back/Forward) decode into loadModel. A link that
 // can't be read says so in the error panel and stays in the address bar
 // until the next change replaces it.
+//
+// Home: a bare URL opens the home example on the fresh page's view (HOME),
+// so a first visit lands on a model that runs rather than an empty editor.
+// The codec takes HOME both ways — that state writes the bare URL, an empty
+// hash reads back as it — and gives the emptied editor a short token of its
+// own, so every page still reloads as itself.
+const HOME: Readonly<PageState> = Object.freeze<PageState>({ ...DEFAULTS, source: homeExample.content });
 const SAVE_DELAY_MS = 300;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 // The next write pushes a history entry instead of replacing this one.
@@ -3157,10 +3164,10 @@ function saveNow(): void {
   savedWire = wire;
   const gen = navGen;
   saveChain = saveChain
-    .then(() => encode(state))
+    .then(() => encode(state, HOME))
     .then(token => {
       if (gen !== navGen) return;
-      // The default state is the bare page URL.
+      // The home state is the bare page URL.
       const url = token === '' ? location.pathname + location.search : `#${token}`;
       if (push) history.pushState(history.state, '', url);
       else history.replaceState(history.state, '', url);
@@ -3245,7 +3252,7 @@ window.addEventListener('hashchange', () => {
   saveTimer = null;
   pushNext = false;
   const hash = location.hash;
-  void decode(hash).then(p => {
+  void decode(hash, HOME).then(p => {
     if (location.hash !== hash) return; // a later navigation took over
     if (!p) {
       // The hash holds nothing a state could match: the next change writes
@@ -3272,15 +3279,19 @@ window.addEventListener('blur', flushSave);
 // sparing a frame of the empty editor. An unreadable link leaves savedWire
 // at '' (unlike a hashchange's): the fresh page's own section toggles fire
 // just after load, and their save must not wipe the link before anyone
-// has read the notice — a real change replaces it.
+// has read the notice — a real change replaces it. A bare URL has nothing
+// to decode: home loads at once, in time for the first paint, and its
+// saves find the address already right.
 const startHash = location.hash;
 if (startHash.length > 1) {
   container.style('visibility', 'hidden');
-  void decode(startHash)
+  void decode(startHash, HOME)
     .then(p => {
       if (location.hash !== startHash) return; // a navigation took over
       if (p) restore(p);
       else linkNotice();
     })
     .finally(() => container.style('visibility', null));
+} else {
+  restore({ ...HOME, pan: [HOME.pan[0], HOME.pan[1]], pins: {}, ports: {} });
 }
