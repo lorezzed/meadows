@@ -1190,7 +1190,7 @@ B(metabolism <- caffeine in blood)
     {
         // The hog cycle: farmers breed on the price TWO UNITS AGO — a loop
         // legally closed through the pipeline shift price(t - 2), so supply
-        // forever overshoots demand and the market never settles.
+        // keeps overshooting demand and the market is slow to settle.
         label: 'boom & bust',
         content: `| =>breeding [pigs at market: 90] =>sales |
 breeding: (price(t - 2))
@@ -1198,11 +1198,28 @@ price: (200 - pigs at market)
 sales: (0.5 pigs at market)
 B(breeding <- price <- pigs at market)
 // The hog cycle: farmers breed on the price of two units ago,
-// price(t - 2), since a pig takes that long to raise.
+// since a pig takes that long to raise. price(t - 2) is a
+// time shift, not a product: the price as it was at t - 2.
 // B: more pigs, a lower price, less breeding, fewer pigs.
-// A balancing loop should settle, but this one acts on old
-// news: pigs swing from 90 up to 177, down to 95, up to 167,
-// each swing only a little smaller than the last.`
+// The loop would settle at 133 pigs, where breeding matches
+// sales, but each correction answers the market of two units
+// ago and lands after it has moved: it overshoots.
+// Over t: until t = 2 there's no history, so breeding holds
+// the opening price, 110, while the price falls to 27. The
+// boom peaks at 177 at t = 2.4. From t = 2 breeding is
+// exactly price(t - 2): it bottoms at 23 at t = 4.4,
+// answering that peak after the glut is over, and the bust
+// bottoms at 95 at t = 5.55. One cycle takes 6.3 units,
+// about three delays.
+// The delay's length decides the story:
+//   price(t)      glides to 133, no swing at all
+//   price(t - 1)  overshoots to 153, dips to 125, settles
+//   price(t - 2)  swings, shrinking slowly (this model)
+//   price(t - 3)  swings, growing: 193, 65, 212, 48, 232
+// The tipping point lies between 2.3 and 2.4, just above
+// this model's 2, so its swings die out slowly.
+// Tick flows: breeding (dashed) is price (solid) 2 units
+// later. Set t = to 40 to watch the swings shrink.`
     },
     {
         // A skydiver: drag grows with speed^2 until it balances gravity —
