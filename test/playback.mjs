@@ -9,7 +9,7 @@
 // stripping).
 // Run with:   node test/playback.mjs
 import * as M from '../output/Main/index.js';
-import { simulate, trace, hasNumbers, T_END, DT } from '../ui/simulate.ts';
+import { simulate, trace, hasNumbers, noPlot, T_END, DT } from '../ui/simulate.ts';
 import {
   playback, loopPlans, loopActivity, pulseAt, waterSpans, HOP_SECONDS,
   isPlaying, openAnimate, pressAnimate, loadAnimate, motionChanged,
@@ -36,13 +36,13 @@ const idOf = (system, label) => {
 const near = (a, b, eps = 1e-9) => Math.abs(a - b) <= eps * Math.max(1, Math.abs(a), Math.abs(b));
 const steps = (tEnd) => Math.round(tEnd / DT);
 
-// The trace IS the chart's run: for every numeric example, its levels are
+// The trace IS the chart's run: for every example that plots, its levels are
 // simulate()'s sample for sample, and every faucet's rate series aligns
 // with them one-for-one (steps + 1 samples) — at the default horizon and
 // a longer one.
 for (const { label, content } of exampleList) {
   const system = sys(content);
-  if (!hasNumbers(system) || !system.nodes.some(n => n.type === 'stock')) continue;
+  if (noPlot(system)) continue;
   for (const tEnd of [T_END, 17]) {
     const run = trace(system, tEnd);
     const chart = simulate(system, tEnd);
@@ -63,7 +63,7 @@ for (const { label, content } of exampleList) {
 // first stock→faucet pipe and fills that of its first faucet→stock pipe).
 for (const { label, content } of exampleList) {
   const system = sys(content);
-  if (!hasNumbers(system) || !system.nodes.some(n => n.type === 'stock')) continue;
+  if (noPlot(system)) continue;
   const run = trace(system);
   const type = new Map(system.nodes.map(n => [n.id, n.type]));
   const rateOf = new Map(run.rates.map(r => [r.id, r.rates]));
@@ -279,11 +279,15 @@ const expectRoute = (label, system, loopName, want, depths) => {
   if (b2 && pulseAt(b2, 0.1).length !== 2) fail('figure 37 pulse', 'two hops in flight at depth 0');
 }
 {
-  // The sketches carry no numbers, so the chart plots nothing — but every
-  // loop still plans a route, so the animate toggle has pulses to beat.
+  // The sketches carry no numbers, so the chart plots nothing — its empty
+  // frame says why: no numbers, or for the one loop of bare dots, no stocks
+  // — but every loop still plans a route, so the animate toggle has pulses
+  // to beat.
   for (const label of ['hunger', 'chicken & egg', 'burnout', 'predator & prey', 'confidence']) {
     const system = sys(example(label));
     if (hasNumbers(system)) fail(`${label} sketch`, 'a sketch carries no numbers');
+    const why = label === 'confidence' ? 'no-stocks' : 'no-numbers';
+    if (noPlot(system) !== why) fail(`${label} sketch`, `its chart says ${noPlot(system)}, want ${why}`);
     if (loopPlans(system.nodes, system.links).length === 0) fail(`${label} sketch`, 'its loops plan no pulses');
   }
   // burnout: both loops leave the backlog along the one shared arrow and

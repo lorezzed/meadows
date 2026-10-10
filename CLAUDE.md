@@ -68,7 +68,8 @@ compiler internals (token streams & positions, exact `Tree` shapes including min
 ids, evaluator identity/link/group/value rules), `test/golden.mjs` pins the
 end-to-end JSON seam byte-exactly, and `test/simulate.mjs` / `test/highlight.mjs` /
 `test/format.mjs` / `test/layout.mjs` / `test/playback.mjs` check the frontend
-simulator, the editor's highlight tokenizer, the formatter (reference style,
+simulator (with the chart's gate and the hint its empty frame shows), the
+editor's highlight tokenizer, the formatter (reference style,
 graph preservation, idempotence — plus each example's model-then-notes
 shape), the diagram layout, and the animate toggle's
 playback (trace, shared scales, loop activity, pulse routes, water-line
@@ -392,7 +393,11 @@ playback bullet below). Almost everything lives in **`app.ts`**:
   `test/format.mjs` holds every example to that shape. The file also
   exports `homeExample`, the entry a bare URL opens on (the permalink
   bullet below); `test/playback.mjs` holds it to a button whose run
-  plays: a stock that moves, every tap opening, a loop beating.
+  plays: a stock that moves, every tap opening, a loop beating — and
+  `chartHint`, the one-line model the chart's empty frame shows (the
+  chart bullet below), which `test/simulate.mjs` holds to what the note
+  says of it: a stock with a level and a flow with a rate, in the
+  formatter's spelling, plotting a line that moves.
 - On textarea `input`: calls `interpreter.go(input)` and `JSON.parse`s the result. A
   *string* result is a compile error: the editor's border flags red, the `<pre>`
   appears with the message in red, and `update()` is skipped (the last good
@@ -817,7 +822,9 @@ the diagram's figure 5):
   example's 240-an-hour espresso shots) — sampled per step plus one
   closing sample, aligned with the stock series. `hasDelays` is the cheap
   static test that tells the two views apart (the flows toggle's tooltip
-  keys on it). `trace` is the SAME
+  keys on it), and `noPlot` the one that gates the chart: null for a model
+  with a stock to draw and a number to run on, else which is missing (the
+  chart bullet below). `trace` is the SAME
   run with every faucet's applied (post-ration) rate recorded beside the
   levels — sampled like the flow view, so each level step is its inflows'
   minus outflows' `rates[i]·DT` — plus the `dt`/`tEnd` it ran at:
@@ -867,17 +874,29 @@ the diagram's figure 5):
   `STOCK_PALETTE` is the base palette for the per-node accent assignment
   described on the `update()` bullet (fixed-order, assigned by slot, never
   cycled, clamped by `textAccent` before any view uses it). The
-  chart panel is always visible: whenever the model carries no `value`s it
+  chart panel is always visible: whenever the model has nothing to plot it
   clears to an empty frame — the time axis, a unit-less y (tick marks, no
   numbers), nothing plotted (the accents stay on in the editor and diagram;
-  numbers gate only the plot). A `t =` number
+  numbers gate only the plot) — under a **note saying why**, since a bare
+  frame reads as a broken chart. `noPlot(system)` (simulate.ts) is the
+  chart's whole gate: null when the model plots, else what it lacks —
+  `"empty"` (no nodes; also the page before anything has compiled),
+  `"no-stocks"`, or `"no-numbers"`, in that order — and `empty(tEnd, why)`
+  shows that reason's two lines (`NOTES`: why nothing is plotted, then
+  what would plot) over `chartHint`, the least model whose line goes
+  anywhere (`[tub: 50] =>drain: 5 |`, exported by `ui/example.ts` and
+  handed to `createChart`). The note is page text laid over the plot area — a
+  `.chart-note` beside the svg in a `.chart-panel` wrapper, inset to the
+  axes by the chart's own margins — not svg text, which would shrink with
+  the panel: it keeps its size in a narrow column, wraps, and is the svg's
+  `aria-describedby` (the svg is an `img` to assistive tech). A `t =` number
   field footers the panel (`.horizon`, flex order 10, built in `app.ts`): it
   sets the simulated horizon — default `T_END` (10), clamped to 1–1000, live
   per keystroke, snapped to the effective value on blur — and re-runs the
   chart through `refreshChart()`/`lastChart` (the diagram's layout never
   updates on a horizon change — only a playing animation re-reads the new
   run; loading an example keeps the chosen horizon). `render` and `empty`
-  take the horizon as a trailing parameter defaulting to `T_END`.
+  take the horizon as a parameter defaulting to `T_END`.
 
 **`ui/loops.ts`** — the diagram's feedback loops as the overlay draws them,
 pure and dependency-free (type-only imports; `test/loops.mjs` runs it

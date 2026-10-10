@@ -4,8 +4,8 @@ import * as interpreter from '../output/Main/index'
 import type { Expr, Node, Link, System } from "./type";
 import faucetSvg from './shape/faucet.svg'
 import cloudSvg from './shape/cloud.svg'
-import { exampleList, homeExample } from "./example";
-import { T_END, flowSeries, goalRefs, hasDelays, hasNumbers, trace, type Trace } from "./simulate";
+import { chartHint, exampleList, homeExample } from "./example";
+import { T_END, flowSeries, goalRefs, hasDelays, noPlot, trace, type NoPlot, type Trace } from "./simulate";
 import {
   HOP_SECONDS, isPlaying, loadAnimate, loopActivity, loopPlans, motionChanged, openAnimate, playback,
   pressAnimate, pulseAt, waterSpans, type AnimateState, type LoopPlan, type Playback,
@@ -241,10 +241,36 @@ const css = `
     border: 1px solid var(--line);
     border-radius: 6px;
   }
-  svg.chart { width: 100%; aspect-ratio: 700 / 260; }
+  /* The chart panel: the svg and, over its plot area while there is
+     nothing to plot, the note saying why (chart.ts insets it to the axes).
+     The note is page text at the page's own size — svg text would shrink
+     with the panel — so it reads the same in a narrow column, and wraps. */
+  .chart-panel { position: relative; }
+  svg.chart { display: block; width: 100%; aspect-ratio: 700 / 260; }
   svg.chart:focus-visible {
     outline: 2px solid var(--faint);
     outline-offset: 2px;
+  }
+  .chart-note {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    text-align: center;
+    text-wrap: balance; /* a wrapped line breaks near its middle, not at the edge */
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--secondary);
+  }
+  .chart-note p { margin: 0; }
+  .chart-note .why { color: var(--ink); font-weight: 600; }
+  .chart-note code {
+    margin-top: 3px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink);
   }
   /* The chart's footer row, tucked under the panel's right corner: the
      flows toggle and the t= horizon field, right where the time axis they
@@ -851,12 +877,13 @@ side
   .attr('class', 'section-heading')
   .style('order', 9)
   .text('behaviour over time')
-const chart = createChart(side)
+const chart = createChart(side, chartHint)
 // The simulation horizon: how much time the chart runs and shows. The t=
 // field edits it live; only the chart re-renders (the diagram's layout is
 // time-free) — and a playing animation re-reads the new run.
 // lastChart holds what a horizon change must re-run: the last successfully
-// compiled system with its stock accent assignment, and whether it plots.
+// compiled system with its stock accent assignment, and what it lacks if
+// it has nothing to plot (simulate.ts's noPlot; null when it plots).
 let tEnd = T_END;
 // The flows toggle: when on, the chart overlays the model's flows as thin
 // lines — in a model with delays, each delay call's input against its
@@ -867,21 +894,23 @@ let tEnd = T_END;
 // example (see loadExample) nor a link (it isn't page state — see the
 // permalink section) presets it, and every page load starts it off.
 let showFlows = false;
-let lastChart: { system: System; colorOf: (id: string) => string; plottable: boolean } | null = null;
+let lastChart: { system: System; colorOf: (id: string) => string; noPlot: NoPlot | null } | null = null;
 // The run itself, when the model plots: one engine pass serves the chart
 // and the animate toggle alike — trace()'s levels ARE simulate()'s
 // (test/playback.mjs pins it), and its faucet rates are what the playback
 // plays — so animating never runs the model twice.
 let lastRun: Trace | null = null;
 function refreshChart(): void {
-  if (lastChart?.plottable) {
+  if (lastChart && lastChart.noPlot == null) {
     const { system, colorOf } = lastChart;
     lastRun = trace(system, tEnd);
     chart.render(lastRun.stocks, colorOf, goalRefs(system), tEnd,
       showFlows ? flowSeries(system, tEnd) : []);
   } else {
+    // Nothing to plot: the frame says what the model lacks (before any
+    // model has compiled, that there is nothing yet).
     lastRun = null;
-    chart.empty(tEnd);
+    chart.empty(tEnd, lastChart?.noPlot ?? "empty");
   }
   // The toggle is always there; its tooltip names the view it overlays.
   flowsLabel.attr('title', lastChart && hasDelays(lastChart.system) ? FLOWS_DELAY_TITLE : FLOWS_RATE_TITLE);
@@ -1654,7 +1683,6 @@ function update(system: System) {
   // separation, but every mark keeps its direct label — the color links
   // mentions, it never identifies alone. The coloring is identity, not
   // simulation state, so it is always on — numeric or not.
-  const numeric = hasNumbers(system);
   const stockIds = nodes.filter(n => n.type === "stock").map(n => n.id)
     .sort((a, b) => parserId(a) - parserId(b));
   nameColor = new Map();
@@ -1694,11 +1722,11 @@ function update(system: System) {
   nodeStock.select<SVGTextElement>("text.tank-level").attr("fill", d => colorOf(d.id));
   // Behavior-over-time panel (figure 6 to the diagram's figure 5): when the
   // model carries numbers and has a stock to plot, simulate it and draw the
-  // chart through the same colorOf. Without numbers the panel clears to its
-  // empty frame (numbers gate the PLOT, never the accents). The render goes
-  // through refreshChart so the t= horizon field can re-run it without a
-  // diagram update.
-  lastChart = { system, colorOf, plottable: numeric && stockIds.length > 0 };
+  // chart through the same colorOf. Otherwise the panel clears to its empty
+  // frame, under a note saying which of the two is missing (numbers gate
+  // the PLOT, never the accents). The render goes through refreshChart so
+  // the t= horizon field can re-run it without a diagram update.
+  lastChart = { system, colorOf, noPlot: noPlot(system) };
   refreshChart();
   refreshPlayback();
 

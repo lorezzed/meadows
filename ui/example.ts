@@ -959,13 +959,13 @@ regeneration rate: (112 (resource / 1000 * (1 - resource / 1000))^2)
     // Sketches (not from the book): structure alone, not a number anywhere —
     // the stocks, flows, and loops you'd draw on a whiteboard before any
     // quantity is known. They lead the examples row: structure first, then
-    // the numbers. The chart stays an empty frame; the diagram tells the
-    // story, and the animate toggle still beats every loop. Their notes
-    // walk each loop link by link with one plain rule, which the notes on
-    // the models further down reuse: a link that turns more into less makes
-    // a loop push back (B), while links that all keep the direction make it
-    // snowball (R). Each sketch is five statements at most, so a load keeps
-    // every one in view.
+    // the numbers. The chart has nothing to plot and its frame says so; the
+    // diagram tells the story, and the animate toggle still beats every
+    // loop. Their notes walk each loop link by link with one plain rule,
+    // which the notes on the models further down reuse: a link that turns
+    // more into less makes a loop push back (B), while links that all keep
+    // the direction make it snowball (R). Each sketch is five statements at
+    // most, so a load keeps every one in view.
     {
         // One balancing loop through a relay dot.
         label: 'hunger',
@@ -1339,3 +1339,11 @@ B(consumption <- town reservoir)
 // thing a visitor sees is every panel at work — the tank filling, both pipes
 // running, the loop pulsing, and the chart settling onto its equilibrium.
 export const homeExample = exampleList.find(x => x.label === 'leaky bucket')!;
+
+// The model the chart's empty frame shows as its hint: the bathtub's drain
+// alone — one stock with a starting level and one flow with a rate, in the
+// formatter's own spelling, the least that plots a line going anywhere. A
+// model with no numbers (every sketch, the structure-only figures) has
+// nothing to plot, and the frame says so over this line, which shows where
+// the numbers go.
+export const chartHint = '[tub: 50] =>drain: 5 |';

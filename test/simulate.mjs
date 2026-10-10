@@ -4,7 +4,8 @@
 // can run it directly (erasable-syntax type stripping, node >= 22.18).
 // Run with:   node test/simulate.mjs
 import * as M from '../output/Main/index.js';
-import { simulate, flowSeries, trace, hasDelays, hasNumbers, goalRefs, scheduleFn, T_END, DT, DEFAULT_GAIN } from '../ui/simulate.ts';
+import { simulate, flowSeries, trace, hasDelays, hasNumbers, noPlot, goalRefs, scheduleFn, T_END, DT, DEFAULT_GAIN } from '../ui/simulate.ts';
+import { chartHint } from '../ui/example.ts';
 
 let failures = 0;
 const fail = (label, msg) => { failures++; console.log(`FAIL ${label}: ${msg}`); };
@@ -76,6 +77,52 @@ const last = (s) => s.levels[s.levels.length - 1];
   if (!hasNumbers(sys('[a: 1]'))) fail('hasNumbers', '[a: 1] should have numbers');
   if (!hasNumbers(sys('a=>f: 5'))) fail('hasNumbers', 'a faucet rate counts');
   if (!hasNumbers(sys('a: 5'))) fail('hasNumbers', 'a dot constant counts');
+}
+
+// noPlot is the chart's whole gate, and names what a model with nothing to
+// plot lacks (the note the empty frame shows): a model at all, a stock to
+// draw, or a number to run on — in that order, so a loop of bare dots is
+// missing its stocks before its numbers. Any one number plots: a stock
+// without one of its own starts at 0.
+{
+  const want = [
+    ['', 'empty'],
+    ['// a note and nothing else', 'empty'],
+    ['a', 'no-stocks'],
+    ['R(a -> b -> a)', 'no-stocks'],
+    ['a: 5 -> b', 'no-stocks'],
+    ['| =>f: 5 |', 'no-stocks'],
+    ['[a]', 'no-numbers'],
+    ['| =>f [a] =>g |\nB(g <- a)', 'no-numbers'],
+    ['[a: 1]', null],
+    ['[a] =>f: 5 |', null],
+    ['[a] -> b: 5', null],
+    ['| =>f [a]\nf: (2 * a)', null],
+  ];
+  for (const [src, why] of want) {
+    const got = noPlot(sys(src));
+    if (got !== why) fail('noPlot', `${JSON.stringify(src)}: ${got}, want ${why}`);
+    // The gate and the run agree: what plots has a line for every stock.
+    if (got === null && simulate(sys(src)).length === 0) fail('noPlot', `${JSON.stringify(src)} plots no line`);
+  }
+}
+
+// The statement the empty frame offers as its hint (ui/example.ts's
+// chartHint) is what its note says: one line in the formatter's own
+// spelling, a stock with a starting level and a flow with a rate — and it
+// plots, a line that moves. A hint that left the chart empty, or flat,
+// would be worse than none.
+{
+  if (chartHint.includes('\n') || M.format(chartHint) !== chartHint)
+    fail('chart hint', `not one statement in the formatter's spelling: ${JSON.stringify(M.format(chartHint))}`);
+  const system = sys(chartHint);
+  if (noPlot(system) !== null) fail('chart hint', `plots nothing: ${noPlot(system)}`);
+  const stocks = system.nodes.filter(n => n.type === 'stock');
+  const taps = system.nodes.filter(n => n.type === 'faucet');
+  if (stocks.length !== 1 || stocks[0].value == null) fail('chart hint', 'wants one stock with a starting level');
+  if (taps.length !== 1 || taps[0].value == null) fail('chart hint', 'wants one flow with a rate');
+  const [line] = simulate(system);
+  if (!line || line.levels.every(v => v === line.levels[0])) fail('chart hint', 'its line never moves');
 }
 
 // figures 10 & 11: goal-seeking rates. The faucet's annotation acts as a

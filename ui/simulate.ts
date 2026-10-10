@@ -79,6 +79,18 @@ export function hasNumbers(system: System): boolean {
   return system.nodes.some(n => n.value != null || n.expr != null);
 }
 
+// Why a model has nothing to plot, or null when it plots. The chart draws
+// one line per stock over the run, so it needs a stock to draw and a number
+// to run on — any number: a level, a rate, a constant, a formula (a stock
+// left without one starts at 0). The chart's empty frame names what is
+// missing rather than sitting blank.
+export type NoPlot = "empty" | "no-stocks" | "no-numbers";
+export function noPlot(system: System): NoPlot | null {
+  if (system.nodes.length === 0) return "empty";
+  if (!system.nodes.some(n => n.type === "stock")) return "no-stocks";
+  return hasNumbers(system) ? null : "no-numbers";
+}
+
 // Every node id an expr reads, anywhere in the tree (shift inputs and
 // times included — this is the reachability walk, not the eager one).
 const exprRefIds = (e: Expr): string[] => {

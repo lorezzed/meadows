@@ -337,6 +337,11 @@ Only stocks plot as chart series. The chart has a hover crosshair with a
 tooltip reading out every line (keyboard: `←`/`→` to step, Shift for ×10, Esc
 to dismiss).
 
+A model with no numbers has nothing to run on, and one with no stocks has
+nothing to draw: the chart's frame stays up and says which is missing, over a
+one-line model (`[tub: 50] =>drain: 5 |`) showing where the numbers go. Any
+one number is enough to plot; a stock without a level of its own starts at 0.
+
 The engine lives in `ui/simulate.ts`, pure and dependency-free, and is pinned
 by headless tests against the real compiled backend.
 
@@ -449,8 +454,8 @@ settles onto the equilibrium.
   (one balancing loop), chicken & egg (a reinforcing loop against a
   balancing one), burnout (a fix that backfires), predator & prey (two
   populations), and confidence (a loop with no stocks). They're structure
-  alone, so the chart stays empty while the diagram draws every loop and
-  animate still pulses them. Eight starter models
+  alone, so the chart has nothing to plot and says so, while the diagram
+  draws every loop and animate still pulses them. Eight starter models
   follow, the simplest systems with one behavior each: piggy bank (a
   straight line), inbox (the net of two flows), rabbits (exponential
   growth), medicine (exponential decay), leaky bucket (an equilibrium),

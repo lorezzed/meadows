@@ -2,9 +2,10 @@
 // "figure 5". One 2px line per stock over the simulated horizon, real axes,
 // each line named by a label in its own accent at its right end (the direct
 // label, never color alone, is the identity mechanism); goal rules dash in
-// their goal dot's accent. Rendered once per successful update — never per tick. The
-// panel itself is always visible: while the model carries no numbers it
-// shows a bare frame (the time axis and a unit-less y) with nothing plotted. A hover layer (also
+// their goal dot's accent. Rendered once per successful update — never per
+// tick. The panel itself is always visible: while the model has nothing to
+// plot it shows a bare frame (the time axis and a unit-less y) under a note
+// saying what the model lacks and where a number goes. A hover layer (also
 // reachable by keyboard: focus the panel, arrows step, Escape dismisses)
 // snaps a crosshair to the nearest sample and reads out every stock's level
 // there in one tooltip — it only reads the already-rendered series, so the
@@ -12,7 +13,7 @@
 // on every line that the diagram's animate toggle parks at its playing
 // moment each frame.
 import * as d3 from "d3";
-import { DT, T_END, type FlowSeries, type GoalRef, type StockSeries } from "./simulate";
+import { DT, T_END, type FlowSeries, type GoalRef, type NoPlot, type StockSeries } from "./simulate";
 
 // Fixed-order categorical accents: the base palette for the ONE per-node
 // color assignment app.ts's update() builds for every view — stocks take
@@ -72,23 +73,63 @@ function dodgeLabels(desired: number[], lo: number, hi: number): number[] {
   return out;
 }
 
+// What the empty frame says, by what the model lacks (simulate.ts's noPlot):
+// why nothing is plotted, then what would plot — the hint statement goes
+// under it. An empty frame left to speak for itself reads as a broken
+// chart; "empty" is also the page before any model has compiled.
+const NOTES: Record<NoPlot, { why: string; how: string }> = {
+  "empty": {
+    why: "Nothing to plot yet.",
+    how: "Try a stock with a starting level and a flow with a rate:",
+  },
+  "no-stocks": {
+    why: "This model has no stocks, so there's nothing to plot.",
+    how: "Add a stock with a starting level and a flow with a rate:",
+  },
+  "no-numbers": {
+    why: "This model has no numbers, so there's nothing to plot.",
+    how: "Give a stock a starting level and a flow a rate:",
+  },
+};
+
 export type Chart = {
   render(series: StockSeries[], colorOf: (id: string) => string, goals?: GoalRef[], tEnd?: number, flows?: FlowSeries[]): void;
-  /** Clear to the value-less placeholder: axes only, nothing plotted. */
-  empty(tEnd?: number): void;
+  /** Clear to the placeholder: axes only, nothing plotted, and a note saying why. */
+  empty(tEnd?: number, why?: NoPlot): void;
   /** Park the playback's playhead at time t (null hides it). */
   playhead(t: number | null): void;
 };
 
-export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTMLElement, any>): Chart {
+// `hint` is the statement the empty frame's note shows: a one-line model
+// that plots (example.ts's chartHint).
+export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTMLElement, any>, hint: string): Chart {
   // Order 9 bottoms the side column, below the order-2 examples and editor.
   // Panel chrome (size, border, background) comes from the stylesheet via the
-  // class. The panel is never hidden — empty() draws the placeholder frame.
-  const svg = container
+  // classes. The panel is never hidden — empty() draws the placeholder frame.
+  const panel = container
+    .append('div')
+    .attr('class', 'chart-panel')
+    .style('order', 9);
+  const svg = panel
     .append('svg')
     .attr('class', 'chart')
-    .style('order', 9)
     .attr('viewBox', `0 0 ${chartWidth} ${chartHeight}`);
+  // The empty frame's note, laid over the plot area (the margins as shares
+  // of the viewBox, so it stays inside the axes at any panel size). It is
+  // page text rather than svg text: svg text scales with the panel, down to
+  // a few pixels in a narrow column, while this keeps its size and wraps.
+  const share = (part: number, whole: number) => `${(100 * part / whole).toFixed(2)}%`;
+  const note = panel
+    .append('div')
+    .attr('class', 'chart-note')
+    .attr('id', 'chart-note')
+    .style('left', share(margin.left, chartWidth))
+    .style('right', share(margin.right, chartWidth))
+    .style('top', share(margin.top, chartHeight))
+    .style('bottom', share(margin.bottom, chartHeight));
+  const noteWhy = note.append('p').attr('class', 'why');
+  const noteHow = note.append('p');
+  note.append('code').text(hint);
 
   // Goal rules render under the series lines (a reference, never a subject).
   // Flow lines (the flow view: faucet rates, or each delay's input and
@@ -453,14 +494,18 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
       colorOf, x, y,
     };
     hideHover();
+    note.style('display', 'none');
+    svg.attr('aria-describedby', null);
   }
 
-  // The value-less placeholder: the same recessive frame — the time axis with
-  // its numbers (running to the current horizon) and a unit-less y (tick
-  // marks, no numbers, the 0..1 domain is arbitrary and unlabeled) — with
-  // nothing plotted, so the panel always shows where behavior-over-time will
-  // appear. cur stays null: the hover/keyboard layer has nothing to read out.
-  function empty(tEnd: number = T_END): void {
+  // The placeholder: the same recessive frame — the time axis with its
+  // numbers (running to the current horizon) and a unit-less y (tick marks,
+  // no numbers, the 0..1 domain is arbitrary and unlabeled) — with nothing
+  // plotted, so the panel always shows where behavior-over-time will appear,
+  // and over it the note for `why` (what the model lacks; the svg is an img
+  // to assistive tech, so the note is its description too). cur stays null:
+  // the hover/keyboard layer has nothing to read out.
+  function empty(tEnd: number = T_END, why: NoPlot = "empty"): void {
     const x = d3.scaleLinear([0, tEnd], [margin.left, chartWidth - margin.right]);
     const y = d3.scaleLinear([0, 1], [chartHeight - margin.bottom, margin.top]);
     gxAxis.call(d3.axisBottom(x));
@@ -476,6 +521,10 @@ export function createChart(container: d3.Selection<HTMLDivElement, unknown, HTM
     cur = null;
     hideHover();
     playhead(null);
+    noteWhy.text(NOTES[why].why);
+    noteHow.text(NOTES[why].how);
+    note.style('display', null);
+    svg.attr('aria-describedby', 'chart-note');
   }
 
   empty(); // the frame is on screen from first paint, before any input
