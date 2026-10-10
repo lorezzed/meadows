@@ -69,7 +69,8 @@ ids, evaluator identity/link/group/value rules), `test/golden.mjs` pins the
 end-to-end JSON seam byte-exactly, and `test/simulate.mjs` / `test/highlight.mjs` /
 `test/format.mjs` / `test/layout.mjs` / `test/playback.mjs` check the frontend
 simulator (with the chart's gate and the hint its empty frame shows), the
-editor's highlight tokenizer, the formatter (reference style,
+editor's highlight tokenizer (and its line numbering, held to the
+compiler's), the formatter (reference style,
 graph preservation, idempotence — plus each example's model-then-notes
 shape), the diagram layout, and the animate toggle's
 playback (trace, shared scales, loop activity, pulse routes, water-line
@@ -408,14 +409,30 @@ playback bullet below). Almost everything lives in **`app.ts`**:
   the ONE path every source change takes — typing, format, example loads,
   palette placements, deletes, renames — and its `finally` schedules the
   URL save on every path, compile errors included.
-- The editor color-codes node names: the `<textarea>` sits on a `.highlight`
+- The editor color-codes node names and numbers its lines: the `<textarea>`
+  sits on a `.highlight`
   backdrop `<div>` that renders the same text with every recognized name in
   its accent (weight 600) and every comment in `--faint` gray (a `.comment`
   span, normal weight), the textarea's own glyphs transparent above it
   (caret/selection native; the shared CSS rule pins every glyph-positioning
   property, plus `scrollbar-gutter: stable` so classic scrollbars can't skew
-  the wrap; scrollTop syncs on scroll/input; a `\u200b` sentinel keeps a
-  trailing newline's height). **`ui/highlight.ts`** (pure, dependency-free,
+  the wrap; scrollTop syncs on scroll/input). The backdrop lays the source
+  out a **block per line** (`.line`, from highlight.ts's `lineSpans`; an
+  empty line holds a `\u200b` so it keeps its row — a trailing newline's
+  last line and the empty editor's one line included), and each block wears
+  its **line number** in the left gutter: a CSS counter in `.line::before`,
+  generated content, so the numbers are never selected, copied, or read
+  out (the backdrop is `aria-hidden`), and they scroll with the text. A
+  block wraps exactly as the textarea's line does, so a number sits on its
+  line's first row however many rows the line takes. The gutter is the
+  shared rule's left padding — the panel's 12px, `--line-digits` × 1ch,
+  12px — so the textarea's text shifts with the backdrop's;
+  `renderHighlight` sets `--line-digits` on `.editor` to the longest
+  number's length (two at least, three from line 100). The numbers are the
+  compiler's: every line counts, comments and blanks too, so an error's
+  `line L` is the block wearing L (pinned by `test/highlight.mjs`). A
+  click in the gutter is a click on the textarea's padding: the caret
+  goes to that line. **`ui/highlight.ts`** (pure, dependency-free,
   headlessly tested like simulate.ts) scans the source into spans, mirroring
   the lexer's naming: `//` to the end of the line as one `comment` span
   that names nothing (the newline outside it), multi-word joining with
@@ -431,10 +448,13 @@ playback bullet below). Almost everything lives in **`app.ts`**:
   compiler's identity rule — via `nameColor`, one half of the single
   per-node accent assignment `update()` rebuilds from the compiled graph
   (see the coordination note on the `update()` bullet below); unknown names
-  (mid-edit) stay ink until the model compiles. The `finally` in the input
+  (mid-edit) stay ink until the model compiles. `lineSpans` deals the same
+  spans out one array per source line, the newlines dropped (always one
+  more line than there are newlines). The `finally` in the input
   handler re-renders the backdrop on every path — after `update()` on
   success (a just-typed name colors on its own keystroke), with the stale
-  map on a compile error.
+  map on a compile error — and module init renders it once for the empty
+  editor, which a page with an unreadable link never types into.
 - A "format" button in a `.tools` row tucked under the editor's right corner
   (order 2 after the editor wrap; pill styling shared with the example
   buttons) reprints the model via the backend's `format` (see

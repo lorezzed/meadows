@@ -1,12 +1,14 @@
 // Headless checks of the editor's highlight tokenizer: ui/highlight.ts must
 // split DSL source into spans losslessly and tag identifier runs with the
 // same NAMES the real lexer/evaluator resolve — the editor colors by name,
-// so agreement with the compiled graph is the whole contract.
+// so agreement with the compiled graph is the whole contract — and deal the
+// same spans out line by line, numbered as the compiler numbers lines (the
+// editor's line numbers are where a compile error's `line L` is found).
 // ui/highlight.ts is dependency-free with erasable types precisely so node
 // can run it directly (type stripping, node >= 22.18), like simulate.ts.
 // Run with:   node test/highlight.mjs
 import * as M from '../output/Main/index.js';
-import { nameSpans } from '../ui/highlight.ts';
+import { nameSpans, lineSpans } from '../ui/highlight.ts';
 import { exampleList } from '../ui/example.ts';
 
 let failures = 0;
@@ -96,6 +98,67 @@ expect('the formula context still resets after a comment', 'a: (x // (\nt -> b',
   const spans = nameSpans('water   in   tub');
   if (spans.length !== 1 || spans[0].text !== 'water   in   tub')
     fail('raw preserved', JSON.stringify(spans));
+}
+
+// lineSpans is the same scan dealt out by source line — what the editor's
+// backdrop renders, one numbered block per line. One array per line (always
+// one more than there are newlines), each joining back to exactly its line,
+// no span empty or holding a newline, and the names and comments those of
+// the flat scan, in order.
+const marks = (spans) => JSON.stringify(spans.filter(s => s.name != null || s.comment)
+  .map(s => [s.text, s.name ?? null, s.comment === true]));
+const checkLines = (label, src) => {
+  const lines = lineSpans(src), want = src.split('\n');
+  if (lines.length !== want.length) return fail(label, `${lines.length} lines, want ${want.length}`);
+  lines.forEach((spans, i) => {
+    const text = spans.map(s => s.text).join('');
+    if (text !== want[i]) fail(label, `line ${i + 1} reads ${JSON.stringify(text)}, want ${JSON.stringify(want[i])}`);
+    if (spans.some(s => s.text === '' || s.text.includes('\n')))
+      fail(label, `line ${i + 1} holds an empty span or a newline`);
+  });
+  if (marks(lines.flat()) !== marks(nameSpans(src))) fail(label, 'the lines lost or changed a name or a comment');
+};
+for (const { label, content } of exampleList) {
+  checkLines(`${label} lines`, content);
+  checkLines(`${label} lines, commented`, content.split('\n').map(line => `// ${line}\n${line} // ${line}`).join('\n'));
+  checkLines(`${label} lines, spaced out`, `\n${content.split('\n').join('\n\n')}\n\n`);
+}
+{
+  const shape = (src) => JSON.stringify(lineSpans(src).map(spans => spans.map(s => s.text)));
+  const want = [
+    ['', [[]]],                                   // an empty editor is one line
+    ['a', [['a']]],
+    ['a\n', [['a'], []]],                         // a trailing newline opens a last line
+    ['\n\n', [[], [], []]],
+    ['a\n\nb', [['a'], [], ['b']]],
+    ['a |\n| b', [['a', ' |'], ['| ', 'b']]],     // a plain run is cut at the newline
+    ['a // b\nc', [['a', ' ', '// b'], ['c']]],   // a comment ends with its line
+    ['water   in   tub\n[tub]', [['water   in   tub'], ['[', 'tub', ']']]],
+  ];
+  for (const [src, lines] of want)
+    if (shape(src) !== JSON.stringify(lines)) fail('line shape', `${JSON.stringify(src)}: ${shape(src)}`);
+  // Each piece keeps what it is: a cut run stays plain, a name its name, a comment its flag.
+  const cut = lineSpans('a // b\nc |\n| d');
+  const wantCut = [[{ text: 'a', name: 'a' }, { text: ' ' }, { text: '// b', comment: true }],
+    [{ text: 'c', name: 'c' }, { text: ' |' }], [{ text: '| ' }, { text: 'd', name: 'd' }]];
+  if (JSON.stringify(cut) !== JSON.stringify(wantCut)) fail('line spans', JSON.stringify(cut));
+}
+
+// The numbers are the compiler's own: an error's `line L` is the L-th line
+// here, with comment lines and blank lines counted like any other. Plant an
+// unclosed bracket as a line of its own at the top, the middle, and the end
+// of every example — after all its notes — and the error names that line.
+for (const { label, content } of exampleList) {
+  const src = content.split('\n');
+  for (const at of [0, Math.floor(src.length / 2), src.length]) {
+    const bad = [...src.slice(0, at), '[oops', ...src.slice(at)].join('\n');
+    const out = JSON.parse(M.go(bad));
+    const m = typeof out === 'string' ? /line (\d+), column \d+/.exec(out) : null;
+    if (!m) { fail(`${label}, a bad line ${at + 1}`, `no positioned error: ${JSON.stringify(out).slice(0, 80)}`); continue; }
+    const line = lineSpans(bad)[Number(m[1]) - 1];
+    if (Number(m[1]) !== at + 1 || !line || line.map(s => s.text).join('') !== '[oops')
+      fail(`${label}, a bad line ${at + 1}`, `the error names line ${m[1]}`);
+  }
 }
 
 if (failures) { console.log(`${failures} failure(s)`); process.exit(1); }

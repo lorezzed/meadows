@@ -11,7 +11,7 @@ import {
   pressAnimate, pulseAt, waterSpans, type AnimateState, type LoopPlan, type Playback,
 } from "./playback";
 import { createChart, STOCK_PALETTE } from "./chart";
-import { nameSpans } from "./highlight";
+import { lineSpans, nameSpans } from "./highlight";
 import { loopInstances, type LoopInstance } from "./loops";
 import { canonical, clampHorizon, clampZoom, decode, DEFAULTS, encode, type PageState } from "./permalink";
 import {
@@ -406,6 +406,7 @@ const css = `
   .editor {
     position: relative;
     display: flex;
+    --line-digits: 2; /* the gutter's width in digits (renderHighlight sets it) */
   }
   /* The heading over each panel that isn't a collapsible section (source,
      behaviour over time, diagram), in the example sections' heading style,
@@ -423,7 +424,11 @@ const css = `
   }
   .text-input, .highlight {
     margin: 0;
-    padding: 10px 12px;
+    /* The left padding is the line-number gutter: the panel's 12px, the
+       digits (a ch each in the mono face), and 12px before the text. It is
+       shared like every metric here, so the textarea's glyphs stay exactly
+       over the backdrop's whatever the gutter's width. */
+    padding: 10px 12px 10px calc(24px + var(--line-digits) * 1ch);
     font-family: var(--mono);
     font-size: 12.5px;
     line-height: 1.55;
@@ -446,6 +451,23 @@ const css = `
     background: var(--panel);
     color: var(--ink);
     pointer-events: none;
+    counter-reset: line;
+  }
+  /* The backdrop lays the source out a block per line, each wearing its
+     number in the gutter: the line a compile error names. The number is
+     generated content, so it is never selected or copied, and since the
+     block wraps exactly as the textarea's line does, it sits on the line's
+     first row however many rows the line takes. */
+  .highlight .line {
+    position: relative;
+    counter-increment: line;
+  }
+  .highlight .line::before {
+    content: counter(line);
+    position: absolute;
+    right: 100%;
+    margin-right: 12px;
+    color: var(--faint);
   }
   /* A comment (// to the end of the line) recedes: the faint gray the
      placeholder and the header's subtitle use, never a node's accent. */
@@ -1077,21 +1099,31 @@ tools.append('button')
     setSource(formatted);
   });
 
-// Rebuild the editor's color backdrop: the same text the textarea holds,
-// with every recognized node name in its accent (weight 600 so pale accents
-// still carry; the mono face keeps the same advance width when bold, so the
-// glyphs stay exactly under the textarea's) and every comment gray.
-// Wholesale rebuild per keystroke — models are tiny.
+// Rebuild the editor's color backdrop: the same text the textarea holds, a
+// block per source line (each wearing its line number — see the
+// stylesheet), with every recognized node name in its accent (weight 600 so
+// pale accents still carry; the mono face keeps the same advance width when
+// bold, so the glyphs stay exactly under the textarea's) and every comment
+// gray. Wholesale rebuild per keystroke — models are tiny.
 function renderHighlight(text: string): void {
-  highlight.selectAll('span').remove();
-  for (const s of nameSpans(text)) {
-    const span = highlight.append('span').text(s.text).classed('comment', s.comment === true);
-    const c = s.name != null ? nameColor.get(s.name) : undefined;
-    if (c != null) span.style('color', c).style('font-weight', 600);
+  highlight.selectAll('.line').remove();
+  const lines = lineSpans(text);
+  for (const spans of lines) {
+    const line = highlight.append('div').attr('class', 'line');
+    for (const s of spans) {
+      const span = line.append('span').text(s.text).classed('comment', s.comment === true);
+      const c = s.name != null ? nameColor.get(s.name) : undefined;
+      if (c != null) span.style('color', c).style('font-weight', 600);
+    }
+    // An empty line is still a row of the textarea, with a number of its
+    // own (the last one after a trailing newline included): a zero-width
+    // space gives its block that row's height.
+    if (spans.length === 0) line.text('\u200b');
   }
-  // pre-wrap drops a trailing newline's empty line box where the textarea
-  // keeps one; a zero-width space holds the backdrop's height in step.
-  if (text.endsWith('\n')) highlight.append('span').text('\u200b');
+  // The gutter is as wide as the longest number — two digits at least, so
+  // it doesn't shift at line 10. The textarea's padding is the same rule,
+  // so its text moves with the backdrop's.
+  editorWrap.style('--line-digits', Math.max(2, String(lines.length).length));
   syncHighlightScroll();
 }
 // An example pill lights while the editor holds its model. The comparison is
@@ -1114,6 +1146,9 @@ function syncHighlightScroll(): void {
     hl.scrollLeft = ta.scrollLeft;
   }
 }
+// The empty editor is one line too: number it before any input arrives (a
+// page whose link couldn't be read never dispatches one).
+renderHighlight(textInput.property('value'));
 
 // Arrowhead markers. Both anchor their BASE at the path's end (refX 0) so the
 // line stops cleanly where the triangle starts and the head extends beyond it —

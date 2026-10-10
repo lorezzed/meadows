@@ -279,7 +279,9 @@ Lex and parse errors are positioned — `Tokenization error: line 1, column 3: �
 `Parsing error: line 2, column 4: …` — and semantic ones (formula cycles, a
 formula reading a faucet outside a shift) come back as `Model error: …`. In
 the playground a failing model flags the editor red and shows the message; the
-last good diagram stays on screen while you fix it.
+last good diagram stays on screen while you fix it. The editor numbers its
+lines, so the line an error names is the one wearing that number (comment and
+blank lines count).
 
 ## How models run
 
@@ -469,7 +471,8 @@ settles onto the equilibrium.
 - The **editor** color-codes every recognized name with its node's accent —
   the same hue that node wears in the diagram and the chart, so a line in the
   chart, a box in the diagram, and a word in the source visually connect.
-  Comments show in grey, names in them uncolored.
+  Comments show in grey, names in them uncolored. Every line wears its
+  number in the left margin: the line a compile error points to.
 - The **format** button reprints the model in the canonical style (one
   statement per line, spacing normalized, comments kept — see
   `src/Formatter.purs`). It is token-preserving, so node identities and

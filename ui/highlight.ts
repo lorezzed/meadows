@@ -1,7 +1,9 @@
 // Surface scanner for the editor's color backdrop: split DSL source into
 // spans whose concatenation is exactly the input, tagging each identifier
 // run with its normalized NAME so the editor can color every mention of a
-// node alike, and flagging each comment so it can gray it. Pure and
+// node alike, and flagging each comment so it can gray it — then the same
+// spans line by line (lineSpans), which is what the backdrop renders: a
+// block per source line, so each can wear its number. Pure and
 // dependency-free (no imports at all), mirroring simulate.ts, so node can
 // run it headlessly (test/highlight.mjs).
 //
@@ -135,4 +137,24 @@ export function nameSpans(input: string): Span[] {
   }
   flushPlain();
   return spans;
+}
+
+// The same spans, one array per source LINE: what the editor's backdrop
+// renders, a block per line, so every line can wear its number — the one a
+// compile error names (`line 3, column 5`; the lexer counts every line,
+// comments and blanks included, and so does this). The newlines separate
+// the lines and appear in none of them: a name or a comment already stops
+// at its line's end, and a plain run is cut here. So joining a line's spans
+// gives that line's text, and there is always one more line than there are
+// newlines — an empty source is one empty line, and a trailing newline
+// opens a last empty one, as in the textarea.
+export function lineSpans(input: string): Span[][] {
+  const lines: Span[][] = [[]];
+  for (const span of nameSpans(input)) {
+    span.text.split("\n").forEach((text, k) => {
+      if (k > 0) lines.push([]);
+      if (text !== "") lines[lines.length - 1]!.push({ ...span, text });
+    });
+  }
+  return lines;
 }
